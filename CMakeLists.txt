@@ -138,9 +138,9 @@ target_include_directories(pspvideo PRIVATE
     "${ROOT}/decoder/include"
     "${ROOT}/decoder/src"
     "${ROOT}/decoder/me"
-    "${ROOT}/build/ffmpeg-audio"
-    "${ROOT}/third_party/ffmpeg"
-    "${ROOT}/third_party/ffmpeg/libavcodec"
+    "${BILI_FFMPEG_BUILD_DIR}"
+    "${BILI_FFMPEG_SOURCE_DIR}"
+    "${BILI_FFMPEG_SOURCE_DIR}/libavcodec"
     "${PSP_FFMPEG_PREFIX}/include"
     "${ME_INCLUDE_ROOT}"
     "${ME_CORE_ROOT}")
@@ -330,7 +330,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/APACHE-2.0.txt" "${PACKAGE_DIR}/licenses/wqy-apache-2.0.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt" "${PACKAGE_DIR}/licenses/wiliwili-assets.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/build/curl-source/COPYING" "${PACKAGE_DIR}/licenses/curl.txt"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/third_party/ffmpeg/COPYING.LGPLv2.1" "${PACKAGE_DIR}/licenses/ffmpeg.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_FFMPEG_SOURCE_DIR}/COPYING.LGPLv2.1" "${PACKAGE_DIR}/licenses/ffmpeg.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/decoder/me/LICENSE.MIST.txt" "${PACKAGE_DIR}/licenses/me-mist.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/api/wiliwili/LICENSE" "${PACKAGE_DIR}/licenses/wiliwili.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/qrcodegen/LICENSE.txt" "${PACKAGE_DIR}/licenses/qrcodegen.txt"
@@ -339,6 +339,7 @@ add_custom_target(package
         --root "${ROOT}"
         --package "${PACKAGE_DIR}"
         --ffmpeg "${PSP_FFMPEG_PREFIX}"
+        --ffmpeg-source "${BILI_FFMPEG_SOURCE_DIR}"
         --curl "${PSP_CURL_PREFIX}"
     DEPENDS wili_mini me_bridge bootstrap
     COMMENT "Packaging PSP/GAME/WiliMini")

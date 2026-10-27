@@ -4,7 +4,7 @@ endif()
 
 foreach(PATCH_FILE IN LISTS PATCH_FILES)
     execute_process(
-        COMMAND patch -d "${SOURCE_DIR}" -p1 -R --dry-run
+        COMMAND patch -d "${SOURCE_DIR}" -p1 -R --force --dry-run
         INPUT_FILE "${PATCH_FILE}"
         RESULT_VARIABLE reverse_result
         OUTPUT_QUIET ERROR_QUIET)
@@ -13,7 +13,7 @@ foreach(PATCH_FILE IN LISTS PATCH_FILES)
     endif()
 
     execute_process(
-        COMMAND patch -d "${SOURCE_DIR}" -p1 --forward
+        COMMAND patch -d "${SOURCE_DIR}" -p1 --forward --batch
         INPUT_FILE "${PATCH_FILE}"
         RESULT_VARIABLE result)
     if(NOT result EQUAL 0)

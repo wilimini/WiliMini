@@ -14,12 +14,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--root", required=True, type=Path)
 parser.add_argument("--package", required=True, type=Path)
 parser.add_argument("--ffmpeg", required=True, type=Path)
+parser.add_argument("--ffmpeg-source", type=Path)
 parser.add_argument("--curl", required=True, type=Path)
 args = parser.parse_args()
 
 root = args.root.resolve()
 package = args.package.resolve()
 ffmpeg = args.ffmpeg.resolve()
+ffmpeg_source = (args.ffmpeg_source or root / "build/ffmpeg-source").resolve()
 curl = args.curl.resolve()
 
 sources = [
@@ -30,7 +32,8 @@ sources = [
     *root.glob("client/services/*.[ch]"),
     *root.glob("client/services/*.hpp"),
     *root.glob("client/services/*.cpp"),
-    root / "third_party/ffmpeg/libavutil/tx_template.c",
+    ffmpeg_source / "libavutil/tx_template.c",
+    root / "patches/ffmpeg/0001-psp-sampled-h264-profile.patch",
     root / "patches/ffmpeg-psp-tx-tables.patch",
     root / "patches/curl-psp-select-pending.patch",
     root / "build/curl-source/lib/select.c",
@@ -52,7 +55,7 @@ files = {
 manifest = {
     "libraries": {str(path): digest(path) for path in libraries},
     "sources": {
-        str(path.relative_to(root)): digest(path)
+        str(path.relative_to(root) if path.is_relative_to(root) else path): digest(path)
         for path in sources
         if path.is_file()
     },

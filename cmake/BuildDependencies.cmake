@@ -10,6 +10,13 @@ set(BILI_CURL_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/curl-build" CACHE PATH
     "libcurl build directory")
 set(BILI_CURL_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/build/curl-install" CACHE PATH
     "libcurl install prefix")
+set(BILI_FFMPEG_REVISION "b1a4534186ca51b0457579fc05a5739eb2cc45cd" CACHE STRING
+    "FFmpeg source revision (n6.1.2)")
+set(BILI_FFMPEG_SHA256
+    "ba1ecdb61b542ac3a1285c5cf3543b7f76d77c1f513070d6a4c7b3c977a77f18"
+    CACHE STRING "SHA-256 of the FFmpeg source archive")
+set(BILI_FFMPEG_SOURCE_DIR "${CMAKE_SOURCE_DIR}/build/ffmpeg-source" CACHE PATH
+    "Extracted FFmpeg source directory")
 set(BILI_FFMPEG_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio" CACHE PATH
     "FFmpeg build directory")
 
@@ -56,15 +63,23 @@ ExternalProject_Add(psp_curl
         -P "${CMAKE_SOURCE_DIR}/cmake/InstallCurl.cmake"
     BUILD_BYPRODUCTS "${BILI_CURL_INSTALL_PREFIX}/lib/libcurl.a")
 
-if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg/configure")
-    ExternalProject_Add(psp_ffmpeg
-        SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/ffmpeg"
+ExternalProject_Add(psp_ffmpeg
+        URL "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/${BILI_FFMPEG_REVISION}"
+        URL_HASH "SHA256=${BILI_FFMPEG_SHA256}"
+        DOWNLOAD_NAME "ffmpeg-${BILI_FFMPEG_REVISION}.tar.gz"
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        DOWNLOAD_DIR "${CMAKE_SOURCE_DIR}/build/downloads"
+        SOURCE_DIR "${BILI_FFMPEG_SOURCE_DIR}"
         BINARY_DIR "${BILI_FFMPEG_BUILD_DIR}"
         PATCH_COMMAND "${CMAKE_COMMAND}"
-            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}/third_party/ffmpeg"
-            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0001-psp-sampled-h264-profile.patch;${CMAKE_SOURCE_DIR}/patches/ffmpeg-psp-tx-tables.patch"
+            "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
+            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0001-psp-sampled-h264-profile.patch"
             -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
-        CONFIGURE_COMMAND "${CMAKE_SOURCE_DIR}/third_party/ffmpeg/configure"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
+            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg-psp-tx-tables.patch"
+            -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
+        CONFIGURE_COMMAND <SOURCE_DIR>/configure
             --prefix=${PSP_FFMPEG_PREFIX}
             --enable-cross-compile --target-os=none --arch=mips --cpu=allegrex
             --cross-prefix=psp- --disable-asm --disable-autodetect
@@ -78,11 +93,5 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg/configure")
         BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" --parallel 4
         INSTALL_COMMAND "${CMAKE_MAKE_PROGRAM}" install
         BUILD_BYPRODUCTS "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a")
-else()
-    add_custom_target(psp_ffmpeg
-        COMMAND "${CMAKE_COMMAND}" -E echo
-            "third_party/ffmpeg is not initialized; run git submodule update --init --recursive"
-        COMMAND "${CMAKE_COMMAND}" -E false)
-endif()
 
 add_custom_target(dependencies DEPENDS psp_curl psp_ffmpeg)

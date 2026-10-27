@@ -1,6 +1,3 @@
-[submodule "ffmpeg"]
-	path = third_party/ffmpeg
-	url = https://github.com/FFmpeg/FFmpeg.git
 [submodule "psp-media-engine-mist"]
 	path = third_party/psp-media-engine-mist
 	url = https://github.com/mcidclan/psp-media-engine-mist.git

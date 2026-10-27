@@ -93,7 +93,7 @@ export PSPDEV=/path/to/pspdev
 export PATH="$PSPDEV/bin:$PATH"
 ```
 
-FFmpeg 和两个 Media Engine 源码库作为 Git submodule 固定版本。首次克隆时初始化它们：
+两个 Media Engine 源码库作为 Git submodule 固定版本。首次克隆时初始化它们：
 
 ```sh
 git clone --recurse-submodules <repo-url>
@@ -104,6 +104,12 @@ git clone --recurse-submodules <repo-url>
 ```sh
 git submodule update --init --recursive
 ```
+
+FFmpeg 和 libcurl 不使用 submodule。`make dependencies` 会下载固定版本的源码包、
+校验 SHA-256 并自动应用补丁；也可以分别运行 `make ffmpeg` 和 `make curl`。
+FFmpeg 保持原 n6.1.2 对应的 commit，不下载 Git 历史。
+下载缓存位于 `build/downloads/`，解压源码位于 `build/ffmpeg-source/` 和
+`build/curl-source/`，需要联网完成首次下载。
 
 客户端依赖 PSP 版本的 FFmpeg、libcurl 和 Media Engine 组件。默认情况下，
 CMake 从以下目录查找已构建的依赖：

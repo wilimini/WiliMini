@@ -11,9 +11,9 @@ PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 `build/ffmpeg-audio-install`、FFmpeg 的配置目录和 `build/me` 的 core mapper 对象。
 从干净环境准备源码时，在仓库根目录运行
 `git submodule update --init --recursive`（首次克隆也可使用
-`git clone --recurse-submodules`）。然后将
-`patches/ffmpeg/0001-psp-sampled-h264-profile.patch` 应用到
-`third_party/ffmpeg`，再运行 `make ffmpeg` 和 `make me`。
+`git clone --recurse-submodules`），初始化两个 ME 依赖。
+再运行 `make dependencies` 和 `make package`。FFmpeg 由 CMake 下载固定版本的
+源码包到 `build/ffmpeg-source`，校验 SHA-256 并自动应用两份 PSP 补丁，无需手动打补丁。
 
 ```c
 #include "psp_video.h"
