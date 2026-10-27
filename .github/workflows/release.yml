@@ -18,6 +18,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify release tag is on main
+        shell: bash
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Release tags must point to a commit already merged into main" >&2
+            exit 1
+          fi
 
       - name: Build PSP package
         shell: bash
@@ -52,8 +62,11 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           name: WiliMini ${{ github.ref_name }}
+          draft: false
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             WiliMini-${{ github.ref_name }}.zip
             WiliMini-${{ github.ref_name }}.zip.sha256
