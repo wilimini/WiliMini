@@ -255,8 +255,18 @@ results/      PPSSPP、真机和离线回放结果
 - [Media Engine 实验](experiments/me/)
 - [实验结果](results/)
 
-## 许可证
+## 致谢
 
-项目包含 FFmpeg、libcurl、Media Engine 组件和其他第三方代码。构建产物中的
-`licenses/` 目录保存随发布包提供的许可证；具体依赖版本、补丁和重链接材料
-见 [播放器说明](decoder/README.md) 及 [参考资料锁定文件](docs/references.lock.json)。
+感谢以下项目及其贡献者。
+
+| 项目 | 使用内容 | 许可证 |
+| --- | --- | --- |
+| [FFmpeg](https://ffmpeg.org/) | 音视频解码与容器解析 | LGPL-2.1-or-later |
+| [curl](https://curl.se/) | PSP 网络请求 | curl license（MIT-like） |
+| [PSP Media Engine MIST](https://github.com/mcidclan/psp-media-engine-mist) | Media Engine 集成 | MIT |
+| [PSP Media Engine Custom Core](https://github.com/mcidclan/psp-media-engine-custom-core) | Media Engine core mapper 与辅助库 | MIT |
+| [Wiliwili](https://github.com/xfangfang/wiliwili) | Bilibili API/result 代码及界面资源 | GPL-3.0-only |
+| [WenQuanYi Micro Hei](https://sourceforge.net/projects/wqy/) | 客户端使用的字体 | Apache-2.0 |
+| [nlohmann/json](https://github.com/nlohmann/json) | JSON 解析 | MIT |
+| [QR Code generator by Project Nayuki](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/c) | 登录二维码生成 | MIT |
+| [PSPSDK](https://github.com/pspdev/pspsdk) | PSP SDK 兼容代码及许可证声明 | BSD-3-Clause |
