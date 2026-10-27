@@ -1,0 +1,59 @@
+name: Release PSP package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/pspdev/pspdev-docker:latest
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build PSP package
+        shell: bash
+        run: |
+          PSPDEV="${PSPDEV:-/usr/local/pspdev}"
+          if [[ ! -x "$PSPDEV/bin/psp-cmake" ]]; then
+            echo "PSP toolchain not found under $PSPDEV" >&2
+            exit 1
+          fi
+
+          if [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
+            CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          elif [[ -f /etc/ssl/cert.pem ]]; then
+            CA_BUNDLE=/etc/ssl/cert.pem
+          else
+            echo "Could not find the system CA bundle" >&2
+            exit 1
+          fi
+
+          make package PSPDEV="$PSPDEV" PARALLEL=2 \
+            CMAKE_ARGS="-DBILI_CA_BUNDLE=$CA_BUNDLE"
+
+      - name: Create release archive and checksum
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          ARCHIVE="WiliMini-${VERSION}.zip"
+          (cd dist/PSP/GAME && python3 -m zipfile -c "$GITHUB_WORKSPACE/$ARCHIVE" WiliMini)
+          (cd "$GITHUB_WORKSPACE" && sha256sum "$ARCHIVE" > "$ARCHIVE.sha256")
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WiliMini ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            WiliMini-${{ github.ref_name }}.zip
+            WiliMini-${{ github.ref_name }}.zip.sha256
