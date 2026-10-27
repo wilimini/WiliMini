@@ -1,0 +1,120 @@
+/* Bounded RGB queue: CPU owns decoding/ME; this thread owns timed DMA only.
+ * No FFmpeg objects or reference counts cross thread boundaries. */
+#ifndef PSP_RGB_PACER_H
+#define PSP_RGB_PACER_H
+#if PSP_AUDIO && PSP_RGB_PACE
+#include <pspdmac.h>
+#define RGB_SLOTS 8
+static int64_t audio_clock_us(void);
+static int audio_playback_failed(void);
+static uint32_t rgb_pixels[RGB_SLOTS][512 * 272] __attribute__((aligned(64)));
+static int64_t rgb_pts[RGB_SLOTS], presentation_pts_us;
+static SceUID rgb_space = -1, rgb_ready = -1, rgb_thread = -1;
+static volatile unsigned rgb_produced, rgb_consumed;
+static volatile int rgb_stop, rgb_error;
+static unsigned rgb_presented, rgb_dropped;
+static int64_t rgb_max_late_us, rgb_total_late_us;
+static uint64_t rgb_warmup_us, rgb_last_us;
+static volatile int rgb_startup_ready;
+typedef struct { int64_t pts, audio, target; uint64_t wall; int dropped; } RgbRecord;
+static RgbRecord rgb_records[6000];
+
+static int rgb_worker(SceSize size, void *arg)
+{
+    (void)size; (void)arg;
+    int64_t previous_pts = AV_NOPTS_VALUE;
+    for (;;) {
+        sceKernelWaitSema(rgb_ready, 1, NULL);
+        if (rgb_stop && rgb_consumed == rgb_produced) return 0;
+        unsigned slot = rgb_consumed % RGB_SLOTS;
+        int64_t target = rgb_pts[slot];
+#if PSP_RGB_NEAREST_PTS
+        if (previous_pts != AV_NOPTS_VALUE && target > previous_pts)
+            target -= (target - previous_pts) / 2;
+#endif
+        int drop = quit_requested || rgb_error || audio_playback_failed();
+        while (!drop && !rgb_startup_ready && !quit_requested)
+            sceKernelDelayThread(1000);
+        while (!drop && !quit_requested) {
+            int64_t delta = target - audio_clock_us();
+            if (delta <= 0) break;
+            sceKernelDelayThread(delta > 2000 ? 2000 : (unsigned)delta);
+            if (audio_playback_failed()) drop = 1;
+        }
+        int64_t late = audio_clock_us() - target;
+        /* Never spend DMA bandwidth displaying obsolete queued pictures. */
+        if (rgb_produced - rgb_consumed > 1) {
+            int64_t next_pts = rgb_pts[(rgb_consumed + 1) % RGB_SLOTS];
+            if (audio_clock_us() >= (rgb_pts[slot] + next_pts) / 2) drop = 1;
+        }
+        if (!drop && !quit_requested) {
+            int ret = sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 4);
+            if (ret < 0) rgb_error = ret;
+            else {
+                late = audio_clock_us() - target;
+                if (late > rgb_max_late_us) rgb_max_late_us = late;
+                if (late > 0) rgb_total_late_us += late;
+                ++rgb_presented;
+            }
+        } else ++rgb_dropped;
+        rgb_last_us = sceKernelGetSystemTimeWide();
+        if (rgb_consumed < 6000)
+            rgb_records[rgb_consumed] = (RgbRecord){rgb_pts[slot], audio_clock_us(), target, rgb_last_us,
+                                                   drop || quit_requested || rgb_error};
+        previous_pts = rgb_pts[slot];
+        ++rgb_consumed;
+        if (rgb_consumed == WARMUP_FRAMES) rgb_warmup_us = rgb_last_us;
+        sceKernelSignalSema(rgb_space, 1);
+    }
+}
+static int rgb_start(void)
+{
+    rgb_produced = rgb_consumed = rgb_presented = rgb_dropped = 0;
+    rgb_stop = rgb_error = rgb_startup_ready = 0;
+    rgb_max_late_us = rgb_total_late_us = 0;
+    rgb_warmup_us = rgb_last_us = 0;
+    rgb_space = sceKernelCreateSema("rgb_space", 0, RGB_SLOTS, RGB_SLOTS, NULL);
+    rgb_ready = sceKernelCreateSema("rgb_ready", 0, 0, RGB_SLOTS + 1, NULL);
+    if (rgb_space < 0 || rgb_ready < 0) return -110;
+    rgb_thread = sceKernelCreateThread("pts_present", rgb_worker, 0x14, 16 * 1024,
+                                      PSP_THREAD_ATTR_USER, NULL);
+    if (rgb_thread < 0) return rgb_thread;
+    return sceKernelStartThread(rgb_thread, 0, NULL);
+}
+static int rgb_acquire(void)
+{
+    for (;;) {
+        if (rgb_error || quit_requested) return -111;
+        SceUInt timeout = 100000;
+        int ret = sceKernelWaitSema(rgb_space, 1, &timeout);
+        if (ret >= 0) return rgb_produced % RGB_SLOTS;
+        if ((unsigned)ret != 0x800201a8u) return ret;
+    }
+}
+static void rgb_publish(int64_t pts)
+{
+    rgb_pts[rgb_produced % RGB_SLOTS] = pts;
+    ++rgb_produced;
+    sceKernelSignalSema(rgb_ready, 1);
+}
+static int rgb_finish(void)
+{
+    while (rgb_consumed != rgb_produced) sceKernelDelayThreadCB(1000);
+    return rgb_error;
+}
+static void rgb_close(void)
+{
+    rgb_finish();
+    rgb_stop = 1;
+    if (rgb_thread >= 0) {
+        sceKernelSignalSema(rgb_ready, 1);
+        sceKernelWaitThreadEndCB(rgb_thread, NULL);
+        sceKernelDeleteThread(rgb_thread);
+        rgb_thread = -1;
+    }
+    if (rgb_space >= 0) sceKernelDeleteSema(rgb_space);
+    if (rgb_ready >= 0) sceKernelDeleteSema(rgb_ready);
+    rgb_space = rgb_ready = -1;
+}
+#endif
+#endif

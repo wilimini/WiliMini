@@ -1,0 +1,33 @@
+--- a/lib/select.c
++++ b/lib/select.c
+@@ -25,6 +25,9 @@
+ #include "curl_setup.h"
+ 
+ #include <limits.h>
++#ifdef __PSP__
++#include <pspthreadman.h>
++#endif
+ 
+ #ifdef HAVE_SYS_SELECT_H
+ #include <sys/select.h>
+@@ -367,6 +370,20 @@
+      value).
+   */
+   r = our_select(maxfd, &fds_read, &fds_write, &fds_err, timeout_ms);
++#ifdef __PSP__
++  /* PSP select can report an asynchronous connect as EINPROGRESS rather
++     than an empty ready set. Keep curl's deadlines/cancellation active by
++     returning to the multi loop; never retry inside this wait indefinitely. */
++  if(r == -1 && (SOCKERRNO == EINPROGRESS || SOCKERRNO == EALREADY ||
++                 SOCKERRNO == EAGAIN)) {
++    if(timeout_ms != 0) {
++      unsigned int delay_ms = timeout_ms > 0 && timeout_ms < 10 ?
++        (unsigned int)timeout_ms : 10;
++      sceKernelDelayThread(delay_ms * 1000);
++    }
++    return 0;
++  }
++#endif
+   if(r <= 0) {
+     if((r == -1) && (SOCKERRNO == EINTR))
+       /* make EINTR from select or poll not a "lethal" error */

@@ -1,0 +1,129 @@
+{
+  "upstream_commit": "88e5876bea9502d06f46a8656e3530684d3aaf7d",
+  "font_source": "resources/font/switch_font.ttf",
+  "font_sha256": "14ec9d09dad83098938370be17170a747d63084022b05710e3d34b4ddb359091",
+  "font_source_bytes": 8364840,
+  "font_coverage_bytes": 187680,
+  "glyph_count": 1224,
+  "images": [
+    {
+      "source": "resources/pictures/22_open.png",
+      "sha256": "c0ce6f2b73bbefa39570e3d6e0f336aef335011d26cb33777947fe7fd9a8e818",
+      "original_bytes": 58723,
+      "size": [
+        80,
+        72
+      ],
+      "rle_bytes": 11128,
+      "offset": 0,
+      "count": 5564
+    },
+    {
+      "source": "resources/pictures/33_open.png",
+      "sha256": "dd034122f18df697cfc962c91c30185cf1a5bced6598b115bb392e499aa59b80",
+      "original_bytes": 53443,
+      "size": [
+        80,
+        79
+      ],
+      "rle_bytes": 13244,
+      "offset": 5564,
+      "count": 6622
+    },
+    {
+      "source": "resources/pictures/default_avatar.png",
+      "sha256": "6fe603722409b4e308ee121b2b04ccb7fc6d80daae72eb3041a34bdadfc47d37",
+      "original_bytes": 1751,
+      "size": [
+        42,
+        41
+      ],
+      "rle_bytes": 1344,
+      "offset": 12186,
+      "count": 672
+    },
+    {
+      "source": "resources/svg/ico-home.svg",
+      "sha256": "eff2f567f1b54f84f68402afbdd311351eb2f8d4f6d7ac585fac11a7c0269725",
+      "original_bytes": 1053,
+      "size": [
+        22,
+        22
+      ],
+      "rle_bytes": 1160,
+      "offset": 12858,
+      "count": 580
+    },
+    {
+      "source": "resources/svg/ico-dynamic.svg",
+      "sha256": "5e628adb3714a7dc774a1758836027b7c3fb8ae7adf9a521fcdb613a9d916eed",
+      "original_bytes": 551,
+      "size": [
+        22,
+        22
+      ],
+      "rle_bytes": 904,
+      "offset": 13438,
+      "count": 452
+    },
+    {
+      "source": "resources/svg/ico-mine.svg",
+      "sha256": "7f5d573280e3e22e91c20029476d3f748a98d0aac1c1353a78ed90fc9fb0f884",
+      "original_bytes": 1001,
+      "size": [
+        22,
+        22
+      ],
+      "rle_bytes": 1124,
+      "offset": 13890,
+      "count": 562
+    },
+    {
+      "source": "resources/svg/ico-inbox.svg",
+      "sha256": "f9166e7425701a24dd8740b04f0377296128d0d5210dec44aab0a6a4800d2bb5",
+      "original_bytes": 1050,
+      "size": [
+        22,
+        22
+      ],
+      "rle_bytes": 708,
+      "offset": 14452,
+      "count": 354
+    },
+    {
+      "source": "resources/svg/ico-setting.svg",
+      "sha256": "683d4376c2ff4cce83432ba40536500155ce7be830abeb8280a9d057a0dd7522",
+      "original_bytes": 884,
+      "size": [
+        22,
+        22
+      ],
+      "rle_bytes": 856,
+      "offset": 14806,
+      "count": 428
+    },
+    {
+      "source": "original synthetic landscape 0",
+      "original_bytes": 0,
+      "size": [
+        190,
+        107
+      ],
+      "rle_bytes": 1808,
+      "offset": 15234,
+      "count": 904
+    },
+    {
+      "source": "original synthetic landscape 1",
+      "original_bytes": 0,
+      "size": [
+        190,
+        107
+      ],
+      "rle_bytes": 1808,
+      "offset": 16138,
+      "count": 904
+    }
+  ],
+  "note": "Wiliwili assets retain upstream GPL license; Source font SIL OFL. Landscape covers are original fixtures. Subset covers review text only."
+}

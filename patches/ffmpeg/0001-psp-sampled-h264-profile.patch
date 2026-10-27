@@ -1,0 +1,640 @@
+diff --git a/libavcodec/h264_mb.c b/libavcodec/h264_mb.c
+index 4e94136..650d632 100644
+--- a/libavcodec/h264_mb.c
++++ b/libavcodec/h264_mb.c
+@@ -36,6 +36,7 @@
+ #include "qpeldsp.h"
+ #include "rectangle.h"
+ #include "threadframe.h"
++#include "psp_profile.h"
+ 
+ static inline int get_lowest_part_list_y(H264SliceContext *sl,
+                                          int n, int height, int y_offset, int list)
+@@ -203,6 +204,31 @@ static void await_references(const H264Context *h, H264SliceContext *sl)
+         }
+ }
+ 
++/* Resolve the actual selected kernel only when profiling is enabled. */
++static inline int psp_qpel_stage(const H264Context *h, const qpel_mc_func *op, int xy)
++{
++    for (int size = 0; size < 4; ++size) {
++        if (op == h->h264qpel.put_h264_qpel_pixels_tab[size])
++            return PSP_PROFILE_QPEL_BASE + size * 32 + xy;
++        if (op == h->h264qpel.avg_h264_qpel_pixels_tab[size])
++            return PSP_PROFILE_QPEL_BASE + size * 32 + 16 + xy;
++    }
++    return 18;
++}
++
++static inline int psp_chroma_stage(const H264Context *h, h264_chroma_mc_func op,
++                                   int x, int y)
++{
++    int phase = !!x + 2 * !!y;
++    for (int size = 0; size < 4; ++size) {
++        if (op == h->h264chroma.put_h264_chroma_pixels_tab[size])
++            return PSP_PROFILE_CHROMA_BASE + size * 8 + phase;
++        if (op == h->h264chroma.avg_h264_chroma_pixels_tab[size])
++            return PSP_PROFILE_CHROMA_BASE + size * 8 + 4 + phase;
++    }
++    return 19;
++}
++
+ static av_always_inline void mc_dir_part(const H264Context *h, H264SliceContext *sl,
+                                          H264Ref *pic,
+                                          int n, int square, int height,
+@@ -238,18 +264,18 @@ static av_always_inline void mc_dir_part(const H264Context *h, H264SliceContext
+         full_my                <          0 - extra_height ||
+         full_mx + 16 /*FIXME*/ > pic_width  + extra_width  ||
+         full_my + 16 /*FIXME*/ > pic_height + extra_height) {
+-        h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
++        PSP_PROFILE(10, h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
+                                  src_y - (2 << pixel_shift) - 2 * sl->mb_linesize,
+                                  sl->mb_linesize, sl->mb_linesize,
+                                  16 + 5, 16 + 5 /*FIXME*/, full_mx - 2,
+-                                 full_my - 2, pic_width, pic_height);
++                                 full_my - 2, pic_width, pic_height));
+         src_y = sl->edge_emu_buffer + (2 << pixel_shift) + 2 * sl->mb_linesize;
+         emu   = 1;
+     }
+ 
+-    qpix_op[luma_xy](dest_y, src_y, sl->mb_linesize); // FIXME try variable height perhaps?
++    PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_y, src_y, sl->mb_linesize)); // FIXME try variable height perhaps?
+     if (!square)
+-        qpix_op[luma_xy](dest_y + delta, src_y + delta, sl->mb_linesize);
++        PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_y + delta, src_y + delta, sl->mb_linesize));
+ 
+     if (CONFIG_GRAY && h->flags & AV_CODEC_FLAG_GRAY)
+         return;
+@@ -257,31 +283,31 @@ static av_always_inline void mc_dir_part(const H264Context *h, H264SliceContext
+     if (chroma_idc == 3 /* yuv444 */) {
+         src_cb = pic->data[1] + offset;
+         if (emu) {
+-            h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
++            PSP_PROFILE(11, h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
+                                      src_cb - (2 << pixel_shift) - 2 * sl->mb_linesize,
+                                      sl->mb_linesize, sl->mb_linesize,
+                                      16 + 5, 16 + 5 /*FIXME*/,
+                                      full_mx - 2, full_my - 2,
+-                                     pic_width, pic_height);
++                                     pic_width, pic_height));
+             src_cb = sl->edge_emu_buffer + (2 << pixel_shift) + 2 * sl->mb_linesize;
+         }
+-        qpix_op[luma_xy](dest_cb, src_cb, sl->mb_linesize); // FIXME try variable height perhaps?
++        PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_cb, src_cb, sl->mb_linesize)); // FIXME try variable height perhaps?
+         if (!square)
+-            qpix_op[luma_xy](dest_cb + delta, src_cb + delta, sl->mb_linesize);
++            PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_cb + delta, src_cb + delta, sl->mb_linesize));
+ 
+         src_cr = pic->data[2] + offset;
+         if (emu) {
+-            h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
++            PSP_PROFILE(11, h->vdsp.emulated_edge_mc(sl->edge_emu_buffer,
+                                      src_cr - (2 << pixel_shift) - 2 * sl->mb_linesize,
+                                      sl->mb_linesize, sl->mb_linesize,
+                                      16 + 5, 16 + 5 /*FIXME*/,
+                                      full_mx - 2, full_my - 2,
+-                                     pic_width, pic_height);
++                                     pic_width, pic_height));
+             src_cr = sl->edge_emu_buffer + (2 << pixel_shift) + 2 * sl->mb_linesize;
+         }
+-        qpix_op[luma_xy](dest_cr, src_cr, sl->mb_linesize); // FIXME try variable height perhaps?
++        PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_cr, src_cr, sl->mb_linesize)); // FIXME try variable height perhaps?
+         if (!square)
+-            qpix_op[luma_xy](dest_cr + delta, src_cr + delta, sl->mb_linesize);
++            PSP_PROFILE(psp_qpel_stage(h, qpix_op, luma_xy), qpix_op[luma_xy](dest_cr + delta, src_cr + delta, sl->mb_linesize));
+         return;
+     }
+ 
+@@ -298,25 +324,25 @@ static av_always_inline void mc_dir_part(const H264Context *h, H264SliceContext
+              (my >> ysh) * sl->mb_uvlinesize;
+ 
+     if (emu) {
+-        h->vdsp.emulated_edge_mc(sl->edge_emu_buffer, src_cb,
++        PSP_PROFILE(11, h->vdsp.emulated_edge_mc(sl->edge_emu_buffer, src_cb,
+                                  sl->mb_uvlinesize, sl->mb_uvlinesize,
+                                  9, 8 * chroma_idc + 1, (mx >> 3), (my >> ysh),
+-                                 pic_width >> 1, pic_height >> (chroma_idc == 1 /* yuv420 */));
++                                 pic_width >> 1, pic_height >> (chroma_idc == 1 /* yuv420 */)));
+         src_cb = sl->edge_emu_buffer;
+     }
+-    chroma_op(dest_cb, src_cb, sl->mb_uvlinesize,
++    PSP_PROFILE(psp_chroma_stage(h, chroma_op, mx & 7, ((unsigned)my << (chroma_idc == 2)) & 7), chroma_op(dest_cb, src_cb, sl->mb_uvlinesize,
+               height >> (chroma_idc == 1 /* yuv420 */),
+-              mx & 7, ((unsigned)my << (chroma_idc == 2 /* yuv422 */)) & 7);
++              mx & 7, ((unsigned)my << (chroma_idc == 2 /* yuv422 */)) & 7));
+ 
+     if (emu) {
+-        h->vdsp.emulated_edge_mc(sl->edge_emu_buffer, src_cr,
++        PSP_PROFILE(11, h->vdsp.emulated_edge_mc(sl->edge_emu_buffer, src_cr,
+                                  sl->mb_uvlinesize, sl->mb_uvlinesize,
+                                  9, 8 * chroma_idc + 1, (mx >> 3), (my >> ysh),
+-                                 pic_width >> 1, pic_height >> (chroma_idc == 1 /* yuv420 */));
++                                 pic_width >> 1, pic_height >> (chroma_idc == 1 /* yuv420 */)));
+         src_cr = sl->edge_emu_buffer;
+     }
+-    chroma_op(dest_cr, src_cr, sl->mb_uvlinesize, height >> (chroma_idc == 1 /* yuv420 */),
+-              mx & 7, ((unsigned)my << (chroma_idc == 2 /* yuv422 */)) & 7);
++    PSP_PROFILE(psp_chroma_stage(h, chroma_op, mx & 7, ((unsigned)my << (chroma_idc == 2)) & 7), chroma_op(dest_cr, src_cr, sl->mb_uvlinesize, height >> (chroma_idc == 1 /* yuv420 */),
++              mx & 7, ((unsigned)my << (chroma_idc == 2 /* yuv422 */)) & 7));
+ }
+ 
+ static av_always_inline void mc_part_std(const H264Context *h, H264SliceContext *sl,
+@@ -424,34 +450,34 @@ static av_always_inline void mc_part_weighted(const H264Context *h, H264SliceCon
+         if (sl->pwt.use_weight == 2) {
+             int weight0 = sl->pwt.implicit_weight[refn0][refn1][sl->mb_y & 1];
+             int weight1 = 64 - weight0;
+-            luma_weight_avg(dest_y, tmp_y, sl->mb_linesize,
+-                            height, 5, weight0, weight1, 0);
++            PSP_PROFILE(14, luma_weight_avg(dest_y, tmp_y, sl->mb_linesize,
++                            height, 5, weight0, weight1, 0));
+             if (!CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) {
+-                chroma_weight_avg(dest_cb, tmp_cb, sl->mb_uvlinesize,
+-                                  chroma_height, 5, weight0, weight1, 0);
+-                chroma_weight_avg(dest_cr, tmp_cr, sl->mb_uvlinesize,
+-                                  chroma_height, 5, weight0, weight1, 0);
++                PSP_PROFILE(15, chroma_weight_avg(dest_cb, tmp_cb, sl->mb_uvlinesize,
++                                  chroma_height, 5, weight0, weight1, 0));
++                PSP_PROFILE(15, chroma_weight_avg(dest_cr, tmp_cr, sl->mb_uvlinesize,
++                                  chroma_height, 5, weight0, weight1, 0));
+             }
+         } else {
+-            luma_weight_avg(dest_y, tmp_y, sl->mb_linesize, height,
++            PSP_PROFILE(14, luma_weight_avg(dest_y, tmp_y, sl->mb_linesize, height,
+                             sl->pwt.luma_log2_weight_denom,
+                             sl->pwt.luma_weight[refn0][0][0],
+                             sl->pwt.luma_weight[refn1][1][0],
+                             sl->pwt.luma_weight[refn0][0][1] +
+-                            sl->pwt.luma_weight[refn1][1][1]);
++                            sl->pwt.luma_weight[refn1][1][1]));
+             if (!CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) {
+-                chroma_weight_avg(dest_cb, tmp_cb, sl->mb_uvlinesize, chroma_height,
++                PSP_PROFILE(15, chroma_weight_avg(dest_cb, tmp_cb, sl->mb_uvlinesize, chroma_height,
+                                   sl->pwt.chroma_log2_weight_denom,
+                                   sl->pwt.chroma_weight[refn0][0][0][0],
+                                   sl->pwt.chroma_weight[refn1][1][0][0],
+                                   sl->pwt.chroma_weight[refn0][0][0][1] +
+-                                  sl->pwt.chroma_weight[refn1][1][0][1]);
+-                chroma_weight_avg(dest_cr, tmp_cr, sl->mb_uvlinesize, chroma_height,
++                                  sl->pwt.chroma_weight[refn1][1][0][1]));
++                PSP_PROFILE(15, chroma_weight_avg(dest_cr, tmp_cr, sl->mb_uvlinesize, chroma_height,
+                                   sl->pwt.chroma_log2_weight_denom,
+                                   sl->pwt.chroma_weight[refn0][0][1][0],
+                                   sl->pwt.chroma_weight[refn1][1][1][0],
+                                   sl->pwt.chroma_weight[refn0][0][1][1] +
+-                                  sl->pwt.chroma_weight[refn1][1][1][1]);
++                                  sl->pwt.chroma_weight[refn1][1][1][1]));
+             }
+         }
+     } else {
+@@ -462,25 +488,26 @@ static av_always_inline void mc_part_weighted(const H264Context *h, H264SliceCon
+                     dest_y, dest_cb, dest_cr, x_offset, y_offset,
+                     qpix_put, chroma_put, pixel_shift, chroma_idc);
+ 
+-        luma_weight_op(dest_y, sl->mb_linesize, height,
++        PSP_PROFILE(12, luma_weight_op(dest_y, sl->mb_linesize, height,
+                        sl->pwt.luma_log2_weight_denom,
+                        sl->pwt.luma_weight[refn][list][0],
+-                       sl->pwt.luma_weight[refn][list][1]);
++                       sl->pwt.luma_weight[refn][list][1]));
+         if (!CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) {
+             if (sl->pwt.use_weight_chroma) {
+-                chroma_weight_op(dest_cb, sl->mb_uvlinesize, chroma_height,
++                PSP_PROFILE(13, chroma_weight_op(dest_cb, sl->mb_uvlinesize, chroma_height,
+                                  sl->pwt.chroma_log2_weight_denom,
+                                  sl->pwt.chroma_weight[refn][list][0][0],
+-                                 sl->pwt.chroma_weight[refn][list][0][1]);
+-                chroma_weight_op(dest_cr, sl->mb_uvlinesize, chroma_height,
++                                 sl->pwt.chroma_weight[refn][list][0][1]));
++                PSP_PROFILE(13, chroma_weight_op(dest_cr, sl->mb_uvlinesize, chroma_height,
+                                  sl->pwt.chroma_log2_weight_denom,
+                                  sl->pwt.chroma_weight[refn][list][1][0],
+-                                 sl->pwt.chroma_weight[refn][list][1][1]);
++                                 sl->pwt.chroma_weight[refn][list][1][1]));
+             }
+         }
+     }
+ }
+ 
++#ifndef __PSP__
+ static av_always_inline void prefetch_motion(const H264Context *h, H264SliceContext *sl,
+                                              int list, int pixel_shift,
+                                              int chroma_idc)
+@@ -505,6 +532,7 @@ static av_always_inline void prefetch_motion(const H264Context *h, H264SliceCont
+         }
+     }
+ }
++#endif
+ 
+ static av_always_inline void xchg_mb_border(const H264Context *h, H264SliceContext *sl,
+                                             uint8_t *src_y,
+diff --git a/libavcodec/h264idct_template.c b/libavcodec/h264idct_template.c
+index db19b5f..1067908 100644
+--- a/libavcodec/h264idct_template.c
++++ b/libavcodec/h264idct_template.c
+@@ -63,7 +63,15 @@ void FUNCC(ff_h264_idct_add)(uint8_t *_dst, int16_t *_block, int stride)
+         dst[i + 3*stride]= av_clip_pixel(dst[i + 3*stride] + ((int)(z0 - z3) >> 6));
+     }
+ 
++#if BIT_DEPTH == 8 && defined(__PSP__)
++    __asm__ volatile (
++        "vmzero.q M700\n"
++        "sv.q C700, 0(%0)\n"
++        "sv.q C710, 16(%0)\n"
++        : : "r" (block) : "memory");
++#else
+     memset(block, 0, 16 * sizeof(dctcoef));
++#endif
+ }
+ 
+ void FUNCC(ff_h264_idct8_add)(uint8_t *_dst, int16_t *_block, int stride){
+@@ -137,7 +145,21 @@ void FUNCC(ff_h264_idct8_add)(uint8_t *_dst, int16_t *_block, int stride){
+         dst[i + 7*stride] = av_clip_pixel( dst[i + 7*stride] + ((int)(b0 - b7) >> 6) );
+     }
+ 
++#if BIT_DEPTH == 8 && defined(__PSP__)
++    __asm__ volatile (
++        "vmzero.q M700\n"
++        "sv.q C700, 0(%0)\n"
++        "sv.q C710, 16(%0)\n"
++        "sv.q C720, 32(%0)\n"
++        "sv.q C730, 48(%0)\n"
++        "sv.q C700, 64(%0)\n"
++        "sv.q C710, 80(%0)\n"
++        "sv.q C720, 96(%0)\n"
++        "sv.q C730, 112(%0)\n"
++        : : "r" (block) : "memory");
++#else
+     memset(block, 0, 64 * sizeof(dctcoef));
++#endif
+ }
+ 
+ // assumes all AC coefs are 0
+diff --git a/libavcodec/h264_mb_template.c b/libavcodec/h264_mb_template.c
+index d5ea26a..41de1db 100644
+--- a/libavcodec/h264_mb_template.c
++++ b/libavcodec/h264_mb_template.c
+@@ -152,46 +152,49 @@ static av_noinline void FUNC(hl_decode_mb)(const H264Context *h, H264SliceContex
+     } else {
+         if (IS_INTRA(mb_type)) {
+             if (sl->deblocking_filter)
+-                xchg_mb_border(h, sl, dest_y, dest_cb, dest_cr, linesize,
+-                               uvlinesize, 1, 0, SIMPLE, PIXEL_SHIFT);
++                PSP_PROFILE(9, xchg_mb_border(h, sl, dest_y, dest_cb, dest_cr, linesize,
++                               uvlinesize, 1, 0, SIMPLE, PIXEL_SHIFT));
+ 
+             if (SIMPLE || !CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) {
++                PSP_PROFILE(6, {
+                 h->hpc.pred8x8[sl->chroma_pred_mode](dest_cb, uvlinesize);
+                 h->hpc.pred8x8[sl->chroma_pred_mode](dest_cr, uvlinesize);
++                });
+             }
+ 
+-            hl_decode_mb_predict_luma(h, sl, mb_type, SIMPLE,
++            PSP_PROFILE(5, hl_decode_mb_predict_luma(h, sl, mb_type, SIMPLE,
+                                       transform_bypass, PIXEL_SHIFT,
+-                                      block_offset, linesize, dest_y, 0);
++                                      block_offset, linesize, dest_y, 0));
+ 
+             if (sl->deblocking_filter)
+-                xchg_mb_border(h, sl, dest_y, dest_cb, dest_cr, linesize,
+-                               uvlinesize, 0, 0, SIMPLE, PIXEL_SHIFT);
++                PSP_PROFILE(9, xchg_mb_border(h, sl, dest_y, dest_cb, dest_cr, linesize,
++                               uvlinesize, 0, 0, SIMPLE, PIXEL_SHIFT));
+         } else {
+             if (chroma422) {
+-                FUNC(hl_motion_422)(h, sl, dest_y, dest_cb, dest_cr,
++                PSP_PROFILE(4, FUNC(hl_motion_422)(h, sl, dest_y, dest_cb, dest_cr,
+                               h->h264qpel.put_h264_qpel_pixels_tab,
+                               h->h264chroma.put_h264_chroma_pixels_tab,
+                               h->h264qpel.avg_h264_qpel_pixels_tab,
+                               h->h264chroma.avg_h264_chroma_pixels_tab,
+                               h->h264dsp.weight_h264_pixels_tab,
+-                              h->h264dsp.biweight_h264_pixels_tab);
++                              h->h264dsp.biweight_h264_pixels_tab));
+             } else {
+-                FUNC(hl_motion_420)(h, sl, dest_y, dest_cb, dest_cr,
++                PSP_PROFILE(4, FUNC(hl_motion_420)(h, sl, dest_y, dest_cb, dest_cr,
+                               h->h264qpel.put_h264_qpel_pixels_tab,
+                               h->h264chroma.put_h264_chroma_pixels_tab,
+                               h->h264qpel.avg_h264_qpel_pixels_tab,
+                               h->h264chroma.avg_h264_chroma_pixels_tab,
+                               h->h264dsp.weight_h264_pixels_tab,
+-                              h->h264dsp.biweight_h264_pixels_tab);
++                              h->h264dsp.biweight_h264_pixels_tab));
+             }
+         }
+ 
+-        hl_decode_mb_idct_luma(h, sl, mb_type, SIMPLE, transform_bypass,
+-                               PIXEL_SHIFT, block_offset, linesize, dest_y, 0);
++        PSP_PROFILE(7, hl_decode_mb_idct_luma(h, sl, mb_type, SIMPLE, transform_bypass,
++                               PIXEL_SHIFT, block_offset, linesize, dest_y, 0));
+ 
+         if ((SIMPLE || !CONFIG_GRAY || !(h->flags & AV_CODEC_FLAG_GRAY)) &&
+             (sl->cbp & 0x30)) {
++            PSP_PROFILE(8, {
+             uint8_t *dest[2] = { dest_cb, dest_cr };
+             if (transform_bypass) {
+                 if (IS_INTRA(mb_type) && h->ps.sps->profile_idc == 244 &&
+@@ -243,6 +246,7 @@ static av_noinline void FUNC(hl_decode_mb)(const H264Context *h, H264SliceContex
+                                           sl->mb, uvlinesize,
+                                           sl->non_zero_count_cache);
+             }
++            });
+         }
+     }
+ }
+@@ -324,31 +328,31 @@ static av_noinline void FUNC(hl_decode_mb_444)(const H264Context *h, H264SliceCo
+     } else {
+         if (IS_INTRA(mb_type)) {
+             if (sl->deblocking_filter)
+-                xchg_mb_border(h, sl, dest[0], dest[1], dest[2], linesize,
+-                               linesize, 1, 1, SIMPLE, PIXEL_SHIFT);
++                PSP_PROFILE(9, xchg_mb_border(h, sl, dest[0], dest[1], dest[2], linesize,
++                               linesize, 1, 1, SIMPLE, PIXEL_SHIFT));
+ 
+             for (p = 0; p < plane_count; p++)
+-                hl_decode_mb_predict_luma(h, sl, mb_type, SIMPLE,
++                PSP_PROFILE(5, hl_decode_mb_predict_luma(h, sl, mb_type, SIMPLE,
+                                           transform_bypass, PIXEL_SHIFT,
+-                                          block_offset, linesize, dest[p], p);
++                                          block_offset, linesize, dest[p], p));
+ 
+             if (sl->deblocking_filter)
+-                xchg_mb_border(h, sl, dest[0], dest[1], dest[2], linesize,
+-                               linesize, 0, 1, SIMPLE, PIXEL_SHIFT);
++                PSP_PROFILE(9, xchg_mb_border(h, sl, dest[0], dest[1], dest[2], linesize,
++                               linesize, 0, 1, SIMPLE, PIXEL_SHIFT));
+         } else {
+-            FUNC(hl_motion_444)(h, sl, dest[0], dest[1], dest[2],
++            PSP_PROFILE(4, FUNC(hl_motion_444)(h, sl, dest[0], dest[1], dest[2],
+                       h->h264qpel.put_h264_qpel_pixels_tab,
+                       h->h264chroma.put_h264_chroma_pixels_tab,
+                       h->h264qpel.avg_h264_qpel_pixels_tab,
+                       h->h264chroma.avg_h264_chroma_pixels_tab,
+                       h->h264dsp.weight_h264_pixels_tab,
+-                      h->h264dsp.biweight_h264_pixels_tab);
++                      h->h264dsp.biweight_h264_pixels_tab));
+         }
+ 
+         for (p = 0; p < plane_count; p++)
+-            hl_decode_mb_idct_luma(h, sl, mb_type, SIMPLE, transform_bypass,
++            PSP_PROFILE(7, hl_decode_mb_idct_luma(h, sl, mb_type, SIMPLE, transform_bypass,
+                                    PIXEL_SHIFT, block_offset, linesize,
+-                                   dest[p], p);
++                                   dest[p], p));
+     }
+ }
+ 
+diff --git a/libavcodec/h264_mc_template.c b/libavcodec/h264_mc_template.c
+index d02e2bf..469eca3 100644
+--- a/libavcodec/h264_mc_template.c
++++ b/libavcodec/h264_mc_template.c
+@@ -77,9 +77,11 @@ static void MCFUNC(hl_motion)(const H264Context *h, H264SliceContext *sl,
+     av_assert2(IS_INTER(mb_type));
+ 
+     if (HAVE_THREADS && (h->avctx->active_thread_type & FF_THREAD_FRAME))
+-        await_references(h, sl);
++        PSP_PROFILE(17, await_references(h, sl));
++#ifndef __PSP__
+     if (USES_LIST(mb_type, 0))
+-        prefetch_motion(h, sl, 0, PIXEL_SHIFT, CHROMA_IDC);
++        PSP_PROFILE(16, prefetch_motion(h, sl, 0, PIXEL_SHIFT, CHROMA_IDC));
++#endif
+ 
+     if (IS_16X16(mb_type)) {
+         mc_part(h, sl, 0, 1, 16, 0, dest_y, dest_cb, dest_cr, 0, 0,
+@@ -159,7 +161,9 @@ static void MCFUNC(hl_motion)(const H264Context *h, H264SliceContext *sl,
+         }
+     }
+ 
++#ifndef __PSP__
+     if (USES_LIST(mb_type, 1))
+-        prefetch_motion(h, sl, 1, PIXEL_SHIFT, CHROMA_IDC);
++        PSP_PROFILE(16, prefetch_motion(h, sl, 1, PIXEL_SHIFT, CHROMA_IDC));
++#endif
+ }
+ 
+diff --git a/libavcodec/h264_slice.c b/libavcodec/h264_slice.c
+index aac6f26..8a5cc7c 100644
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -47,6 +47,7 @@
+ #include "refstruct.h"
+ #include "thread.h"
+ #include "threadframe.h"
++#include "psp_profile.h"
+ 
+ static const uint8_t field_scan[16+1] = {
+     0 + 0 * 4, 0 + 1 * 4, 1 + 0 * 4, 0 + 2 * 4,
+@@ -2584,19 +2585,19 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+                 return AVERROR_INVALIDDATA;
+             }
+ 
+-            ret = ff_h264_decode_mb_cabac(h, sl);
++            PSP_PROFILE(0, ret = ff_h264_decode_mb_cabac(h, sl));
+ 
+             if (ret >= 0)
+-                ff_h264_hl_decode_mb(h, sl);
++                PSP_PROFILE(2, ff_h264_hl_decode_mb(h, sl));
+ 
+             // FIXME optimal? or let mb_decode decode 16x32 ?
+             if (ret >= 0 && FRAME_MBAFF(h)) {
+                 sl->mb_y++;
+ 
+-                ret = ff_h264_decode_mb_cabac(h, sl);
++                PSP_PROFILE(0, ret = ff_h264_decode_mb_cabac(h, sl));
+ 
+                 if (ret >= 0)
+-                    ff_h264_hl_decode_mb(h, sl);
++                    PSP_PROFILE(2, ff_h264_hl_decode_mb(h, sl));
+                 sl->mb_y--;
+             }
+             eos = get_cabac_terminate(&sl->cabac);
+@@ -2606,7 +2607,7 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+                 er_add_slice(sl, sl->resync_mb_x, sl->resync_mb_y, sl->mb_x - 1,
+                              sl->mb_y, ER_MB_END);
+                 if (sl->mb_x >= lf_x_start)
+-                    loop_filter(h, sl, lf_x_start, sl->mb_x + 1);
++                    PSP_PROFILE(3, loop_filter(h, sl, lf_x_start, sl->mb_x + 1));
+                 goto finish;
+             }
+             if (sl->cabac.bytestream > sl->cabac.bytestream_end + 2 )
+@@ -2622,7 +2623,7 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+             }
+ 
+             if (++sl->mb_x >= h->mb_width) {
+-                loop_filter(h, sl, lf_x_start, sl->mb_x);
++                PSP_PROFILE(3, loop_filter(h, sl, lf_x_start, sl->mb_x));
+                 sl->mb_x = lf_x_start = 0;
+                 decode_finish_row(h, sl);
+                 ++sl->mb_y;
+@@ -2639,7 +2640,7 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+                 er_add_slice(sl, sl->resync_mb_x, sl->resync_mb_y, sl->mb_x - 1,
+                              sl->mb_y, ER_MB_END);
+                 if (sl->mb_x > lf_x_start)
+-                    loop_filter(h, sl, lf_x_start, sl->mb_x);
++                    PSP_PROFILE(3, loop_filter(h, sl, lf_x_start, sl->mb_x));
+                 goto finish;
+             }
+         }
+@@ -2655,18 +2656,18 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+                 return AVERROR_INVALIDDATA;
+             }
+ 
+-            ret = ff_h264_decode_mb_cavlc(h, sl);
++            PSP_PROFILE(1, ret = ff_h264_decode_mb_cavlc(h, sl));
+ 
+             if (ret >= 0)
+-                ff_h264_hl_decode_mb(h, sl);
++                PSP_PROFILE(2, ff_h264_hl_decode_mb(h, sl));
+ 
+             // FIXME optimal? or let mb_decode decode 16x32 ?
+             if (ret >= 0 && FRAME_MBAFF(h)) {
+                 sl->mb_y++;
+-                ret = ff_h264_decode_mb_cavlc(h, sl);
++                PSP_PROFILE(1, ret = ff_h264_decode_mb_cavlc(h, sl));
+ 
+                 if (ret >= 0)
+-                    ff_h264_hl_decode_mb(h, sl);
++                    PSP_PROFILE(2, ff_h264_hl_decode_mb(h, sl));
+                 sl->mb_y--;
+             }
+ 
+@@ -2679,7 +2680,7 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+             }
+ 
+             if (++sl->mb_x >= h->mb_width) {
+-                loop_filter(h, sl, lf_x_start, sl->mb_x);
++                PSP_PROFILE(3, loop_filter(h, sl, lf_x_start, sl->mb_x));
+                 sl->mb_x = lf_x_start = 0;
+                 decode_finish_row(h, sl);
+                 ++sl->mb_y;
+@@ -2715,7 +2716,7 @@ static int decode_slice(struct AVCodecContext *avctx, void *arg)
+                     er_add_slice(sl, sl->resync_mb_x, sl->resync_mb_y,
+                                  sl->mb_x - 1, sl->mb_y, ER_MB_END);
+                     if (sl->mb_x > lf_x_start)
+-                        loop_filter(h, sl, lf_x_start, sl->mb_x);
++                        PSP_PROFILE(3, loop_filter(h, sl, lf_x_start, sl->mb_x));
+ 
+                     goto finish;
+                 } else {
+diff --git a/libavcodec/h264chroma_template.c b/libavcodec/h264chroma_template.c
+index b9d24f5..eb55033 100644
+--- a/libavcodec/h264chroma_template.c
++++ b/libavcodec/h264chroma_template.c
+@@ -25,7 +25,19 @@
+ #include "libavutil/avassert.h"
+ #include "bit_depth_template.c"
+ 
+-#define H264_CHROMA_MC(OPNAME, OP)\
++#if BIT_DEPTH == 8 && defined(__PSP__)
++#include "psp_chroma_fast.h"
++#define PSP_CHROMA_COPY8(FUNC) do {\
++    if (x == 0 && y == 0) {\
++        FUNC(_dst, _src, stride, h);\
++        return;\
++    }\
++} while (0)
++#else
++#define PSP_CHROMA_COPY8(FUNC) do { } while (0)
++#endif
++
++#define H264_CHROMA_MC(OPNAME, OP, COPY8)\
+ static void FUNCC(OPNAME ## h264_chroma_mc1)(uint8_t *_dst /*align 8*/, const uint8_t *_src /*align 1*/, ptrdiff_t stride, int h, int x, int y){\
+     pixel *dst = (pixel*)_dst;\
+     const pixel *src = (const pixel*)_src;\
+@@ -153,6 +165,7 @@ static void FUNCC(OPNAME ## h264_chroma_mc8)(uint8_t *_dst /*align 8*/, const ui
+     const int C=(8-x)*(  y);\
+     const int D=(  x)*(  y);\
+     int i;\
++    PSP_CHROMA_COPY8(COPY8);\
+     stride >>= sizeof(pixel)-1;\
+     \
+     av_assert2(x<8 && y<8 && x>=0 && y>=0);\
+@@ -204,7 +217,8 @@ static void FUNCC(OPNAME ## h264_chroma_mc8)(uint8_t *_dst /*align 8*/, const ui
+ #define op_avg(a, b) a = (((a)+(((b) + 32)>>6)+1)>>1)
+ #define op_put(a, b) a = (((b) + 32)>>6)
+ 
+-H264_CHROMA_MC(put_       , op_put)
+-H264_CHROMA_MC(avg_       , op_avg)
++H264_CHROMA_MC(put_       , op_put, psp_chroma_put8_copy)
++H264_CHROMA_MC(avg_       , op_avg, psp_chroma_avg8_copy)
++#undef PSP_CHROMA_COPY8
+ #undef op_avg
+ #undef op_put
+diff --git a/libavcodec/psp_profile.h b/libavcodec/psp_profile.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/psp_profile.h
+@@ -0,0 +1,25 @@
++/* Single-thread PSP lab profiling hooks; times are sampled, not totals. */
++#ifndef PSP_LAB_PROFILE_H
++#define PSP_LAB_PROFILE_H
++#include <stdint.h>
++#define PSP_PROFILE_QPEL_BASE 20
++#define PSP_PROFILE_CHROMA_BASE 148
++#define PSP_PROFILE_STAGES 180
++#define PSP_PROFILE_INTERVAL 31
++typedef struct {
++    uint64_t us;
++    unsigned calls, samples;
++} PspProfileStage;
++extern int psp_profile_enabled;
++extern PspProfileStage psp_profile_stages[PSP_PROFILE_STAGES];
++unsigned psp_profile_tick(void);
++#define PSP_PROFILE(stage, ...) do { \
++    if (!psp_profile_enabled) { __VA_ARGS__; } else { \
++        PspProfileStage *psp_prof_counter = &psp_profile_stages[stage]; \
++        int psp_prof_sample = (psp_prof_counter->calls++ % PSP_PROFILE_INTERVAL) == 0; \
++        unsigned psp_prof_begin = psp_prof_sample ? psp_profile_tick() : 0; \
++        __VA_ARGS__; \
++        if (psp_prof_sample) { psp_prof_counter->us += (unsigned)(psp_profile_tick() - psp_prof_begin); ++psp_prof_counter->samples; } \
++    } \
++} while (0)
++#endif
+diff --git a/libavcodec/psp_chroma_fast.h b/libavcodec/psp_chroma_fast.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/psp_chroma_fast.h
+@@ -0,0 +1,41 @@
++#ifndef AVCODEC_PSP_CHROMA_FAST_H
++#define AVCODEC_PSP_CHROMA_FAST_H
++
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++static inline uint32_t psp_avg_bytes(uint32_t dst, uint32_t src)
++{
++    return (dst | src) - (((dst ^ src) & 0xfefefefeU) >> 1);
++}
++
++static inline void psp_chroma_put8_copy(uint8_t *dst, const uint8_t *src,
++                                        ptrdiff_t stride, int height)
++{
++    for (int row = 0; row < height; ++row) {
++        memcpy(dst, src, 8);
++        dst += stride;
++        src += stride;
++    }
++}
++
++static inline void psp_chroma_avg8_copy(uint8_t *dst, const uint8_t *src,
++                                        ptrdiff_t stride, int height)
++{
++    for (int row = 0; row < height; ++row) {
++        uint32_t d0, d1, s0, s1;
++        memcpy(&d0, dst, 4);
++        memcpy(&d1, dst + 4, 4);
++        memcpy(&s0, src, 4);
++        memcpy(&s1, src + 4, 4);
++        d0 = psp_avg_bytes(d0, s0);
++        d1 = psp_avg_bytes(d1, s1);
++        memcpy(dst, &d0, 4);
++        memcpy(dst + 4, &d1, 4);
++        dst += stride;
++        src += stride;
++    }
++}
++
++#endif

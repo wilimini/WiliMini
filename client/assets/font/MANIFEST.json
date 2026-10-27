@@ -1,0 +1,14 @@
+{
+  "family": "WenQuanYi Micro Hei",
+  "source": "wqy-microhei-0.2.0-beta.ttc",
+  "source_sha256": "e4bca8df123ce01b104780f576ea1a58b9a5ff1662a91124b6d3180cb6c88212",
+  "sizes": [
+    12,
+    14,
+    16
+  ],
+  "glyphs": 91053,
+  "coverage": "Latin, symbols, punctuation, kana, BMP CJK and fullwidth",
+  "format": "4-bit coverage; sorted index; glyphs loaded through a bounded cache",
+  "bytes": 10750484
+}
