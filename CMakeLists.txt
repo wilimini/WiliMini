@@ -346,6 +346,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/api/wiliwili/LICENSE" "${PACKAGE_DIR}/licenses/wiliwili.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/qrcodegen/LICENSE.txt" "${PACKAGE_DIR}/licenses/qrcodegen.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/pspsdk/LICENSE" "${PACKAGE_DIR}/licenses/pspsdk.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/third_party/nlohmann/LICENSE.MIT" "${PACKAGE_DIR}/licenses/nlohmann-json.txt"
     COMMAND python3 "${ROOT}/scripts/write-client-manifest.py"
         --root "${ROOT}"
         --package "${PACKAGE_DIR}"
