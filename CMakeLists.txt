@@ -329,6 +329,7 @@ set(PACKAGE_DIR "${BILI_DIST_DIR}/PSP/GAME/WiliMini")
 add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${PACKAGE_DIR}/licenses"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${PACKAGE_DIR}/cache"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/LICENSE" "${PACKAGE_DIR}/licenses/wili-mini.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP"
         "${CMAKE_BINARY_DIR}/wili_mini.prx"

@@ -255,6 +255,10 @@ results/      PPSSPP、真机和离线回放结果
 - [Media Engine 实验](experiments/me/)
 - [实验结果](results/)
 
+## 许可证
+
+WiliMini 采用 GNU General Public License v3 协议开源
+
 ## 致谢
 
 感谢以下项目及其贡献者。
