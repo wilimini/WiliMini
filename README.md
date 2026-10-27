@@ -123,11 +123,10 @@ third_party/psp-media-engine-custom-core/
 
 ### 构建客户端
 
-使用项目根目录的 Makefile。首次构建先准备依赖，再编译打包：
+使用项目根目录的 Makefile。默认目标会先准备依赖，再编译打包：
 
 ```sh
-make dependencies
-make package
+make
 ```
 
 Makefile 会调用 CMake 编排配置、编译和打包流程。常用目标包括：

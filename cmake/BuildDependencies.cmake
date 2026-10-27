@@ -55,9 +55,10 @@ ExternalProject_Add(psp_curl
         --without-libidn2 --without-libpsl --without-brotli --without-zstd
         --with-mbedtls=${PSPDEV}/psp --with-zlib=${PSPDEV}/psp
         --without-ca-path --without-ca-bundle
-    BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" -C <SOURCE_DIR>/lib --parallel 4
+    BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" -C <BINARY_DIR>/lib -j4
     INSTALL_COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${BILI_CURL_SOURCE_DIR}"
+        "-DBUILD_DIR=${BILI_CURL_BUILD_DIR}"
         "-DINSTALL_PREFIX=${BILI_CURL_INSTALL_PREFIX}"
         "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
         -P "${CMAKE_SOURCE_DIR}/cmake/InstallCurl.cmake"
@@ -90,7 +91,7 @@ ExternalProject_Add(psp_ffmpeg
             --enable-demuxer=mov,flv --enable-protocol=file
             "--extra-cflags=-O3 -G0 -Wno-error=incompatible-pointer-types"
             --extra-ldflags=-G0 --pkg-config=/usr/bin/false
-        BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" --parallel 4
+        BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" -j4
         INSTALL_COMMAND "${CMAKE_MAKE_PROGRAM}" install
         BUILD_BYPRODUCTS "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a")
 

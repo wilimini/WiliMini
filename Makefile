@@ -13,7 +13,7 @@ COMMON_CONFIG := -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 all: package
 
-configure:
+configure: dependencies
 	PSPDEV="$(PSPDEV)" PATH="$(PSPDEV)/bin:$$PATH" $(PSP_CMAKE) $(COMMON_CONFIG) $(CMAKE_ARGS)
 
 build: configure
