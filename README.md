@@ -175,8 +175,13 @@ cmake --build build/client --target package --parallel 4
 
 ### 安装到 PSP
 
-将 `dist/PSP/GAME/WiliMini/` 整个目录复制到记忆棒的 `PSP/GAME/`，然后从 PSP
-游戏菜单启动。
+从 [GitHub Releases](https://github.com/wilimini/WiliMini/releases/latest) 下载
+`WiliMini-<版本号>.zip` 并解压。将解压得到的 `WiliMini/` 整个目录复制到记忆棒的
+`PSP/GAME/`，最终路径应为 `ms0:/PSP/GAME/WiliMini/EBOOT.PBP`。然后从 PSP 游戏菜单启动
+WiliMini。
+
+如果从源码构建，则将 `dist/PSP/GAME/WiliMini/` 整个目录复制到记忆棒的
+`PSP/GAME/`。
 
 目录中的主要文件包括：
 

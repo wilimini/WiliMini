@@ -1,0 +1,104 @@
+name: Build PSP package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PSPDEV_VERSION: v20261001
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify release tag is on main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Release tags must point to a commit already merged into main" >&2
+            exit 1
+          fi
+
+      - name: Install PSP build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkgconf libreadline8 \
+            libusb-0.1-4 libgpgme11 libarchive-tools fakeroot curl \
+            git python3 bash zlib1g-dev libssl-dev
+          curl -fL --retry 3 \
+            "https://github.com/pspdev/pspdev/releases/download/${PSPDEV_VERSION}/pspdev-ubuntu-latest-x86_64.tar.gz" \
+            -o "$RUNNER_TEMP/pspdev.tar.gz"
+          tar -xzf "$RUNNER_TEMP/pspdev.tar.gz" -C "$RUNNER_TEMP"
+          echo "PSPDEV=$RUNNER_TEMP/pspdev" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/pspdev/bin" >> "$GITHUB_PATH"
+
+      - name: Build PSP package
+        run: |
+          cmake --version
+          psp-gcc --version
+          make package PSPDEV="$PSPDEV" PARALLEL=2 \
+            CMAKE_ARGS="-DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+
+      - name: Create install archive and checksum
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+          elif [[ -n "$PR_NUMBER" ]]; then
+            VERSION="pr-$PR_NUMBER"
+          else
+            VERSION="${GITHUB_SHA:0:8}"
+          fi
+          mkdir -p artifacts
+          ARCHIVE="WiliMini-$VERSION.zip"
+          (cd dist/PSP/GAME && python3 -m zipfile -c "$GITHUB_WORKSPACE/artifacts/$ARCHIVE" WiliMini)
+          (cd artifacts && sha256sum "$ARCHIVE" > "$ARCHIVE.sha256")
+
+      - name: Upload PSP package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WiliMini-build
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download successful build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: WiliMini-build
+          path: artifacts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WiliMini ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.zip
+            artifacts/*.sha256
