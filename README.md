@@ -1,5 +1,7 @@
 # WiliMini
 
+![WiliMini Logo](assets/ICON0.svg)
+
 WiliMini 是一个运行在 Sony PlayStation Portable（PSP）上的第三方 B站 客户端。
 
 它使用 PSP 原生网络访问服务，在设备本地完成页面渲染、视频下载、音视频解码和显示，不依赖外部串流设备。
