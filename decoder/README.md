@@ -5,7 +5,7 @@ PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 
 - `src/`：FFmpeg 调用、VFPU DSP、音频输出、音频时钟与 RGB 队列。
 - `me/`：ME 内核桥、用户态导入、转色与缩放任务。内核桥先于播放器 PRX 加载。
-客户端构建：`sh scripts/build-client.sh`。CMake 在 `build/client/` 生成静态库、
+客户端构建：`make package`。CMake 在 `build/client/` 生成静态库、
 客户端 PRX、ME 桥和加载器，
 同时生成保留重链接所需的对象、ELF、map 和配置。依赖已有的 PSPDEV、
 `build/ffmpeg-audio-install`、FFmpeg 的配置目录和 `build/me` 的 core mapper 对象。
@@ -13,8 +13,7 @@ PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 `git submodule update --init --recursive`（首次克隆也可使用
 `git clone --recurse-submodules`）。然后将
 `patches/ffmpeg/0001-psp-sampled-h264-profile.patch` 应用到
-`third_party/ffmpeg`，再运行 `scripts/build-audio-libs.sh` 和
-`scripts/build-me.sh`。
+`third_party/ffmpeg`，再运行 `make ffmpeg` 和 `make me`。
 
 ```c
 #include "psp_video.h"

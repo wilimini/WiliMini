@@ -42,12 +42,18 @@ set(PSP_CURL_PREFIX "${CMAKE_SOURCE_DIR}/build/curl-install" CACHE PATH
     "PSP libcurl installation prefix")
 set(BILI_CA_BUNDLE "/etc/ssl/cert.pem" CACHE FILEPATH "CA bundle installed with the client")
 set(BILI_DIST_DIR "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "Packaging root")
+option(BILI_BUILD_CLIENT "Configure the PSP client and packaging targets" ON)
+set(BILI_FONT_FILE "" CACHE FILEPATH "Font source used by the generate-font target")
+set(BILI_WILIWILI_DIR "" CACHE PATH "Wiliwili checkout used by the UI asset generator")
 
 set(ROOT "${CMAKE_SOURCE_DIR}")
 set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
 
+include("${ROOT}/cmake/BuildDependencies.cmake")
+
+if(BILI_BUILD_CLIENT)
 foreach(required
         "${PSP_FFMPEG_PREFIX}/lib/libavformat.a"
         "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a"
@@ -343,4 +349,27 @@ if(BILI_UI_REVIEW)
             "${ROOT}/client/assets/wiliwili/FONT-LICENSE.txt"
             "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt"
             "${PACKAGE_DIR}/licenses")
+endif()
+endif()
+
+add_custom_target(assets)
+if(BILI_FONT_FILE)
+    add_custom_target(generate-font
+        COMMAND python3 "${ROOT}/scripts/prepare-client-font.py" "${BILI_FONT_FILE}"
+        DEPENDS "${BILI_FONT_FILE}"
+        BYPRODUCTS "${ROOT}/client/assets/font/wqy.bmf"
+        COMMENT "Generating PSP bitmap font")
+    add_dependencies(assets generate-font)
+endif()
+if(BILI_WILIWILI_DIR)
+    add_custom_target(generate-ui-assets
+        COMMAND python3 "${ROOT}/scripts/prepare-ui-review-assets.py" "${BILI_WILIWILI_DIR}"
+        BYPRODUCTS "${ROOT}/client/assets/wiliwili/generated.hpp"
+        COMMENT "Generating UI review assets")
+    add_dependencies(assets generate-ui-assets)
+endif()
+
+if(BILI_BUILD_CLIENT)
+    add_custom_target(me DEPENDS me_bridge)
+    add_dependencies(package assets)
 endif()

@@ -117,10 +117,31 @@ third_party/psp-media-engine-custom-core/
 
 ### 构建客户端
 
-推荐使用项目脚本：
+使用项目根目录的 Makefile。首次构建先准备依赖，再编译打包：
 
 ```sh
-sh scripts/build-client.sh
+make dependencies
+make package
+```
+
+Makefile 会调用 CMake 编排配置、编译和打包流程。常用目标包括：
+
+```sh
+make dependencies  # 构建 PSP curl 和 FFmpeg
+make curl          # 只构建 curl
+make ffmpeg        # 只构建 FFmpeg
+make build         # 编译客户端
+make package       # 编译并生成 dist/PSP/GAME/WiliMini
+make me            # 编译客户端和 Media Engine 组件
+make assets        # 生成已配置的字体/UI review 资源
+```
+
+通过 `BUILD_DIR`、`BUILD_TYPE` 和 `PARALLEL` 调整构建目录、类型和并行度；
+CMake 选项统一通过 `CMAKE_ARGS` 传递，例如：
+
+```sh
+make package BUILD_DIR=build/client-offline \
+  CMAKE_ARGS='-DBILI_DEVICE_OFFLINE_UI=ON'
 ```
 
 也可以直接使用 CMake：
@@ -201,7 +222,7 @@ pspsh -p 11000
 ```text
 client/       Bilibili 客户端、UI、网络服务和播放控制
 decoder/      FFmpeg 播放器、音频、VFPU 和 Media Engine 路径
-scripts/      构建、打包和资源生成脚本
+scripts/      资源生成和构建清单的 Python 脚本
 tools/        PPSSPP 回放、PSP 辅助工具和主机测试
 third_party/  固定版本的第三方依赖
 docs/         设计文档、故障分析和研究记录

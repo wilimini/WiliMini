@@ -32,9 +32,7 @@ sources = [
     *root.glob("client/services/*.cpp"),
     root / "third_party/ffmpeg/libavutil/tx_template.c",
     root / "patches/ffmpeg-psp-tx-tables.patch",
-    root / "scripts/build-audio-libs.sh",
     root / "patches/curl-psp-select-pending.patch",
-    root / "scripts/build-client-curl.sh",
     root / "build/curl-source/lib/select.c",
     *root.glob("decoder/src/*.[ch]"),
     *root.glob("decoder/include/*.h"),
@@ -42,8 +40,8 @@ sources = [
     *root.glob("third_party/nlohmann/nlohmann/json.hpp"),
     *root.glob("third_party/pystring/pystring.h"),
     root / "CMakeLists.txt",
+    root / "Makefile",
     *root.glob("cmake/*.cmake"),
-    root / "scripts/build-client.sh",
 ]
 libraries = [*ffmpeg.glob("lib/*.a"), curl / "lib/libcurl.a"]
 files = {

@@ -13,7 +13,7 @@ timeout=${BILI_HEADLESS_TIMEOUT:-7}
 timeout_emulated=${BILI_HEADLESS_TIMEOUT_EMULATED:-}
 
 test -x "$runner" || { echo "Build PPSSPPHeadless first (tools/ppsspp/build-ppsspp-headless.sh)." >&2; exit 1; }
-test -f "$client_dir/loader/bootstrap.prx" || { echo "Build the client first (scripts/build-client.sh)." >&2; exit 1; }
+test -f "$client_dir/loader/bootstrap.prx" || { echo "Build the client first (make package)." >&2; exit 1; }
 test -f "$package/wili_mini.prx" || { echo "Missing packaged client: $package" >&2; exit 1; }
 
 mkdir -p "$memstick/PSP/GAME" "$memstick/PSP/NAND/flash0/font" "$(dirname -- "$output")"
