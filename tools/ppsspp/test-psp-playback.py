@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 build = root / 'build/playback-test'
 package = root / 'build/playback-test-dist/PSP/GAME/WiliMini'
 out = root / 'results/playback-community'
@@ -48,7 +48,7 @@ for name, config in cases.items():
     if name.endswith('cancel'):
         env['BILI_HEADLESS_PRESS_SCRIPT'] = '4:0x2000:0.2'
     with (out/(name+'.log')).open('w') as log:
-        subprocess.run(['sh', str(root/'scripts/run-client-headless.sh')], env=env, check=True,
+        subprocess.run(['sh', str(root/'tools/ppsspp/run-client-headless.sh')], env=env, check=True,
                        stdout=log, stderr=subprocess.STDOUT)
     result = json.loads((game/'playback-test-result.json').read_text())
     summary = json.loads(next((game/'results').glob('run-*/summary.json')).read_text())

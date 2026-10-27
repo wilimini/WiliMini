@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 out = root / 'build/services-ui-check'
 out.mkdir(parents=True, exist_ok=True)
 package = root / 'build/services-offline-dist/PSP/GAME/WiliMini'
@@ -20,7 +20,7 @@ def replay(name, events, shots, duration, fixtures=None):
     memstick = Path(tempfile.mkdtemp(prefix=name + '-', dir=out))
     game = memstick / 'PSP/GAME/WiliMini'
     shutil.copytree(package, game)
-    subprocess.run([sys.executable, str(root / 'scripts/seed-offline-ui.py'), str(memstick)],
+    subprocess.run([sys.executable, str(root / 'tools/ppsspp/seed-offline-ui.py'), str(memstick)],
                    check=True, stdout=subprocess.DEVNULL)
     for file, body in (fixtures or {}).items():
         (game / 'cache' / file).write_text(json.dumps(body))
@@ -30,7 +30,7 @@ def replay(name, events, shots, duration, fixtures=None):
                BILI_HEADLESS_PRESS_SCRIPT=','.join(f'{t}:{hex(key)}:0.2' for t, key in events),
                BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{t}:{out}/{name}-{label}.png' for t, label in shots))
     with (out / f'{name}.log').open('w') as log:
-        subprocess.run(['sh', str(root / 'scripts/run-client-headless.sh')], env=env,
+        subprocess.run(['sh', str(root / 'tools/ppsspp/run-client-headless.sh')], env=env,
                        stdout=log, stderr=subprocess.STDOUT, check=True)
     trace = [json.loads(line) for line in (game / 'ui-trace.jsonl').read_text().splitlines()]
     return trace

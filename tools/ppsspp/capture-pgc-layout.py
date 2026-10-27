@@ -10,15 +10,15 @@ import sys
 import tempfile
 from PIL import Image
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 out = root / 'results/ui-pgc-layout'
 out.mkdir(parents=True, exist_ok=True)
 memstick = Path(tempfile.mkdtemp(prefix='pgc-layout-', dir=root/'build/headless'))
 game = memstick/'PSP/GAME/WiliMini'
 package = root/'build/pgc-layout-dist/PSP/GAME/WiliMini'
 shutil.copytree(package, game, ignore=shutil.ignore_patterns('cache', 'session.json', 'ui-trace.jsonl'))
-subprocess.run([sys.executable, str(root/'scripts/seed-offline-ui.py'), str(memstick)], check=True)
-spec = importlib.util.spec_from_file_location('seed', root/'scripts/seed-community-ui.py')
+subprocess.run([sys.executable, str(root/'tools/ppsspp/seed-offline-ui.py'), str(memstick)], check=True)
+spec = importlib.util.spec_from_file_location('seed', root/'tools/ppsspp/seed-community-ui.py')
 seed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(seed)
 fixture = seed.seed(game)
@@ -57,7 +57,7 @@ env = dict(os.environ, BILI_HEADLESS_CLIENT_DIR=str(root/'build/pgc-layout'),
            BILI_HEADLESS_PRESS_SCRIPT=','.join(f'{t}:{hex(k)}:0.15' for t,k in events),
            BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{t}:{out}/{label}.png' for t,label in shots))
 with (out/'replay.log').open('w') as log:
-    subprocess.run(['sh', str(root/'scripts/run-client-headless.sh')], env=env,
+    subprocess.run(['sh', str(root/'tools/ppsspp/run-client-headless.sh')], env=env,
                    check=True, stdout=log, stderr=subprocess.STDOUT)
 trace = [json.loads(line) for line in (game/'ui-trace.jsonl').read_text().splitlines()]
 for _, label in shots:

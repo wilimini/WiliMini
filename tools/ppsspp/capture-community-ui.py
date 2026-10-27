@@ -9,10 +9,10 @@ import subprocess
 import sys
 import tempfile
 from PIL import Image,ImageDraw
-root=Path(__file__).resolve().parents[1]
+root=Path(__file__).resolve().parents[2]
 out=root/'results/ui-community';out.mkdir(parents=True,exist_ok=True)
 package=root/'build/community-offline-dist/PSP/GAME/WiliMini'
-spec=importlib.util.spec_from_file_location('community_seed',root/'scripts/seed-community-ui.py')
+spec=importlib.util.spec_from_file_location('community_seed',root/'tools/ppsspp/seed-community-ui.py')
 seed=importlib.util.module_from_spec(spec);spec.loader.exec_module(seed)
 scenarios={
  'dynamic': ([(2,0x80),(3,0x40),(4,0x4000),(7,0x40),(8,0x4000),(11,0x40),(12,0x4000),(15,0x2000),(17,0x2000),(19,0x200),(22,0x2000)],[(6,'feed'),(10,'detail'),(14,'video'),(20,'pagination'),(23,'returned')],24),
@@ -28,11 +28,11 @@ for name,(events,shots,duration) in scenarios.items():
     memstick=Path(tempfile.mkdtemp(prefix='community-'+name+'-',dir=root/'build/headless'))
     game=memstick/'PSP/GAME/WiliMini'
     shutil.copytree(package,game,ignore=shutil.ignore_patterns('cache','session.json','history.json','later.json','ui-trace.jsonl'))
-    subprocess.run([sys.executable,str(root/'scripts/seed-offline-ui.py'),str(memstick)],check=True,stdout=subprocess.DEVNULL)
+    subprocess.run([sys.executable,str(root/'tools/ppsspp/seed-offline-ui.py'),str(memstick)],check=True,stdout=subprocess.DEVNULL)
     seed.seed(game)
     env=dict(os.environ,BILI_HEADLESS_CLIENT_DIR=str(root/'build/community-offline'),BILI_HEADLESS_PACKAGE=str(package),BILI_HEADLESS_MEMSTICK=str(memstick),BILI_HEADLESS_TIMEOUT='120',BILI_HEADLESS_TIMEOUT_EMULATED=str(duration),
         BILI_HEADLESS_PRESS_SCRIPT=','.join(f'{time}:{hex(key)}:0.15' for time,key in events),BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{time}:{out}/{name}-{label}.png' for time,label in shots))
-    with (out/f'{name}.log').open('w') as log:subprocess.run(['sh',str(root/'scripts/run-client-headless.sh')],env=env,check=True,stdout=log,stderr=subprocess.STDOUT)
+    with (out/f'{name}.log').open('w') as log:subprocess.run(['sh',str(root/'tools/ppsspp/run-client-headless.sh')],env=env,check=True,stdout=log,stderr=subprocess.STDOUT)
     trace=[json.loads(line) for line in (game/'ui-trace.jsonl').read_text().splitlines()]
     (out/f'{name}-trace.json').write_text(json.dumps(trace,indent=2))
     for _,label in shots:Image.open(out/f'{name}-{label}.png').crop((0,0,480,272)).save(out/f'{name}-{label}-display.png')

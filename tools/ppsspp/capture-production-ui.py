@@ -9,18 +9,18 @@ import sys
 import tempfile
 from PIL import Image, ImageDraw, ImageFont
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 output = root / 'results/ui-review'
 output.mkdir(parents=True, exist_ok=True)
 (root / 'build/headless').mkdir(parents=True, exist_ok=True)
 memstick = Path(tempfile.mkdtemp(prefix='production-ui-', dir=root / 'build/headless'))
 game = memstick / 'PSP/GAME/WiliMini'
 shutil.copytree(root / 'dist/PSP/GAME/WiliMini', game, ignore=shutil.ignore_patterns('cache', 'history.json', 'later.json'))
-subprocess.run([sys.executable, str(root / 'scripts/seed-offline-ui.py'), str(memstick)], check=True)
+subprocess.run([sys.executable, str(root / 'tools/ppsspp/seed-offline-ui.py'), str(memstick)], check=True)
 shots = [(1.5,'home'),(5,'detail'),(8.5,'detail-part'),(13,'comments'),(16.5,'comments-scroll'),(22,'comments-end'),(26.5,'return'),(31.5,'mine'),(34.5,'mine-detail'),(38,'mine-return')]
 presses = '2:0x4000:0.2,5.5:0x40:0.2,6:0x8000:0.2,9:0x200:0.2,14:0x40:1.5,17:0x200:0.2,20:0x40:1.5,23:0x2000:0.2,25:0x2000:0.2,27:0x80:0.2,28:0x40:0.2,29:0x4000:0.2,32:0x4000:0.2,35:0x2000:0.2'
 env = dict(os.environ, BILI_HEADLESS_CLIENT_DIR=str(root/'build/client-offline'), BILI_HEADLESS_MEMSTICK=str(memstick), BILI_HEADLESS_TIMEOUT='90', BILI_HEADLESS_TIMEOUT_EMULATED='39', BILI_HEADLESS_PRESS_SCRIPT=presses, BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{t}:{output}/app-flow-{name}.png' for t,name in shots))
-subprocess.run(['sh', str(root / 'scripts/run-client-headless.sh')], env=env, check=True)
+subprocess.run(['sh', str(root / 'tools/ppsspp/run-client-headless.sh')], env=env, check=True)
 for _,name in shots:
     Image.open(output / f'app-flow-{name}.png').crop((0,0,480,272)).save(output / f'app-flow-{name}-display.png')
 (output/'production-flow-manifest.json').write_text(json.dumps(dict(build='BILI_DEVICE_OFFLINE_UI; production App, synthetic API fixtures', memstick=str(memstick), presses=presses, screenshots=shots),indent=2)+'\n')

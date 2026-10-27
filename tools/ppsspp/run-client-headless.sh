@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 runner=${PPSSPP_HEADLESS:-"$root/build/ppsspp-headless/PPSSPPHeadless"}
 memstick=${BILI_HEADLESS_MEMSTICK:-"$root/build/headless/memstick"}
 client_dir=${BILI_HEADLESS_CLIENT_DIR:-"$root/build/client"}
@@ -12,7 +12,7 @@ screenshot_at=${BILI_HEADLESS_SCREENSHOT_AT:-"5.0:$output"}
 timeout=${BILI_HEADLESS_TIMEOUT:-7}
 timeout_emulated=${BILI_HEADLESS_TIMEOUT_EMULATED:-}
 
-test -x "$runner" || { echo "Build PPSSPPHeadless first (scripts/build-ppsspp-headless.sh)." >&2; exit 1; }
+test -x "$runner" || { echo "Build PPSSPPHeadless first (tools/ppsspp/build-ppsspp-headless.sh)." >&2; exit 1; }
 test -f "$client_dir/loader/bootstrap.prx" || { echo "Build the client first (scripts/build-client.sh)." >&2; exit 1; }
 test -f "$package/wili_mini.prx" || { echo "Missing packaged client: $package" >&2; exit 1; }
 

@@ -201,7 +201,8 @@ pspsh -p 11000
 ```text
 client/       Bilibili 客户端、UI、网络服务和播放控制
 decoder/      FFmpeg 播放器、音频、VFPU 和 Media Engine 路径
-scripts/      构建、测试和打包脚本
+scripts/      构建、打包和资源生成脚本
+tools/        PPSSPP 回放、PSP 辅助工具和主机测试
 third_party/  固定版本的第三方依赖
 docs/         设计文档、故障分析和研究记录
 experiments/  独立实验及其复现资料

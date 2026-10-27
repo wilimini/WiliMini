@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 source=${PPSSPP_SOURCE:-"$root/build/ppsspp-src"}
 build=${PPSSPP_BUILD_DIR:-"$root/build/ppsspp-headless-src"}
 out=${PPSSPP_HEADLESS_DIR:-"$root/build/ppsspp-headless"}

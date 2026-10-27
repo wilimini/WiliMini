@@ -9,7 +9,7 @@ from urllib.parse import quote
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('memstick', type=Path)
 args = parser.parse_args()
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 cache = args.memstick / 'PSP/GAME/WiliMini/cache'
 cache.mkdir(parents=True, exist_ok=True)
 home = json.loads((root / 'tests/fixtures/ui-home.json').read_text())

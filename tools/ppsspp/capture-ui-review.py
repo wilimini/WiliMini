@@ -4,7 +4,7 @@ import argparse, json, shutil, subprocess
 from pathlib import Path
 from PIL import Image, ImageDraw
 p=argparse.ArgumentParser();p.add_argument('--input-check',action='store_true');args=p.parse_args()
-root=Path(__file__).resolve().parents[1];out=root/'results/ui-review';out.mkdir(parents=True,exist_ok=True)
+root=Path(__file__).resolve().parents[2];out=root/'results/ui-review';out.mkdir(parents=True,exist_ok=True)
 mem=root/('build/ui-review-input-memstick' if args.input_check else 'build/ui-review-memstick')
 game=mem/'PSP/GAME/WiliMini';game.mkdir(parents=True,exist_ok=True)
 shutil.copytree(root/'build/ui-review-dist/PSP/GAME/WiliMini',game,dirs_exist_ok=True)

@@ -9,7 +9,7 @@ import sys
 import tempfile
 from PIL import Image, ImageDraw
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 output = root/'results/ui-settings'
 output.mkdir(parents=True, exist_ok=True)
 package = root/'build/settings-dist/PSP/GAME/WiliMini'
@@ -17,7 +17,7 @@ package = root/'build/settings-dist/PSP/GAME/WiliMini'
 memstick = Path(tempfile.mkdtemp(prefix='settings-ui-', dir=root/'build/headless'))
 game = memstick/'PSP/GAME/WiliMini'
 shutil.copytree(package, game, ignore=shutil.ignore_patterns('cache','settings.json','history.json','later.json','session.json','ui-trace.jsonl'))
-subprocess.run([sys.executable,str(root/'scripts/seed-offline-ui.py'),str(memstick)],check=True)
+subprocess.run([sys.executable,str(root/'tools/ppsspp/seed-offline-ui.py'),str(memstick)],check=True)
 (game/'later.json').write_text('[]')
 (game/'cache/protected.json').write_text('{"keep":true}')
 shutil.copy(root/'client/assets/wiliwili/08.png',game/'cache/protected.png')
@@ -29,7 +29,7 @@ events = [(2,0x80,.2),(3,0x10,.2),(4,0x4000,.2),(8,0x20,.8),(12,0x40,.2),(13,0x2
 def run(shots, events, duration, prefix='settings'):
     presses = ','.join(f'{time}:{hex(button)}:{hold}' for time,button,hold in events)
     env = dict(os.environ, BILI_HEADLESS_CLIENT_DIR=str(root/'build/settings-offline'),BILI_HEADLESS_PACKAGE=str(package),BILI_HEADLESS_MEMSTICK=str(memstick),BILI_HEADLESS_TIMEOUT='90',BILI_HEADLESS_TIMEOUT_EMULATED=str(duration),BILI_HEADLESS_PRESS_SCRIPT=presses,BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{time}:{output}/{prefix}-{name}.png' for time,name in shots))
-    subprocess.run(['sh',str(root/'scripts/run-client-headless.sh')],env=env,check=True)
+    subprocess.run(['sh',str(root/'tools/ppsspp/run-client-headless.sh')],env=env,check=True)
     for _,name in shots:
         Image.open(output/f'{prefix}-{name}.png').crop((0,0,480,272)).save(output/f'{prefix}-{name}-display.png')
 run(shots,events,76)
