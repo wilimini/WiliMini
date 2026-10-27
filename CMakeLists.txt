@@ -306,14 +306,24 @@ set_target_properties(bootstrap PROPERTIES
 add_custom_command(TARGET bootstrap POST_BUILD
     COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:bootstrap>"
     COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:bootstrap>" "${CMAKE_BINARY_DIR}/loader/bootstrap.prx"
-    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=2 "WiliMini" "${CMAKE_BINARY_DIR}/loader/PARAM.SFO"
+    COMMENT "Generating loader bootstrap.prx")
+
+set(LOADER_PARAM_SFO "${CMAKE_BINARY_DIR}/loader/PARAM.SFO")
+set(LOADER_EBOOT_PBP "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP")
+set(ICON0_PNG "${ROOT}/assets/ICON0.png")
+add_custom_command(OUTPUT "${LOADER_EBOOT_PBP}"
+    BYPRODUCTS "${LOADER_PARAM_SFO}"
+    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=2 "WiliMini" "${LOADER_PARAM_SFO}"
     COMMAND "${PSPDEV}/bin/pack-pbp"
-        "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP"
-        "${CMAKE_BINARY_DIR}/loader/PARAM.SFO"
-        NULL NULL NULL NULL NULL
+        "${LOADER_EBOOT_PBP}"
+        "${LOADER_PARAM_SFO}"
+        "${ICON0_PNG}"
+        NULL NULL NULL NULL
         "${CMAKE_BINARY_DIR}/loader/bootstrap.prx"
         NULL
+    DEPENDS bootstrap "${ICON0_PNG}" "${CMAKE_CURRENT_LIST_FILE}"
     COMMENT "Generating loader EBOOT.PBP")
+add_custom_target(eboot DEPENDS "${LOADER_EBOOT_PBP}")
 
 set(PACKAGE_DIR "${BILI_DIST_DIR}/PSP/GAME/WiliMini")
 add_custom_target(package
@@ -341,7 +351,7 @@ add_custom_target(package
         --ffmpeg "${PSP_FFMPEG_PREFIX}"
         --ffmpeg-source "${BILI_FFMPEG_SOURCE_DIR}"
         --curl "${PSP_CURL_PREFIX}"
-    DEPENDS wili_mini me_bridge bootstrap
+    DEPENDS wili_mini me_bridge eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
 if(BILI_UI_REVIEW)
