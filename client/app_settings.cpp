@@ -42,20 +42,22 @@ void App::openSettings() {
 }
 
 void App::changeSetting() {
-    if (screen_ != Screen::Settings || settingSelection_ > 3) return;
+    if (screen_ != Screen::Settings || settingSelection_ > 4) return;
     Preferences next = preferences_;
     switch (settingSelection_) {
         case 0: next.darkTheme = !next.darkTheme; break;
         case 1: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
         case 2: next.showCovers = !next.showCovers; break;
         case 3: next.slowRepeat = !next.slowRepeat; break;
+        case 4: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
+                    next.playbackBufferFrames == 4 ? 8 : 2; break;
     }
     if (!savePreferences(CLIENT_ROOT "/settings.json", next)) {
         status_ = "设置保存失败 · 请检查记忆棒空间";
         return;
     }
     preferences_ = next;
-    status_ = "已保存 · 立即生效";
+    status_ = settingSelection_ == 4 ? "已保存 · 下次播放生效 · 小缓冲更省内存" : "已保存 · 立即生效";
 }
 
 void App::updateStorage() {
@@ -86,12 +88,12 @@ std::string App::buildVersion() const {
 // Called by App::activate for the utility pages, without changing list selection.
 void App::activateUtility() {
     if (screen_ == Screen::Settings) {
-        if (settingSelection_ < 4) changeSetting();
-        else if (settingSelection_ == 5) {
+        if (settingSelection_ < 5) changeSetting();
+        else if (settingSelection_ == 6) {
             screen_ = Screen::Storage;
             updateStorage();
-        } else if (settingSelection_ == 6) screen_ = Screen::Help;
-        else if (settingSelection_ == 7) screen_ = Screen::About;
+        } else if (settingSelection_ == 7) screen_ = Screen::Help;
+        else if (settingSelection_ == 8) screen_ = Screen::About;
     } else if (screen_ == Screen::About) {
         screen_ = Screen::Licenses;
     } else if (screen_ == Screen::Licenses) {

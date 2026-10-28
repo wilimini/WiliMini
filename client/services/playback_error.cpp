@@ -1,4 +1,5 @@
 #include "playback_error.hpp"
+#include <cerrno>
 namespace pspapp {
 AppError playbackError(int code, PspVideoStage stage) {
     ErrorOperation operation = ErrorOperation::Decode;
@@ -17,6 +18,7 @@ AppError playbackError(int code, PspVideoStage stage) {
         kind = ErrorKind::IoFailure;
         operation = ErrorOperation::PreparePlayback;
     }
+    if (code == -ENOMEM) kind = ErrorKind::OutOfMemory;
     return {ErrorDomain::Playback, kind, operation, code, 0, psp_video_stage_name(stage)};
 }
 } // namespace pspapp

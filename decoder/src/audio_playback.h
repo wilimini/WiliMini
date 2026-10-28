@@ -228,8 +228,10 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     audio.min_buffer_blocks = AUDIO_BLOCKS;
     int ret = source_open(&audio.format, source, stream, &audio.input_io);
     if (ret < 0) return ret;
+    source_memory("audio_source");
     ret = avformat_find_stream_info(audio.format, NULL);
     if (ret < 0) return ret;
+    source_memory("audio_probe");
     audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (audio.stream < 0) return audio.stream;
     ret = source_start_at(audio.format, audio.stream, playback_start_ms);

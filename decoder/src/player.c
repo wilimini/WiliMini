@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <malloc.h>
 #include <string.h>
 #define WARMUP_FRAMES 30
 #if PSP_PTS_PACE
@@ -630,6 +631,11 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
             s->media_boundary_pts = frame->best_effort_timestamp;
         }
         ++*output_count;
+        if (*output_count == WARMUP_FRAMES) {
+            const struct mallinfo heap = mallinfo();
+            printf("MEM decode heap_used=%u system_free=%u system_max=%u\n",
+                   (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+        }
         av_frame_unref(frame);
         if (*output_count == WARMUP_FRAMES) {
 #if PSP_ME_RENDER && !PSP_ME_RENDER_QUEUE
@@ -705,8 +711,10 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     video_stage = PSP_VIDEO_STAGE_SOURCE;
     ret = source_open(&format, SOURCE, video_io_source, &input_io);
     if (ret < 0) goto done;
+    source_memory("video_source");
     ret = avformat_find_stream_info(format, NULL);
     if (ret < 0) goto done;
+    source_memory("video_probe");
     video_stage = PSP_VIDEO_STAGE_VIDEO_INIT;
     video_index = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     if (video_index < 0) { ret = video_index; goto done; }
@@ -730,6 +738,8 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
+    printf("VIDEO width=%d height=%d refs=%d\n", codec->width, codec->height, codec->refs);
+    source_memory("video_codec");
 #if PSP_APPROX_QPEL
     extern unsigned approx_qpel_test_failures;
     if (approx_qpel_test_failures) { ret = -91; goto done; }
@@ -1019,6 +1029,8 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
 {
     if (result) *result = (PspVideoResult){.error = -1, .error_stage = PSP_VIDEO_STAGE_SETUP};
     if (!options || !options->log_root || (!options->source && !options->path) ||
+        (options->rgb_buffer_frames != 0 && options->rgb_buffer_frames != 2 &&
+         options->rgb_buffer_frames != 4 && options->rgb_buffer_frames != 8) ||
         (options->path && strlen(options->path)>1017) ||
         (options->source && (!options->source->read_at || (options->source->size==0 || options->source->size < -1))) ||
         (options->audio_source && (!options->audio_source->read_at || (options->audio_source->size==0 || options->audio_source->size < -1)))) return -1;
@@ -1027,6 +1039,9 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     playback_start_ms = options->start_ms > 0 ? options->start_ms : 0;
     playback_position_us = 0;
     first_video_us = -1;
+#if PSP_AUDIO && PSP_RGB_PACE
+    rgb_slots = options->rgb_buffer_frames ? options->rgb_buffer_frames : RGB_SLOTS;
+#endif
     char local_source[1024];
     if (options->source) video_source="custom:stream.mp4";
     else if (strncmp(options->path, "file:", 5)) {

@@ -4,10 +4,13 @@
 #define PSP_RGB_PACER_H
 #if PSP_AUDIO && PSP_RGB_PACE
 #include <pspdmac.h>
+#include <malloc.h>
 #define RGB_SLOTS 8
+static unsigned rgb_slots = RGB_SLOTS;
 static int64_t audio_clock_us(void);
 static int audio_playback_failed(void);
-static uint32_t rgb_pixels[RGB_SLOTS][512 * 272] __attribute__((aligned(64)));
+// Playback owns these buffers until the ME and presentation worker have stopped.
+static uint32_t (*rgb_pixels)[512 * 272];
 static int64_t rgb_pts[RGB_SLOTS], presentation_pts_us;
 static SceUID rgb_space = -1, rgb_ready = -1, rgb_thread = -1;
 static volatile unsigned rgb_produced, rgb_consumed;
@@ -26,7 +29,7 @@ static int rgb_worker(SceSize size, void *arg)
     for (;;) {
         sceKernelWaitSema(rgb_ready, 1, NULL);
         if (rgb_stop && rgb_consumed == rgb_produced) return 0;
-        unsigned slot = rgb_consumed % RGB_SLOTS;
+        unsigned slot = rgb_consumed % rgb_slots;
         int64_t target = rgb_pts[slot];
 #if PSP_RGB_NEAREST_PTS
         if (previous_pts != AV_NOPTS_VALUE && target > previous_pts)
@@ -44,7 +47,7 @@ static int rgb_worker(SceSize size, void *arg)
         int64_t late = audio_clock_us() - target;
         /* Never spend DMA bandwidth displaying obsolete queued pictures. */
         if (rgb_produced - rgb_consumed > 1) {
-            int64_t next_pts = rgb_pts[(rgb_consumed + 1) % RGB_SLOTS];
+            int64_t next_pts = rgb_pts[(rgb_consumed + 1) % rgb_slots];
             if (audio_clock_us() >= (rgb_pts[slot] + next_pts) / 2) drop = 1;
         }
         if (!drop && !quit_requested) {
@@ -69,17 +72,38 @@ static int rgb_worker(SceSize size, void *arg)
 }
 static int rgb_start(void)
 {
+    // A failed ME shutdown may still own the previous output allocation.
+    if (rgb_pixels) return AVERROR(EBUSY);
     rgb_produced = rgb_consumed = rgb_presented = rgb_dropped = 0;
     rgb_stop = rgb_error = rgb_startup_ready = 0;
     rgb_max_late_us = rgb_total_late_us = 0;
     rgb_warmup_us = rgb_last_us = 0;
-    rgb_space = sceKernelCreateSema("rgb_space", 0, RGB_SLOTS, RGB_SLOTS, NULL);
-    rgb_ready = sceKernelCreateSema("rgb_ready", 0, 0, RGB_SLOTS + 1, NULL);
-    if (rgb_space < 0 || rgb_ready < 0) return -110;
+    const uint64_t setup_start = sceKernelGetSystemTimeWide();
+    rgb_pixels = memalign(64, rgb_slots * sizeof(*rgb_pixels));
+    if (!rgb_pixels) return AVERROR(ENOMEM);
+    memset(rgb_pixels, 0, rgb_slots * sizeof(*rgb_pixels));
+    sceKernelDcacheWritebackInvalidateRange(rgb_pixels, rgb_slots * sizeof(*rgb_pixels));
+    printf("MEM rgb_start frames=%u bytes=%u setup_us=%u\n", rgb_slots,
+           (unsigned)(rgb_slots * sizeof(*rgb_pixels)),
+           (unsigned)(sceKernelGetSystemTimeWide() - setup_start));
+    rgb_space = sceKernelCreateSema("rgb_space", 0, rgb_slots, rgb_slots, NULL);
+    rgb_ready = sceKernelCreateSema("rgb_ready", 0, 0, rgb_slots + 1, NULL);
+    int ret = -110;
+    if (rgb_space < 0 || rgb_ready < 0) goto failed;
     rgb_thread = sceKernelCreateThread("pts_present", rgb_worker, 0x14, 16 * 1024,
                                       PSP_THREAD_ATTR_USER, NULL);
-    if (rgb_thread < 0) return rgb_thread;
-    return sceKernelStartThread(rgb_thread, 0, NULL);
+    if (rgb_thread < 0) { ret = rgb_thread; goto failed; }
+    ret = sceKernelStartThread(rgb_thread, 0, NULL);
+    if (ret >= 0) return ret;
+    sceKernelDeleteThread(rgb_thread);
+failed:
+    rgb_thread = -1;
+    if (rgb_space >= 0) sceKernelDeleteSema(rgb_space);
+    if (rgb_ready >= 0) sceKernelDeleteSema(rgb_ready);
+    rgb_space = rgb_ready = -1;
+    free(rgb_pixels);
+    rgb_pixels = NULL;
+    return ret;
 }
 static int rgb_acquire(void)
 {
@@ -87,13 +111,13 @@ static int rgb_acquire(void)
         if (rgb_error || quit_requested) return -111;
         SceUInt timeout = 100000;
         int ret = sceKernelWaitSema(rgb_space, 1, &timeout);
-        if (ret >= 0) return rgb_produced % RGB_SLOTS;
+        if (ret >= 0) return rgb_produced % rgb_slots;
         if ((unsigned)ret != 0x800201a8u) return ret;
     }
 }
 static void rgb_publish(int64_t pts)
 {
-    rgb_pts[rgb_produced % RGB_SLOTS] = pts;
+    rgb_pts[rgb_produced % rgb_slots] = pts;
     ++rgb_produced;
     sceKernelSignalSema(rgb_ready, 1);
 }
@@ -115,6 +139,11 @@ static void rgb_close(void)
     if (rgb_space >= 0) sceKernelDeleteSema(rgb_space);
     if (rgb_ready >= 0) sceKernelDeleteSema(rgb_ready);
     rgb_space = rgb_ready = -1;
+}
+static void rgb_release(void)
+{
+    free(rgb_pixels);
+    rgb_pixels = NULL;
 }
 #endif
 #endif

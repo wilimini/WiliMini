@@ -1,5 +1,10 @@
 #ifndef PSP_VIDEO_SOURCE_IO_H
 #define PSP_VIDEO_SOURCE_IO_H
+static void source_memory(const char *phase) {
+    const struct mallinfo heap = mallinfo();
+    printf("MEM %s heap_used=%u system_free=%u system_max=%u\n", phase,
+           (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+}
 typedef struct {
     AVIOContext *io;
     int64_t offset;

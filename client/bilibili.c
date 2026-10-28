@@ -448,7 +448,7 @@ int bili_home(int page,BiliHome *out) {
 /* Small videos stay in a RAM window. Large videos are spooled to a temporary
  * file because a rolling window cannot satisfy every MP4 demuxer seek. */
 #ifndef STREAM_RAM_CACHE_BYTES
-#define STREAM_RAM_CACHE_BYTES (10u*1024*1024)
+#define STREAM_RAM_CACHE_BYTES (512u*1024)
 #endif
 #define STREAM_READER_SLOTS 4
 typedef struct {

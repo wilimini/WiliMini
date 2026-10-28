@@ -671,13 +671,16 @@ void drawUtility(const pspapp::App& app) {
     using pspapp::Screen;
     if (app.screen() == Screen::Settings) {
         drawText(39, 31, 0.5f, kTextDim, "界面与操作 · 修改后自动保存", 428);
-        const char* labels[] = {"主题", "正文字号", "封面加载", "按键连发", "Wi-Fi", "封面缓存", "按键帮助", "关于与开源许可"};
+        const char* labels[] = {"主题", "正文字号", "封面加载", "按键连发", "播放缓冲", "Wi-Fi", "封面缓存", "按键帮助", "关于与开源许可"};
         const auto& preferences = app.preferences();
         const std::string values[] = {preferences.darkTheme ? "深色" : "浅色",
             std::to_string(preferences.bodySize) + " px", preferences.showCovers ? "按需加载" : "关闭",
-            preferences.slowRepeat ? "慢速" : "标准", "系统连接 ›", "管理 ›", "查看 ›", "查看 ›"};
-        for (size_t i = 0; i < 8; ++i) {
-            const int y = 55 + static_cast<int>(i) * 23;
+            preferences.slowRepeat ? "慢速" : "标准",
+            std::to_string(preferences.playbackBufferFrames) + " 帧 / " +
+                std::to_string(preferences.playbackBufferFrames * 544) + "K",
+            "系统连接 ›", "管理 ›", "查看 ›", "查看 ›"};
+        for (size_t i = 0; i < 9; ++i) {
+            const int y = 51 + static_cast<int>(i) * 21;
             if (app.settingSelection() == i) fillRect(33, y + 3, 2, 16, kPink);
             drawText(39, y, 0.7f, kText, labels[i], 280);
             drawText(330, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 138);
@@ -996,6 +999,16 @@ void ui_startup_status(const char *message) {
 void ui_shutdown() {
     bitmapFontShutdown();
     sceGuTerm();
+}
+
+void ui_prepare_playback() {
+    // Decoded covers are cheap to reload after playback and can otherwise keep
+    // nearly 1.8 MiB alive while FFmpeg needs reference pictures and RGB frames.
+    for (auto& cover : covers) {
+        cover.key.clear();
+        std::vector<uint32_t>().swap(cover.pixels);
+    }
+    next_cover = 0;
 }
 
 void ui_resume() {

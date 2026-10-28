@@ -14,6 +14,7 @@ out = root / 'results/playback-community'
 media = root / 'build/playback-fixtures'
 out.mkdir(parents=True, exist_ok=True)
 media.mkdir(parents=True, exist_ok=True)
+(root / 'build/headless').mkdir(parents=True, exist_ok=True)
 
 def ffmpeg(*args):
     subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', *args], check=True)
