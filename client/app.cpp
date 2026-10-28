@@ -382,66 +382,83 @@ void App::loadCachedCards() {
 }
 
 void App::loadDefault() {
-    if (tab_ == Tab::Recommend) startRecommend();
-    else if (tab_ == Tab::Hots) startHots();
+    if (root().tab == Tab::Recommend) startRecommend();
+    else if (root().tab == Tab::Hots) startHots();
 }
 
 void App::refresh() {
-    if (screen_ == Screen::Browse) { browseRefresh(); return; }
-    if (tab_ == Tab::Search && !searchError_.empty()) {
+    if (screen() == Screen::Browse) { browseRefresh(); return; }
+    if (root().tab == Tab::Search && !root().searchError.empty()) {
         startSearch();
         return;
     }
-    if (tab_ == Tab::Recommend) {
+    if (root().tab == Tab::Recommend) {
         recommendPage_ = 1;
         startRecommend();
-    } else if (tab_ == Tab::Hots) {
+    } else if (root().tab == Tab::Hots) {
         hotsPage_ = 1;
         startHots();
-    } else if (tab_ == Tab::Search) {
-        if (searchView_ == SearchView::Results && !query_.empty()) {
+    } else if (root().tab == Tab::Search) {
+        if (root().searchView == SearchView::Results && !root().query.empty()) {
             searchPage_ = 1;
             startSearch();
-        } else if (searchView_ == SearchView::Landing) {
+        } else if (root().searchView == SearchView::Landing) {
             startJob(Job::SearchTopics);
         }
     } else {
-        status_ = tab_ == Tab::Search ? "按 × 输入搜索关键词" : "我的 · 历史与稍后观看";
+        status_ = root().tab == Tab::Search ? "按 × 输入搜索关键词" : "我的 · 历史与稍后观看";
     }
 }
 
 void App::retry() {
-    if (tab_ == Tab::Search && !query_.empty()) startSearch();
+    if (screen() == Screen::Detail && !detailState().loaded) {
+        jobCard_ = detailState().detail.card;
+        startJob(Job::Detail);
+        return;
+    }
+    if (root().tab == Tab::Search && !root().query.empty()) startSearch();
     else refresh();
 }
 
 void App::setTab(Tab nextTab) {
-    if (busy_) return;
-    if (nextTab == Tab::Discover) { openBrowse({BrowseKind::Discover}); return; }
-    tabSelections_[static_cast<int>(tab_)] = selection_;
-    tab_ = nextTab;
-    selection_ = tabSelections_[static_cast<int>(nextTab)];
-    focusArea_ = FocusArea::Content;
-    navigationSelection_ = nextTab == Tab::Mine ? 2 : 0;
-    commentScroll_ = 0;
+    if (busy() || !atTabRoot()) return;
+    if (root().tab == Tab::Discover) {
+        root().tabSelections[static_cast<int>(Tab::Discover)] = browseState().selection;
+        navigation_.pop();
+    } else {
+        root().tabSelections[static_cast<int>(root().tab)] = root().selection;
+    }
+    root().tab = nextTab;
+    root().selection = root().tabSelections[static_cast<int>(nextTab)];
+    navigation_.current().focus = FocusArea::Content;
+    root().navigationSelection = nextTab == Tab::Mine ? 2 : 0;
+    if (nextTab == Tab::Discover) {
+        BrowseRoute page;
+        page.page.request = {BrowseKind::Discover};
+        page.page.title = browseTitle(BrowseKind::Discover);
+        page.selection = root().tabSelections[static_cast<int>(Tab::Discover)];
+        pushBrowse(std::move(page));
+        browseRefresh();
+        return;
+    }
     if (nextTab == Tab::Mine) {
         const size_t total = 1 + history_.size() + later_.size();
-        selection_ = total ? std::min(selection_, total - 1) : 0;
-        screen_ = Screen::Mine;
+        root().selection = total ? std::min(root().selection, total - 1) : 0;
+
         if (history_.empty() && later_.empty()) status_ = "我的 · 暂无本地记录";
         else status_ = "我的 · 历史与稍后观看";
         return;
     }
-    screen_ = Screen::Home;
-    if (nextTab == Tab::Search && searchView_ != SearchView::Results) {
-        const size_t count = searchView_ == SearchView::History ? searchHistory_.size() : 2 + searchTopics_.size();
-        selection_ = count ? std::min(selection_, count - 1) : 0;
+
+    if (nextTab == Tab::Search && root().searchView != SearchView::Results) {
+        const size_t count = root().searchView == SearchView::History ? searchHistory_.size() : 2 + root().searchTopics.size();
+        root().selection = count ? std::min(root().selection, count - 1) : 0;
         status_ = "搜索 · □ 输入关键词";
-        if (searchView_ == SearchView::Landing && searchTopics_.empty()) startJob(Job::SearchTopics);
+        if (root().searchView == SearchView::Landing && root().searchTopics.empty()) startJob(Job::SearchTopics);
         return;
     }
     const auto& list = activeCards();
-    selection_ = list.empty() ? 0 : std::min(selection_, list.size() - 1);
+    root().selection = list.empty() ? 0 : std::min(root().selection, list.size() - 1);
     if (list.empty()) {
         if (nextTab == Tab::Search)
             status_ = "搜索 · 按 × 打开系统键盘";
@@ -452,149 +469,170 @@ void App::setTab(Tab nextTab) {
     }
 }
 
+bool App::atTabRoot() const {
+    return navigation_.size() == 1 ||
+           (navigation_.size() == 2 && root().tab == Tab::Discover &&
+            hasBrowse() && browseState().page.request.kind == BrowseKind::Discover);
+}
+
+void App::shoulder(int direction) {
+    if (atTabRoot()) switchTab(direction);
+    else if (screen() == Screen::Browse) {
+        if (direction > 0) browseMore();
+    } else if (screen() == Screen::Detail) {
+        if (direction > 0) requestComments();
+        else if (!busy()) openVideoActions();
+    } else if (screen() == Screen::Comments && direction > 0) loadMoreComments();
+}
+
 void App::switchTab(int direction) {
+    if (!atTabRoot()) return;
     static const Tab order[] = {Tab::Recommend, Tab::Hots, Tab::Search, Tab::Discover, Tab::Mine};
     int index = 0;
-    while (index < 5 && order[index] != tab_) ++index;
+    while (index < 5 && order[index] != root().tab) ++index;
     setTab(order[(index + (direction > 0 ? 1 : 4)) % 5]);
 }
 
 std::vector<VideoCard>& App::activeCards() {
-    if (tab_ == Tab::Hots) return hots_;
-    if (tab_ == Tab::Search) return search_;
+    if (root().tab == Tab::Hots) return hots_;
+    if (root().tab == Tab::Search) return search_;
     return recommend_;
 }
 
 const std::vector<VideoCard>& App::activeCards() const {
-    if (tab_ == Tab::Hots) return hots_;
-    if (tab_ == Tab::Search) return search_;
+    if (root().tab == Tab::Hots) return hots_;
+    if (root().tab == Tab::Search) return search_;
     return recommend_;
 }
 
 const std::vector<VideoCard>& App::cards() const { return activeCards(); }
 
 int App::page() const {
-    if (screen_ != Screen::Home) return 1;
-    return static_cast<int>(selection_ / kPageSize) + 1;
+    if (screen() != Screen::Home) return 1;
+    return static_cast<int>(root().selection / kPageSize) + 1;
 }
 
 bool App::hasMore() const {
-    if (tab_ == Tab::Hots) return hotsHasMore_;
-    if (tab_ == Tab::Search) return searchHasMore_;
+    if (root().tab == Tab::Hots) return hotsHasMore_;
+    if (root().tab == Tab::Search) return searchHasMore_;
     return recommendHasMore_;
 }
 
 void App::moveSelection(int dx, int dy) {
-    if (screen_ == Screen::Browse) { browseMove(dx, dy); return; }
+    if (screen() == Screen::Browse) { browseMove(dx, dy); return; }
     if (utilityPage()) {
-        if (screen_ == Screen::Settings) {
-            if (dy) settingSelection_ = static_cast<size_t>(std::max(0, std::min(8, static_cast<int>(settingSelection_) + dy)));
-            else if (dx && settingSelection_ < 5) changeSetting();
-        } else if (screen_ == Screen::Licenses && dy) {
-            licenseSelection_ = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1, static_cast<int>(licenseSelection_) + dy)));
-        } else if (screen_ == Screen::LicenseText && dy) {
-            documentScroll_ = std::max(0, std::min(documentScrollLimit_, documentScroll_ + dy * (preferences_.bodySize + 4)));
+        if (screen() == Screen::Settings) {
+            auto &selected = navigation_.get<SettingsRoute>().selection;
+            if (dy) selected = static_cast<size_t>(std::max(0, std::min(8, static_cast<int>(selected) + dy)));
+            else if (dx && selected < 5) changeSetting();
+        } else if (screen() == Screen::Licenses && dy) {
+            auto &selected = navigation_.get<LicensesRoute>().selection;
+            selected = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1,
+                                                             static_cast<int>(selected) + dy)));
+        } else if (screen() == Screen::LicenseText && dy) {
+            auto &page = navigation_.get<LicenseTextRoute>();
+            page.scroll = std::max(0, std::min(page.scrollLimit, page.scroll + dy * (preferences_.bodySize + 4)));
         }
         return;
     }
-    if (screen_ == Screen::Home || screen_ == Screen::Mine) {
-        if (focusArea_ == FocusArea::Navigation) {
-            if (dy) navigationSelection_ = (navigationSelection_ + (dy > 0 ? 1 : 4)) % 5;
-            if (dx > 0) focusArea_ = FocusArea::Content;
+    if (screen() == Screen::Home || screen() == Screen::Mine) {
+        if (navigation_.current().focus == FocusArea::Navigation) {
+            if (dy) root().navigationSelection = (root().navigationSelection + (dy > 0 ? 1 : 4)) % 5;
+            if (dx > 0) navigation_.current().focus = FocusArea::Content;
             return;
         }
-        if (focusArea_ == FocusArea::Categories) {
-            if (dy > 0) focusArea_ = FocusArea::Content;
-            else if (dx < 0 && tab_ == Tab::Recommend) focusArea_ = FocusArea::Navigation;
+        if (navigation_.current().focus == FocusArea::Categories) {
+            if (dy > 0) navigation_.current().focus = FocusArea::Content;
+            else if (dx < 0 && root().tab == Tab::Recommend) navigation_.current().focus = FocusArea::Navigation;
             else if (dx) {
-                int category = (static_cast<int>(tab_) + dx + 4) % 4;
-                if (category == 3) { openBrowse({BrowseKind::Discover}); return; }
+                int category = (static_cast<int>(root().tab) + dx + 4) % 4;
+                if (category == 3) { setTab(Tab::Discover); return; }
                 setTab(static_cast<Tab>(category));
-                focusArea_ = tab_ == Tab::Search ? FocusArea::Content : FocusArea::Categories;
+                navigation_.current().focus = root().tab == Tab::Search ? FocusArea::Content : FocusArea::Categories;
             }
             return;
         }
-        if (dx < 0 && (screen_ == Screen::Mine || tab_ == Tab::Search || selection_ % kGridColumns == 0)) {
-            focusArea_ = FocusArea::Navigation;
-            navigationSelection_ = tab_ == Tab::Mine ? 2 : 0;
+        if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
+            navigation_.current().focus = FocusArea::Navigation;
+            root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
-        if (screen_ == Screen::Home && tab_ != Tab::Search && dy < 0 && selection_ < kGridColumns) {
-            focusArea_ = FocusArea::Categories;
+        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 && root().selection < kGridColumns) {
+            navigation_.current().focus = FocusArea::Categories;
             return;
         }
     }
-    if (screen_ == Screen::Home && tab_ == Tab::Search) {
-        const size_t total = searchView_ == SearchView::Landing ? 2 + searchTopics_.size() :
-                             searchView_ == SearchView::History ? searchHistory_.size() : search_.size();
+    if (screen() == Screen::Home && root().tab == Tab::Search) {
+        const size_t total = root().searchView == SearchView::Landing ? 2 + root().searchTopics.size() :
+                             root().searchView == SearchView::History ? searchHistory_.size() : search_.size();
         if (!total) return;
-        int value = static_cast<int>(selection_) + dy;
+        int value = static_cast<int>(root().selection) + dy;
         value = std::max(0, std::min(value, static_cast<int>(total) - 1));
-        selection_ = static_cast<size_t>(value);
-        if (searchView_ == SearchView::Results && dy > 0 && selection_ + 1 == total && hasMore()) loadNextPage();
+        root().selection = static_cast<size_t>(value);
+        if (root().searchView == SearchView::Results && dy > 0 && root().selection + 1 == total && hasMore()) loadNextPage();
         return;
     }
-    if (screen_ == Screen::Comments) {
+    if (screen() == Screen::Comments) {
         scrollComments((dy ? dy : dx) * 18);
         return;
     }
-    if (screen_ == Screen::Detail) {
-        if (detail_.pages.empty()) return;
-        int value = static_cast<int>(detailPart_) + dx + dy;
+    if (screen() == Screen::Detail) {
+        if (detailState().detail.pages.empty()) return;
+        int value = static_cast<int>(detailState().part) + dx + dy;
         if (value < 0) value = 0;
-        if (value >= static_cast<int>(detail_.pages.size())) value = static_cast<int>(detail_.pages.size()) - 1;
-        detailPart_ = static_cast<size_t>(value);
+        if (value >= static_cast<int>(detailState().detail.pages.size())) value = static_cast<int>(detailState().detail.pages.size()) - 1;
+        detailState().part = static_cast<size_t>(value);
         return;
     }
-    if (screen_ == Screen::Mine) {
+    if (screen() == Screen::Mine) {
         size_t total = 1 + history_.size() + later_.size();
         if (!total) return;
-        int value = static_cast<int>(selection_) + dx + dy;
+        int value = static_cast<int>(root().selection) + dx + dy;
         if (value < 0) value = 0;
         if (value >= static_cast<int>(total)) value = static_cast<int>(total) - 1;
-        selection_ = static_cast<size_t>(value);
+        root().selection = static_cast<size_t>(value);
         return;
     }
     const auto& list = activeCards();
     if (list.empty()) return;
-    int value = static_cast<int>(selection_);
+    int value = static_cast<int>(root().selection);
     if (dx < 0 && value % static_cast<int>(kGridColumns) != 0) --value;
     if (dx > 0 && value % static_cast<int>(kGridColumns) != static_cast<int>(kGridColumns) - 1 && value + 1 < static_cast<int>(list.size())) ++value;
     if (dy < 0 && value >= static_cast<int>(kGridColumns)) value -= static_cast<int>(kGridColumns);
     if (dy > 0 && value + static_cast<int>(kGridColumns) < static_cast<int>(list.size())) value += static_cast<int>(kGridColumns);
-    selection_ = static_cast<size_t>(value);
+    root().selection = static_cast<size_t>(value);
     if (dy > 0 && value + static_cast<int>(kGridColumns) >= static_cast<int>(list.size()) && hasMore())
         loadNextPage();
 }
 
 void App::activate() {
-    if (busy_ || playbackReady_) return;
-    if (screen_ == Screen::Browse) { browseActivate(); return; }
-    if (focusArea_ == FocusArea::Navigation) {
-        if (navigationSelection_ == 1) openBrowse({BrowseKind::DynamicFeed});
-        else if (navigationSelection_ == 3) openBrowse({BrowseKind::Inbox});
-        else if (navigationSelection_ == 4) openSettings();
-        else setTab(navigationSelection_ == 2 ? Tab::Mine : Tab::Recommend);
+    if (busy() || playbackReady_) return;
+    if (screen() == Screen::Browse) { browseActivate(); return; }
+    if (navigation_.current().focus == FocusArea::Navigation) {
+        if (root().navigationSelection == 1) openBrowse({BrowseKind::DynamicFeed});
+        else if (root().navigationSelection == 3) openBrowse({BrowseKind::Inbox});
+        else if (root().navigationSelection == 4) openSettings();
+        else setTab(root().navigationSelection == 2 ? Tab::Mine : Tab::Recommend);
         return;
     }
     if (utilityPage()) {
         activateUtility();
         return;
     }
-    if (focusArea_ == FocusArea::Categories) {
-        focusArea_ = FocusArea::Content;
+    if (navigation_.current().focus == FocusArea::Categories) {
+        navigation_.current().focus = FocusArea::Content;
         return;
     }
-    if (screen_ == Screen::Detail) {
+    if (screen() == Screen::Detail) {
         requestPlayback();
         return;
     }
-    if (screen_ == Screen::Mine) {
-        if (selection_ == 0) {
+    if (screen() == Screen::Mine) {
+        if (root().selection == 0) {
             openLogin();
             return;
         }
-        const size_t localSelection = selection_ - 1;
+        const size_t localSelection = root().selection - 1;
         if (localSelection < history_.size()) {
             const VideoCard card = fromLocal(history_[localSelection]);
             startDetail(card);
@@ -604,34 +642,33 @@ void App::activate() {
         }
         return;
     }
-    if (screen_ == Screen::Home && tab_ == Tab::Search && searchView_ != SearchView::Results) {
-        if (searchView_ == SearchView::History) {
-            if (selection_ < searchHistory_.size()) search(searchHistory_[selection_]);
-        } else if (selection_ == 1) {
-            searchLandingSelection_ = selection_;
-            searchView_ = SearchView::History;
-            selection_ = 0;
+    if (screen() == Screen::Home && root().tab == Tab::Search && root().searchView != SearchView::Results) {
+        if (root().searchView == SearchView::History) {
+            if (root().selection < searchHistory_.size()) search(searchHistory_[root().selection]);
+        } else if (root().selection == 1) {
+            root().searchLandingSelection = root().selection;
+            root().searchView = SearchView::History;
+            root().selection = 0;
             status_ = "搜索历史 · × 搜索 · △ 删除当前项";
-        } else if (selection_ >= 2 && selection_ - 2 < searchTopics_.size()) {
-            searchLandingSelection_ = selection_;
-            search(searchTopics_[selection_ - 2].keyword);
+        } else if (root().selection >= 2 && root().selection - 2 < root().searchTopics.size()) {
+            root().searchLandingSelection = root().selection;
+            search(root().searchTopics[root().selection - 2].keyword);
         }
         return;
     }
     const auto& list = activeCards();
-    if (selection_ < list.size()) {
-        startDetail(list[selection_]);
-    } else if (tab_ == Tab::Search) {
+    if (root().selection < list.size()) {
+        startDetail(list[root().selection]);
+    } else if (root().tab == Tab::Search) {
         status_ = "按 × 打开系统键盘输入关键词";
     }
 }
 
 void App::openLogin() {
-    if (busy_)
+    if (busy())
         return;
-    loginReturnScreen_ = screen_;
-    screen_ = Screen::Login;
-    focusArea_ = FocusArea::Content;
+    navigation_.push<LoginRoute>();
+    navigation_.current().focus = FocusArea::Content;
     authError_ = {};
     if (authView_.state != AuthState::SignedIn && authView_.state != AuthState::Restored)
         refreshLogin();
@@ -641,7 +678,7 @@ void App::openLogin() {
     }
 }
 void App::refreshLogin() {
-    if (busy_) {
+    if (busy()) {
         loginRefreshPending_ = true;
         transfer_cancel = 1;
         return;
@@ -659,7 +696,7 @@ void App::refreshLogin() {
     }
 }
 void App::logout() {
-    if (busy_)
+    if (busy())
         return;
     sessionCheckPending_ = false;
     startJob(Job::AuthLogout);
@@ -675,31 +712,32 @@ void App::cancelRequest() {
 }
 
 void App::back() {
-    if (coverActive_ && queuedJob_ != Job::None) {
-        cancelRequest();
-        return;
-    }
-    if (screen_ == Screen::Browse) {
-        if (confirmingDelete_) { confirmingDelete_ = false; status_ = "已取消删除"; return; }
-        browseBack(); return;
-    }
-    if (utilityPage()) {
-        if (screen_ == Screen::Settings) {
-            screen_ = settingsReturnScreen_;
-            focusArea_ = FocusArea::Navigation;
-            navigationSelection_ = 4;
-        } else if (screen_ == Screen::LicenseText) screen_ = Screen::Licenses;
-        else if (screen_ == Screen::Licenses) screen_ = Screen::About;
-        else if (screen_ == Screen::Storage && clearingCovers_) clearingCovers_ = false;
-        else screen_ = Screen::Settings;
-        return;
-    }
-    if (screen_ == Screen::Login) {
-        if (busy_) {
-            leaveLogin_ = true;
-            transfer_cancel = 1;
-            return;
+    if (busy()) {
+        // Cancel on the worker first; release this route only after joinJob().
+        pendingBack_ = true;
+        pendingAction_ = PendingAction::None;
+        loginRefreshPending_ = false;
+        transfer_cancel = 1;
+        if (queuedJob_ != Job::None) {
+            queuedJob_ = Job::None;
+            if (coverActive_) {
+                busy_ = false;
+                pendingBack_ = false;
+                back();
+            }
         }
+        return;
+    }
+    if (screen() == Screen::Browse && browseState().confirmingDelete) {
+        browseState().confirmingDelete = false;
+        status_ = "已取消删除";
+        return;
+    }
+    if (screen() == Screen::Storage && navigation_.get<StorageRoute>().clearing) {
+        navigation_.get<StorageRoute>().clearing = false;
+        return;
+    }
+    if (screen() == Screen::Login) {
         authView_.key.clear();
         authView_.qr.clear();
         authView_.qrSize = 0;
@@ -715,116 +753,118 @@ void App::back() {
         } else if (!sessions_.current().valid() && (authView_.state == AuthState::SignedIn ||
                                                     authView_.state == AuthState::Restored))
             authView_ = {};
-        screen_ = loginReturnScreen_;
-        focusArea_ = FocusArea::Content;
+        navigation_.pop();
         status_ = "已返回";
         if (communityLoginPending_) {
             communityLoginPending_ = false;
-            if (screen_ == Screen::Browse && !browseStack_.empty()) browseRefresh();
+            if (hasBrowse()) browseRefresh();
         }
         return;
     }
-    if (focusArea_ != FocusArea::Content) {
-        focusArea_ = FocusArea::Content;
+    if (navigation_.current().focus != FocusArea::Content) {
+        navigation_.current().focus = FocusArea::Content;
         return;
     }
-    if (screen_ == Screen::Comments) {
-        screen_ = Screen::Detail;
-        status_ = "视频详情 · × 播放 · R 评论";
-    } else if (screen_ == Screen::Detail) {
-        screen_ = detailReturnScreen_;
-        status_ = "返回列表";
-    } else if (screen_ == Screen::Mine) {
+    communityInputPending_ = false;
+    if (atTabRoot() && root().tab == Tab::Discover) {
         setTab(Tab::Recommend);
-    } else if (tab_ == Tab::Search && searchView_ != SearchView::Landing) {
-        searchView_ = SearchView::Landing;
-        selection_ = std::min(searchLandingSelection_, searchTopics_.size() + 1);
+        return;
+    }
+    if (navigation_.pop()) {
+        coverDirty_ = true;
+        status_ = "已返回";
+    } else if (screen() == Screen::Mine) {
+        setTab(Tab::Recommend);
+    } else if (root().tab == Tab::Search && root().searchView != SearchView::Landing) {
+        root().searchView = SearchView::Landing;
+        root().selection = std::min(root().searchLandingSelection, root().searchTopics.size() + 1);
         status_ = "搜索 · □ 输入关键词";
-    } else if (tab_ == Tab::Search) {
+    } else if (root().tab == Tab::Search) {
         setTab(Tab::Recommend);
     }
 }
 
 void App::search(const std::string& keyword) {
-    if (busy_) return;
+    if (busy()) return;
     const std::string nextQuery = trim(keyword);
     if (nextQuery.empty()) return;
-    if (tab_ == Tab::Search && searchView_ == SearchView::Landing) searchLandingSelection_ = selection_;
-    if (tab_ != Tab::Search) tabSelections_[static_cast<int>(tab_)] = selection_;
-    if (query_ != nextQuery) search_.clear();
+    if (root().tab == Tab::Search && root().searchView == SearchView::Landing) root().searchLandingSelection = root().selection;
+    if (root().tab != Tab::Search) root().tabSelections[static_cast<int>(root().tab)] = root().selection;
+    if (root().query != nextQuery) search_.clear();
     ++searchGeneration_;
-    query_ = nextQuery;
-    searchView_ = SearchView::Results;
-    focusArea_ = FocusArea::Content;
-    searchHistory_.erase(std::remove(searchHistory_.begin(), searchHistory_.end(), query_), searchHistory_.end());
-    searchHistory_.insert(searchHistory_.begin(), query_);
+    root().query = nextQuery;
+    root().searchView = SearchView::Results;
+    navigation_.current().focus = FocusArea::Content;
+    searchHistory_.erase(std::remove(searchHistory_.begin(), searchHistory_.end(), root().query), searchHistory_.end());
+    searchHistory_.insert(searchHistory_.begin(), root().query);
     if (searchHistory_.size() > 8) searchHistory_.resize(8);
     saveSearchHistory();
-    tab_ = Tab::Search;
-    screen_ = Screen::Home;
-    selection_ = 0;
+    root().tab = Tab::Search;
+
+    root().selection = 0;
     searchPage_ = 1;
     startSearch();
 }
 
 bool App::searchInputSelected() const {
-    return tab_ == Tab::Search && screen_ == Screen::Home && focusArea_ == FocusArea::Content &&
-           searchView_ == SearchView::Landing && selection_ == 0;
+    return root().tab == Tab::Search && screen() == Screen::Home && navigation_.current().focus == FocusArea::Content &&
+           root().searchView == SearchView::Landing && root().selection == 0;
 }
 
 void App::removeSearchHistory() {
-    if (busy_ || tab_ != Tab::Search || searchView_ != SearchView::History || selection_ >= searchHistory_.size()) return;
-    searchHistory_.erase(searchHistory_.begin() + selection_);
-    selection_ = searchHistory_.empty() ? 0 : std::min(selection_, searchHistory_.size() - 1);
+    if (busy() || root().tab != Tab::Search || root().searchView != SearchView::History || root().selection >= searchHistory_.size()) return;
+    searchHistory_.erase(searchHistory_.begin() + root().selection);
+    root().selection = searchHistory_.empty() ? 0 : std::min(root().selection, searchHistory_.size() - 1);
     saveSearchHistory();
     status_ = "已删除这条搜索历史";
 }
 
 void App::requestComments() {
-    if (detail_.card.aid == 0) return;
-    if (busy_) {
-        if (screen_ == Screen::Detail && job_ != Job::Comments) {
+    if (!navigation_.find<DetailRoute>() || !detailState().loaded || detailState().detail.card.aid == 0) return;
+    if (busy()) {
+        if (screen() == Screen::Detail && job_ != Job::Comments) {
             pendingAction_ = PendingAction::Comments;
             status_ = "评论已排队 · 当前任务结束后加载";
         }
         return;
     }
+    if (screen() != Screen::Comments) navigation_.push<CommentsRoute>();
     jobCommentNext_ = 0;
-    comments_.clear();
-    commentsNext_ = 0;
-    commentsEnd_ = false;
-    commentScroll_ = 0;
-    selectedComment_ = 0;
+    commentsState().items.clear();
+    commentsState().next = 0;
+    commentsState().end = false;
+    commentsState().scroll = 0;
+    commentsState().selected = 0;
     startComments();
 }
 
 void App::loadMoreComments() {
-    if (commentsEnd_ || commentsNext_ <= 0 || detail_.card.aid == 0) return;
-    if (busy_) {
-        if (screen_ == Screen::Comments && job_ != Job::Comments) {
+    if (commentsState().end || commentsState().next <= 0 || detailState().detail.card.aid == 0) return;
+    if (busy()) {
+        if (screen() == Screen::Comments && job_ != Job::Comments) {
             pendingAction_ = PendingAction::MoreComments;
             status_ = "更多评论已排队";
         }
         return;
     }
-    jobCommentNext_ = commentsNext_;
+    jobCommentNext_ = commentsState().next;
     startComments();
 }
 
 void App::scrollComments(int amount) {
-    const int maxScroll = commentScrollLimit_;
-    commentScroll_ += amount;
-    if (commentScroll_ < 0) commentScroll_ = 0;
-    if (commentScroll_ > maxScroll) commentScroll_ = maxScroll;
+    const int maxScroll = commentsState().scrollLimit;
+    commentsState().scroll += amount;
+    if (commentsState().scroll < 0) commentsState().scroll = 0;
+    if (commentsState().scroll > maxScroll) commentsState().scroll = maxScroll;
 }
 
 void App::toggleLater() {
-    if (detail_.card.bvid.empty()) return;
+    if (detailState().detail.card.bvid.empty()) return;
     auto found = std::find_if(later_.begin(), later_.end(), [this](const LocalVideo& item) {
-        return item.bvid == detail_.card.bvid;
+        return item.bvid == detailState().detail.card.bvid;
     });
     if (found == later_.end()) {
-        later_.insert(later_.begin(), makeLocal(detail_.card));
+        later_.insert(later_.begin(), makeLocal(detailState().detail.card));
         if (later_.size() > 20) later_.resize(20);
         status_ = "已加入稍后观看";
     } else {
@@ -836,23 +876,25 @@ void App::toggleLater() {
 
 bool App::currentIsLater() const {
     return std::any_of(later_.begin(), later_.end(), [this](const LocalVideo& item) {
-        return item.bvid == detail_.card.bvid;
+        return item.bvid == detailState().detail.card.bvid;
     });
 }
 
 VideoCard App::selectedDetailCard() const {
-    VideoCard card = detail_.card;
-    if (detailPart_ < detail_.pages.size()) {
-        if (card.cid != detail_.pages[detailPart_].cid) card.startMs = 0;
-        card.cid = detail_.pages[detailPart_].cid;
-        card.duration = detail_.pages[detailPart_].duration;
-        if (!detail_.pages[detailPart_].title.empty()) card.title = detail_.pages[detailPart_].title;
+    const auto &page = detailState();
+    VideoCard card = page.detail.card;
+    if (page.part < page.detail.pages.size()) {
+        const auto &part = page.detail.pages[page.part];
+        if (card.cid != part.cid) card.startMs = 0;
+        card.cid = part.cid;
+        card.duration = part.duration;
+        if (!part.title.empty()) card.title = part.title;
     }
     return card;
 }
 
 void App::requestPlayback(bool fromStart) {
-    if (busy_ || detail_.card.bvid.empty()) return;
+    if (busy() || !detailState().loaded || detailState().detail.card.bvid.empty()) return;
     VideoCard card = selectedDetailCard();
     if (fromStart || (card.duration > 0 && card.startMs >= card.duration * 1000LL)) card.startMs = 0;
     startPlay(card, card.cid, card.duration);
@@ -883,28 +925,29 @@ void App::startHots() {
 }
 
 void App::startSearch() {
-    searchError_.clear();
+    root().searchError.clear();
     jobSearchGeneration_ = searchGeneration_;
     jobPage_ = searchPage_;
-    jobQuery_ = query_;
+    jobQuery_ = root().query;
     startJob(Job::Search);
 }
 
 void App::loadNextPage() {
-    if (busy_ || !hasMore()) return;
-    if (tab_ == Tab::Search) {
-        if (query_.empty()) return;
+    if (busy() || !hasMore()) return;
+    if (root().tab == Tab::Search) {
+        if (root().query.empty()) return;
         startSearch();
-    } else if (tab_ == Tab::Hots) {
+    } else if (root().tab == Tab::Hots) {
         startHots();
-    } else if (tab_ == Tab::Recommend) {
+    } else if (root().tab == Tab::Recommend) {
         startRecommend();
     }
 }
 
 void App::startDetail(const VideoCard& card) {
-    detailReturnScreen_ = screen_;
     jobCard_ = card;
+    auto &page = navigation_.push<DetailRoute>();
+    page.detail.card = card;
     startJob(Job::Detail);
 }
 
@@ -921,24 +964,24 @@ void App::startPlay(const VideoCard& card, uint64_t cid, int duration) {
 
 void App::updateCoverQueue() {
     if (busy_ && !coverActive_) return;
-    const size_t selected = screen_ == Screen::Browse && !browseStack_.empty()
-                                ? browseStack_.back().selection : selection_;
-    const bool posters = screen_ == Screen::Browse && !browseStack_.empty() &&
-                         isPgcPosterPage(browseStack_.back().page.request.kind);
-    const bool grid = screen_ == Screen::Home && tab_ != Tab::Search;
+    const size_t selected = hasBrowse()
+                                ? browseState().selection : root().selection;
+    const bool posters = hasBrowse() &&
+                         isPgcPosterPage(browseState().page.request.kind);
+    const bool grid = screen() == Screen::Home && root().tab != Tab::Search;
     // Include the preceding row while the selected row scrolls into view.
     const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
                                                           : (selected > 2 ? selected - 2 : 0);
-    if (!coverDirty_ && coverScreen_ == screen_ && coverTab_ == tab_ &&
-        coverPage_ == first && coverDepth_ == browseStack_.size() &&
-        coverSearchView_ == searchView_ &&
+    if (!coverDirty_ && coverScreen_ == screen() && coverTab_ == root().tab &&
+        coverPage_ == first && coverDepth_ == navigation_.size() &&
+        coverSearchView_ == root().searchView &&
         coverEnabled_ == preferences_.showCovers) return;
     coverDirty_ = false;
-    coverScreen_ = screen_;
-    coverTab_ = tab_;
+    coverScreen_ = screen();
+    coverTab_ = root().tab;
     coverPage_ = first;
-    coverDepth_ = browseStack_.size();
-    coverSearchView_ = searchView_;
+    coverDepth_ = navigation_.size();
+    coverSearchView_ = root().searchView;
     coverEnabled_ = preferences_.showCovers;
     coverQueue_.clear();
     if (coverActive_) transfer_cancel = 1;
@@ -950,21 +993,21 @@ void App::updateCoverQueue() {
             })) return;
         coverQueue_.push_back({key, std::move(url)});
     };
-    if (screen_ == Screen::Detail) {
-        enqueue(detail_.card.bvid, normalizePicture(detail_.card.picture, true));
-    } else if (screen_ == Screen::Home && tab_ != Tab::Mine &&
-               (tab_ != Tab::Search || searchView_ == SearchView::Results)) {
+    if (screen() == Screen::Detail) {
+        enqueue(detailState().detail.card.bvid, normalizePicture(detailState().detail.card.picture, true));
+    } else if (screen() == Screen::Home && root().tab != Tab::Mine &&
+               (root().tab != Tab::Search || root().searchView == SearchView::Results)) {
         const auto &list = cards();
         for (size_t i = first; i < list.size() && i < first + kPageSize; ++i)
             enqueue(list[i].bvid, normalizePicture(list[i].picture, true));
-    } else if (screen_ == Screen::Mine) {
+    } else if (screen() == Screen::Mine) {
         const size_t total = history_.size() + later_.size();
         for (size_t i = first; i < total && i < first + 2; ++i) {
             const auto &card = i < history_.size() ? history_[i] : later_[i - history_.size()];
             enqueue(card.bvid, normalizePicture(card.picture, true));
         }
-    } else if (screen_ == Screen::Browse && !browseStack_.empty()) {
-        const auto &items = browseStack_.back().page.items;
+    } else if (hasBrowse()) {
+        const auto &items = browseState().page.items;
         for (size_t i = first; i < items.size() && i < first + (posters ? 4 : kPageSize); ++i) {
             const auto &item = items[i];
             if (item.picture.empty()) continue;
@@ -1008,7 +1051,14 @@ void App::startCover() {
 }
 
 void App::startJob(Job job) {
-    if (busy_) return;
+    if (busy_) {
+        if (backgroundJob()) {
+            queuedJob_ = job;
+            transfer_cancel = 1;
+            status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
+        }
+        return;
+    }
     coverQueue_.clear();
     coverDirty_ = true;
     if (coverActive_) {
@@ -1021,12 +1071,13 @@ void App::startJob(Job job) {
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
         return;
     }
-    playbackFailed_ = false;
+    navigation_.current().playbackFailed = false;
     job_ = job;
+    jobRouteId_ = navigation_.current().id;
     jobResult_ = -1;
     jobError_.clear();
     jobTypedError_ = {};
-    error_ = {};
+    navigation_.current().error = {};
     jobFinished_ = false;
     transfer_cancel = 0;
     network_progress_reset();
@@ -1040,7 +1091,8 @@ void App::startJob(Job job) {
     stagedDetail_ = VideoDetailView{};
     stagedPlayback_ = BiliPlayback{};
     busy_ = true;
-    status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
+    if (job != Job::HistoryReport)
+        status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
     workerApp = this;
     worker_ = sceKernelCreateThread("wiliwili_job", workerEntry, 0x22, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
     if (worker_ < 0) {
@@ -1086,7 +1138,7 @@ void App::poll() {
         if (sessionCheckPending_) {
             sessionCheckPending_ = false;
             startJob(Job::AuthCheck);
-        } else if (screen_ == Screen::Login && !authError_ &&
+        } else if (screen() == Screen::Login && !authError_ &&
                    (authView_.state == AuthState::WaitingScan ||
                     authView_.state == AuthState::WaitingConfirm) &&
                    static_cast<uint64_t>(sceKernelGetSystemTimeWide()) >= authPollAt_) {
@@ -1099,7 +1151,20 @@ void App::poll() {
         return;
     joinJob();
     busy_ = false;
-    if (jobResult_ == 0 && !transfer_cancel) {
+    if (job_ == Job::HistoryReport) {
+        if (jobResult_ != 0 && !transfer_cancel && jobTypedError_)
+            logError(CLIENT_PATH("/last-error.txt"), jobTypedError_);
+        job_ = Job::None;
+        transfer_cancel = 0;
+        const Job next = queuedJob_;
+        queuedJob_ = Job::None;
+        if (pendingBack_) {
+            pendingBack_ = false;
+            back();
+        } else if (next != Job::None) startJob(next);
+        return;
+    }
+    if (jobResult_ == 0 && !transfer_cancel && navigation_.contains(jobRouteId_)) {
         commitJob();
         coverDirty_ = true;
     } else {
@@ -1107,30 +1172,31 @@ void App::poll() {
             bili_finish_playback(&stagedPlayback_);
             stagedPlayback_ = BiliPlayback{};
         }
-        error_ = jobTypedError_;
-        if ((job_ == Job::Browse || job_ == Job::CommunityWrite || job_ == Job::CommunityPlay) && !browseStack_.empty()) browseStack_.back().error = error_;
+        navigation_.current().error = jobTypedError_;
+        if ((job_ == Job::Browse || job_ == Job::CommunityWrite || job_ == Job::CommunityPlay) && hasBrowse()) browseState().error = navigation_.current().error;
         status_ = transfer_cancel
                       ? "已取消"
-                      : (error_ ? errorMessage(error_)
+                      : (navigation_.current().error ? errorMessage(navigation_.current().error)
                                 : (jobError_.empty()
                                        ? (network_error[0] ? network_error : "载入失败，△ 重试")
                                        : jobError_));
-        if (error_)
-            logError(CLIENT_PATH("/last-error.txt"), error_);
+        if (navigation_.current().error)
+            logError(CLIENT_PATH("/last-error.txt"), navigation_.current().error);
         if (job_ == Job::Search)
-            searchError_ = transfer_cancel ? "" : status_;
+            root().searchError = transfer_cancel ? "" : status_;
         if (job_ == Job::AuthGenerate || job_ == Job::AuthPoll || job_ == Job::AuthCheck ||
             job_ == Job::AuthLogout) {
-            authError_ = error_;
-            if (transfer_cancel && !leaveLogin_)
+            authError_ = navigation_.current().error;
+            if (transfer_cancel && !pendingBack_)
                 authError_ = {ErrorDomain::Auth, ErrorKind::Cancelled, ErrorOperation::PollLogin};
         }
     }
-    if (leaveLogin_) {
+    if (pendingBack_) {
+        pendingBack_ = false;
         loginRefreshPending_ = false;
-        leaveLogin_ = false;
         transfer_cancel = 0;
         back();
+        return;
     }
     if (loginRefreshPending_) {
         loginRefreshPending_ = false;
@@ -1161,8 +1227,8 @@ void App::joinJob() {
 
 void App::commitJob() {
     if (job_ == Job::Browse) {
-        if (!browseStack_.empty()) {
-            auto &frame = browseStack_.back();
+        if (hasBrowse()) {
+            auto &frame = browseState();
             if (browseAppending_) {
                 for (auto &item : stagedBrowse_.items) {
                     if (item.key.empty() || std::none_of(frame.page.items.begin(), frame.page.items.end(),
@@ -1191,13 +1257,12 @@ void App::commitJob() {
         const bool clearAccount = stagedAuth_.state == AuthState::SignedOut || stagedAuth_.state == AuthState::SessionExpired;
         if (clearAccount) {
             clearAccountPages();
-            if (loginReturnScreen_ == Screen::Browse) loginReturnScreen_ = Screen::Mine;
         }
         authView_ = std::move(stagedAuth_);
         authError_ = {};
         authPollAt_ = sceKernelGetSystemTimeWide() + 2000000;
         status_ = authStateMessage(authView_.state);
-        if (job_ == Job::AuthCheck && dismissLoginAfterCheck_ && authView_.state == AuthState::SignedIn && screen_ == Screen::Login) {
+        if (job_ == Job::AuthCheck && dismissLoginAfterCheck_ && authView_.state == AuthState::SignedIn && screen() == Screen::Login) {
             dismissLoginAfterCheck_ = false; job_ = Job::None; back(); return;
         }
     } else if (job_ == Job::AuthPoll) {
@@ -1212,13 +1277,13 @@ void App::commitJob() {
         authPollAt_ = sceKernelGetSystemTimeWide() + 2000000;
         status_ = authStateMessage(authView_.state);
     } else if (job_ == Job::SearchTopics) {
-        searchTopics_ = std::move(stagedSearchTopics_);
-        status_ = searchTopics_.empty() ? "暂无热搜 · □ 输入关键词" : "热搜已更新";
+        root().searchTopics = std::move(stagedSearchTopics_);
+        status_ = root().searchTopics.empty() ? "暂无热搜 · □ 输入关键词" : "热搜已更新";
     } else if (job_ == Job::Recommend) {
         const size_t oldSize = recommend_.size();
         if (jobPage_ > 1) appendUniqueCards(recommend_, stagedCards_);
         else recommend_ = std::move(stagedCards_);
-        selection_ = jobPage_ > 1 && oldSize ? oldSize : 0;
+        root().selection = jobPage_ > 1 && oldSize ? oldSize : 0;
         recommendPage_ = jobPage_ + 1;
         recommendHasMore_ = stagedHasMore_;
         status_ = "推荐 · 第 " + std::to_string(jobPage_) + " 页 · " +
@@ -1227,7 +1292,7 @@ void App::commitJob() {
         const size_t oldSize = hots_.size();
         if (jobPage_ > 1) appendUniqueCards(hots_, stagedCards_);
         else hots_ = std::move(stagedCards_);
-        selection_ = jobPage_ > 1 && oldSize ? oldSize : 0;
+        root().selection = jobPage_ > 1 && oldSize ? oldSize : 0;
         hotsPage_ = jobPage_ + 1;
         hotsHasMore_ = stagedHasMore_;
         status_ = "热门 · 第 " + std::to_string(jobPage_) + " 页 · " +
@@ -1240,31 +1305,28 @@ void App::commitJob() {
         const size_t oldSize = search_.size();
         if (jobPage_ > 1) appendUniqueCards(search_, stagedCards_);
         else search_ = std::move(stagedCards_);
-        selection_ = jobPage_ > 1 && oldSize ? oldSize : 0;
+        root().selection = jobPage_ > 1 && oldSize ? oldSize : 0;
         searchPage_ = jobPage_ + 1;
         searchHasMore_ = stagedHasMore_;
-        screen_ = Screen::Home;
+
         status_ = search_.empty() ? "没有找到相关视频" :
-                  "搜索：" + query_ + " · 已载入 " + std::to_string(search_.size()) + " 条" +
+                  "搜索：" + root().query + " · 已载入 " + std::to_string(search_.size()) + " 条" +
                       (searchHasMore_ ? " · ↓ 继续" : "");
     } else if (job_ == Job::Detail) {
-        detail_ = std::move(stagedDetail_);
-        detailPart_ = 0;
-        for (size_t i = 0; i < detail_.pages.size(); ++i)
-            if (detail_.pages[i].cid == detail_.card.cid) detailPart_ = i;
-        screen_ = Screen::Detail;
+        detailState().detail = std::move(stagedDetail_);
+        detailState().loaded = true;
+        detailState().part = 0;
+        for (size_t i = 0; i < detailState().detail.pages.size(); ++i)
+            if (detailState().detail.pages[i].cid == detailState().detail.card.cid) detailState().part = i;
         status_ = "视频详情 · × 播放 · R 评论 · □ 稍后观看";
     } else if (job_ == Job::Comments) {
-        if (jobCommentNext_ == 0) comments_ = std::move(stagedComments_);
-        else comments_.insert(comments_.end(), stagedComments_.begin(), stagedComments_.end());
-        commentsNext_ = stagedCommentNext_;
-        commentsEnd_ = stagedCommentsEnd_;
-        screen_ = Screen::Comments;
-        status_ = comments_.empty() ? "暂无评论" :
-                  "评论 · " + std::to_string(comments_.size()) + " 条" +
-                      (commentsEnd_ ? " · 已加载完" : " · R 加载更多");
-    } else if (job_ == Job::HistoryReport) {
-        status_ = "播放进度已同步";
+        if (jobCommentNext_ == 0) commentsState().items = std::move(stagedComments_);
+        else commentsState().items.insert(commentsState().items.end(), stagedComments_.begin(), stagedComments_.end());
+        commentsState().next = stagedCommentNext_;
+        commentsState().end = stagedCommentsEnd_;
+        status_ = commentsState().items.empty() ? "暂无评论" :
+                  "评论 · " + std::to_string(commentsState().items.size()) + " 条" +
+                      (commentsState().end ? " · 已加载完" : " · R 加载更多");
     } else if (job_ == Job::Play || job_ == Job::CommunityPlay) {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;
@@ -1330,7 +1392,8 @@ void App::runJob() {
             jobResult_ = 0;
         }
     } else if (job_ == Job::CommunityWrite || job_ == Job::HistoryReport) {
-        auto result = communityService_.write(jobWrite_, sessions_.current());
+        auto result = communityService_.write(
+            job_ == Job::HistoryReport ? jobHistoryWrite_ : jobWrite_, sessions_.current());
         if (!result) { jobTypedError_ = result.error; jobResult_ = -1; }
         else { stagedWrite_ = std::move(result.value); jobResult_ = 0; }
     } else if (job_ == Job::AuthGenerate || job_ == Job::AuthPoll || job_ == Job::AuthCheck ||
@@ -1508,7 +1571,7 @@ void App::runJob() {
     } else if (job_ == Job::Comments) {
         bool ok = false;
         bilibili::BilibiliClient::get_comment(
-            std::to_string(detail_.card.aid), jobCommentNext_, 3, 1,
+            std::to_string(detailState().detail.card.aid), jobCommentNext_, 3, 1,
             [&](bilibili::VideoCommentResultWrapper result) {
                 auto append = [&](const bilibili::VideoCommentResult& reply, bool top) {
                     CommentItem item;
@@ -1537,7 +1600,7 @@ void App::runJob() {
                         return item.author == existing.author && item.message == existing.message &&
                                item.time == existing.time;
                     };
-                    if (std::any_of(comments_.begin(), comments_.end(), duplicate) ||
+                    if (std::any_of(commentsState().items.begin(), commentsState().items.end(), duplicate) ||
                         std::any_of(stagedComments_.begin(), stagedComments_.end(), duplicate))
                         return;
                     stagedComments_.push_back(std::move(item));
@@ -1581,11 +1644,11 @@ void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, Psp
         error = cacheResult;
         stage = PSP_VIDEO_STAGE_CLEANUP;
     }
-    playbackFailed_ = error < 0 && !cancelled;
-    if (playbackFailed_) {
-        error_ = pspapp::playbackError(error, stage);
-        status_ = errorMessage(error_);
-        logError(CLIENT_PATH("/last-error.txt"), error_);
+    navigation_.current().playbackFailed = error < 0 && !cancelled;
+    if (navigation_.current().playbackFailed) {
+        navigation_.current().error = pspapp::playbackError(error, stage);
+        status_ = errorMessage(navigation_.current().error);
+        logError(CLIENT_PATH("/last-error.txt"), navigation_.current().error);
         if (FILE *out = std::fopen(CLIENT_PATH("/last-playback-error.txt"), "w")) {
             std::fprintf(out, "stage=%s\nerror=%d\ncleanup_error=%d\nframes=%u\nmessage=%s\n",
                          psp_video_stage_name(stage), error, cacheResult, frames, status_.c_str());
@@ -1598,23 +1661,29 @@ void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, Psp
     if (frames && playbackCard_.aid && playbackCard_.cid) {
         playbackCard_.startMs = eof ? 0 : std::max<int64_t>(0, positionMs);
         rememberHistory(playbackCard_);
-        if (detail_.card.aid == playbackCard_.aid) {
-            detail_.card.cid = playbackCard_.cid;
-            detail_.card.startMs = playbackCard_.startMs;
+        for (auto &entry : navigation_.entries()) {
+            if (auto *page = std::get_if<DetailRoute>(&entry.state)) {
+                const uint64_t selectedCid = page->part < page->detail.pages.size()
+                    ? page->detail.pages[page->part].cid : page->detail.card.cid;
+                if (page->detail.card.aid == playbackCard_.aid && selectedCid == playbackCard_.cid) {
+                    page->detail.card.cid = playbackCard_.cid;
+                    page->detail.card.startMs = playbackCard_.startMs;
+                }
+            } else if (auto *page = std::get_if<BrowseRoute>(&entry.state)) {
+                for (auto &item : page->page.items)
+                    if (item.aid == playbackCard_.aid && item.cid == playbackCard_.cid)
+                        item.startMs = playbackCard_.startMs;
+            }
         }
-        for (auto &frame : browseStack_)
-            for (auto &item : frame.page.items)
-                if (item.aid == playbackCard_.aid && item.cid == playbackCard_.cid)
-                    item.startMs = playbackCard_.startMs;
-        if (!playbackFailed_ && sessions_.current().valid()) {
-            jobWrite_ = {};
-            jobWrite_.action = CommunityAction::ReportHistory;
-            jobWrite_.aid = playbackCard_.aid;
-            jobWrite_.cid = playbackCard_.cid;
-            jobWrite_.progress = eof ? playbackCard_.duration : static_cast<int>(positionMs / 1000);
-            jobWrite_.duration = playbackCard_.duration;
-            jobWrite_.episodeId = playbackEpisode_;
-            jobWrite_.seasonId = playbackSeason_;
+        if (!navigation_.current().playbackFailed && sessions_.current().valid()) {
+            jobHistoryWrite_ = {};
+            jobHistoryWrite_.action = CommunityAction::ReportHistory;
+            jobHistoryWrite_.aid = playbackCard_.aid;
+            jobHistoryWrite_.cid = playbackCard_.cid;
+            jobHistoryWrite_.progress = eof ? playbackCard_.duration : static_cast<int>(positionMs / 1000);
+            jobHistoryWrite_.duration = playbackCard_.duration;
+            jobHistoryWrite_.episodeId = playbackEpisode_;
+            jobHistoryWrite_.seasonId = playbackSeason_;
             startJob(Job::HistoryReport);
         }
     }

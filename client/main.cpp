@@ -243,19 +243,19 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (app.busy()) {
-            if (pressed & PSP_CTRL_CIRCLE) app.cancelRequest();
+            if (pressed & PSP_CTRL_CIRCLE) app.back();
             else if (pressed & PSP_CTRL_RTRIGGER) {
-                if (app.screen() == pspapp::Screen::Detail) app.requestComments();
-                else if (app.screen() == pspapp::Screen::Comments) app.loadMoreComments();
+                app.shoulder(1);
             }
             if (pressed & PSP_CTRL_START) break;
         } else {
             if (pressed & PSP_CTRL_START) break;
-            if (app.screen() == pspapp::Screen::Browse) {
+            if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
+            else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);
+            else if (app.screen() == pspapp::Screen::Browse) {
                 if (pressed & PSP_CTRL_CIRCLE) app.back();
                 else if (pressed & PSP_CTRL_CROSS) app.activate();
                 else if (pressed & PSP_CTRL_TRIANGLE) app.browseRefresh();
-                else if (pressed & PSP_CTRL_RTRIGGER) app.browseMore();
                 else if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
                 else if (pressed & PSP_CTRL_LEFT) app.browseMove(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.browseMove(1, 0);
@@ -264,17 +264,16 @@ int main(int argc, char** argv) {
             } else if (app.screen() == pspapp::Screen::Detail) {
                 if (pressed & PSP_CTRL_CIRCLE) app.back();
                 else if (pressed & PSP_CTRL_CROSS) app.requestPlayback();
-                else if (pressed & PSP_CTRL_RTRIGGER) app.requestComments();
                 else if (pressed & PSP_CTRL_SQUARE) app.toggleLater();
-                else if (pressed & PSP_CTRL_LTRIGGER) app.openVideoActions();
-                else if (pressed & PSP_CTRL_TRIANGLE) app.openBrowse({pspapp::BrowseKind::Space, app.detail().card.mid});
-                else if (pressed & PSP_CTRL_UP) app.moveSelection(0, -1);
+                else if (pressed & PSP_CTRL_TRIANGLE) {
+                    if (!app.detailReady()) app.retry();
+                    else app.openBrowse({pspapp::BrowseKind::Space, app.detail().card.mid});
+                } else if (pressed & PSP_CTRL_UP) app.moveSelection(0, -1);
                 else if (pressed & PSP_CTRL_DOWN) app.moveSelection(0, 1);
                 else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
             } else if (app.screen() == pspapp::Screen::Comments) {
                 if (pressed & PSP_CTRL_CIRCLE) app.back();
-                else if (pressed & PSP_CTRL_RTRIGGER) app.loadMoreComments();
                 else if (pressed & PSP_CTRL_CROSS) app.commentActions();
                 else if (pressed & PSP_CTRL_SQUARE) app.beginComment();
                 else if (pressed & PSP_CTRL_LEFT) ui_select_comment(app, -1);
@@ -289,8 +288,6 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_DOWN) app.moveSelection(0, 1);
                 else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
-                else if (pressed & PSP_CTRL_LTRIGGER) app.switchTab(-1);
-                else if (pressed & PSP_CTRL_RTRIGGER) app.switchTab(1);
             } else {
                 if (pressed & PSP_CTRL_CROSS) {
                     if (app.searchInputSelected()) {
@@ -322,10 +319,6 @@ int main(int argc, char** argv) {
                     app.moveSelection(0, -1);
                 } else if (pressed & PSP_CTRL_DOWN) {
                     app.moveSelection(0, 1);
-                } else if (pressed & PSP_CTRL_LTRIGGER) {
-                    app.switchTab(-1);
-                } else if (pressed & PSP_CTRL_RTRIGGER) {
-                    app.switchTab(1);
                 }
             }
         }

@@ -367,16 +367,19 @@ void drawFooter(const pspapp::App& app) {
         hint = "○ 返回   △ 重试 / 刷新   SELECT 网络";
     } else if (app.busy()) {
         const char *progress = network_progress_message();
-        hint = std::string(progress[0] ? progress : app.status()) + " · ○ 取消";
+        hint = std::string(progress[0] ? progress : app.status()) + " · ○ 取消并返回";
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
         hint = "↑↓ 选择分区   × 进入   → 返回内容";
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
         hint = "←→ 切换分类   ↓ 返回内容";
+    } else if (app.screen() == pspapp::Screen::Detail && !app.detailReady()) {
+        hint = "△ 重试详情  ○ 返回";
     } else if (app.screen() == pspapp::Screen::Detail) {
         hint = std::string(app.detailStartMs() > 0 ? "× 续播" : "× 播放") + "  R 评论  L 收藏/云端  □ 本地稍后  ○ 返回";
     } else if (app.screen() == pspapp::Screen::Browse) {
         const auto& page=app.browsePage();
-        if(page.request.kind==pspapp::BrowseKind::Text)hint="↑↓ 滚动全文  ○ 返回";
+        if(app.atTabRoot())hint="↑↓ 选择  × 打开  L/R 切换标签  ○ 首页";
+        else if(page.request.kind==pspapp::BrowseKind::Text)hint="↑↓ 滚动全文  ○ 返回";
         else if(page.request.kind==pspapp::BrowseKind::Image)hint="○ 返回动态";
         else if(pspapp::isPgcPosterPage(page.request.kind))hint="方向键选择  × 详情  R 更多  ○ 返回";
         else if(page.request.kind==pspapp::BrowseKind::Season)hint="↑↓ 选择  ← 分集 → 简介  × 打开  □ 追番  ○ 返回";
