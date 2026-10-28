@@ -1,4 +1,3 @@
-#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -71,42 +70,11 @@ void networkDialog() {
     ui_resume();
 }
 
-#ifdef BILI_DEVICE_SMOKE
-void smokeLog(const char* format, ...) {
-    FILE* file = std::fopen(CLIENT_ROOT "/smoke-stage.txt", "a");
-    if (!file) return;
-    va_list arguments;
-    va_start(arguments, format);
-    std::vfprintf(file, format, arguments);
-    va_end(arguments);
-    std::fputc('\n', file);
-    std::fclose(file);
-}
-
-void writeSmokeResult(const pspapp::App& app, int error, unsigned frames, int eof,
-                      int cancelled, bool streaming, const std::string& path) {
-    FILE* file = std::fopen(CLIENT_ROOT "/smoke-cpp.txt", "w");
-    if (!file) return;
-    std::fprintf(file,
-                 "error=%d frames=%u eof=%d cancelled=%d streaming=%d\n"
-                 "free_kb=%u max_kb=%u comments=%zu comments_end=%d\n"
-                 "status=%s\nnetwork_error=%s\npath=%s\n",
-                 error, frames, eof, cancelled, streaming ? 1 : 0,
-                 sceKernelTotalFreeMemSize() / 1024, sceKernelMaxFreeMemSize() / 1024,
-                 app.comments().size(), app.commentsEnd() ? 1 : 0,
-                 app.status().c_str(), network_error, path.c_str());
-    std::fclose(file);
-}
-#endif
-
 }  // namespace
 
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
-#ifdef BILI_DEVICE_SMOKE
-    smokeLog("main");
-#endif
     const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
                                                PSP_THREAD_ATTR_USER, nullptr);
     if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
@@ -129,10 +97,6 @@ int main(int argc, char** argv) {
     app.init();
     app.setStatus("正在初始化网络…");
     ui_render(app);
-#ifdef BILI_DEVICE_SMOKE
-    smokeLog("init cards=%zu", app.cards().size());
-#endif
-
 #ifdef BILI_DEVICE_OSK_TEST
     app.setTab(pspapp::Tab::Search);
     ui_render(app);
@@ -149,9 +113,6 @@ int main(int argc, char** argv) {
 
     const auto initError = pspapp::WifiManager{}.initialize();
     const int net = initError ? initError.rawCode : 0;
-#ifdef BILI_DEVICE_SMOKE
-    smokeLog("network init=%d ready=%d profile=%d", net, network_ready(), network_has_profile());
-#endif
     if (net < 0) {
         app.setStatus(pspapp::errorMessage(initError));
         pspapp::logError(CLIENT_ROOT "/last-error.txt", initError);
@@ -162,127 +123,28 @@ int main(int argc, char** argv) {
         networkDialog();
     }
     if (net >= 0) {
-#ifdef BILI_DEVICE_SMOKE_SEARCH
-        app.search("wiliwili");
-#elif defined(BILI_DEVICE_SMOKE_HOTS)
-        app.setTab(pspapp::Tab::Hots);
-#else
         app.refresh();
-#endif
     }
-#ifdef BILI_DEVICE_SMOKE
-    smokeLog("refresh requested cards=%zu", app.cards().size());
-#endif
 
     unsigned previous = 0;
     unsigned heldDirection = 0;
     int64_t repeatAt = 0;
-#ifdef BILI_DEVICE_SMOKE
-    int smokeStep = 0;
-    bool smokeCommentsMore = false;
-#ifdef BILI_DEVICE_SMOKE_NEXT_PAGE
-    size_t smokeInitialCards = 0;
-#endif
-    const int64_t smokeDeadline = sceKernelGetSystemTimeWide() + 180000000LL;
-    uint64_t smokeLastStage = 0;
-    app.setStatus("SMOKE · 等待首页");
-#endif
 
     while (!exiting) {
         app.poll();
 
-#ifdef BILI_DEVICE_SMOKE
-        const uint64_t smokeNow = (uint64_t)sceKernelGetSystemTimeWide();
-        if (smokeNow - smokeLastStage >= 1000000u) {
-            smokeLastStage = smokeNow;
-            smokeLog("loop step=%d busy=%d screen=%d cards=%zu ready=%d status=%s",
-                     smokeStep, app.busy() ? 1 : 0, static_cast<int>(app.screen()), app.cards().size(),
-                     app.playbackReady() ? 1 : 0, app.status().c_str());
-        }
-        if (app.screen() == pspapp::Screen::Home && !app.busy() && !app.cards().empty() && smokeStep == 0) {
-#ifdef BILI_DEVICE_SMOKE_NEXT_PAGE
-            if (!smokeInitialCards) {
-                smokeInitialCards = app.cards().size();
-                while (app.selection() + 3 < app.cards().size()) app.moveSelection(0, 1);
-                app.moveSelection(0, 1);
-            } else if (app.cards().size() > smokeInitialCards) {
-                smokeStep = 1;
-#ifdef BILI_DEVICE_SMOKE_INDEX
-                size_t target = smokeInitialCards + BILI_DEVICE_SMOKE_INDEX;
-                if (target >= app.cards().size()) target = app.cards().size() - 1;
-                while (app.selection() / 2 < target / 2) app.moveSelection(0, 1);
-                if (app.selection() % 2 != target % 2)
-                    app.moveSelection(target % 2 ? 1 : -1, 0);
-#endif
-                app.activate();
-            }
-#else
-            smokeStep = 1;
-#ifdef BILI_DEVICE_SMOKE_INDEX
-            size_t target = BILI_DEVICE_SMOKE_INDEX;
-            if (target >= app.cards().size()) target = app.cards().size() - 1;
-            while (app.selection() / 2 < target / 2) app.moveSelection(0, 1);
-            if (app.selection() % 2 != target % 2)
-                app.moveSelection(target % 2 ? 1 : -1, 0);
-#endif
-            app.activate();
-#endif
-        } else if (app.screen() == pspapp::Screen::Detail && !app.busy() && smokeStep == 1) {
-            smokeStep = 2;
-            app.requestComments();
-        } else if (!app.busy() && smokeStep == 2) {
-            if (app.screen() == pspapp::Screen::Comments && !smokeCommentsMore && !app.commentsEnd() &&
-                !app.comments().empty()) {
-                smokeCommentsMore = true;
-                app.loadMoreComments();
-            } else {
-                smokeStep = 3;
-                if (app.screen() == pspapp::Screen::Comments) app.back();
-            }
-        } else if (app.screen() == pspapp::Screen::Detail && !app.busy() && smokeStep == 3) {
-            smokeStep = 4;
-            app.requestPlayback();
-        }
-        if (smokeStep == 4 && !app.busy() && !app.playbackReady()) {
-            writeSmokeResult(app, -3, 0, 0, 0, false, {});
-            break;
-        }
-        if (smokeStep < 4 && sceKernelGetSystemTimeWide() > smokeDeadline) {
-            writeSmokeResult(app, -2, 0, 0, 0, false, {});
-            break;
-        }
-#endif
-
         if (app.playbackReady()) {
             ui_render(app);
-#ifdef BILI_DEVICE_SMOKE
-            const bool streaming = app.playback().streaming != 0;
-            const std::string playback_path = app.playback().path;
-#endif
             PspVideoOptions options{};
             options.path = app.playback().path;
             options.log_root = CLIENT_ROOT;
             options.source = bili_playback_source(&app.playback());
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
-#ifdef BILI_DEVICE_SMOKE
-            options.sample = 1;
-#ifdef BILI_DEVICE_SMOKE_FULL
-            options.sample = 0;
-#endif
-#endif
             PspVideoResult result{};
             const int error = psp_video_play(&options, &result);
             ui_resume();
             app.finishPlayback(error, result.frames, result.eof, result.cancelled, result.error_stage, result.position_ms);
-#ifdef BILI_DEVICE_SMOKE
-            smokeLog("playback returned error=%d frames=%u", error, result.frames);
-            smokeLog("writing result");
-            writeSmokeResult(app, error, result.frames, result.eof, result.cancelled,
-                             streaming, playback_path);
-            smokeLog("result written");
-            break;
-#endif
             previous = ~0u;
             continue;
         }

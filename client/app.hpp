@@ -311,7 +311,6 @@ private:
     bool hotsHasMore_ = true;
     bool searchHasMore_ = true;
     bool busy_ = false;
-    bool smokeStageDone_ = false;
     std::string query_;
     bool playbackFailed_ = false;
     std::string status_ = "Wiliwili C++17 UI · 正在初始化";
