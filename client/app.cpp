@@ -253,12 +253,12 @@ void saveLocal(const char* path, const std::vector<LocalVideo>& entries) {
 void saveSearchHistory(const std::vector<std::string>& entries) {
     nlohmann::json root = nlohmann::json::array();
     for (const auto& entry : entries) root.push_back(entry);
-    writeFile(CLIENT_ROOT "/search-history.json", root.dump());
+    writeFile(CLIENT_PATH("/search-history.json"), root.dump());
 }
 
 std::vector<std::string> loadSearchHistory() {
     std::vector<std::string> entries;
-    const std::string text = readFile(CLIENT_ROOT "/search-history.json", 16 * 1024);
+    const std::string text = readFile(CLIENT_PATH("/search-history.json"), 16 * 1024);
     try {
         const auto root = nlohmann::json::parse(text.empty() ? "[]" : text);
         if (root.is_array()) {
@@ -326,10 +326,10 @@ int App::workerEntry(SceSize, void*) {
 }
 
 void App::init() {
-    const bool preferencesLoaded = loadPreferences(CLIENT_ROOT "/settings.json", preferences_);
+    const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
-    history_ = loadLocal(CLIENT_ROOT "/history.json");
-    later_ = loadLocal(CLIENT_ROOT "/later.json");
+    history_ = loadLocal(CLIENT_PATH("/history.json"));
+    later_ = loadLocal(CLIENT_PATH("/later.json"));
     searchHistory_ = loadSearchHistory();
     auto restored = authService_.restore();
     if (restored) {
@@ -337,7 +337,7 @@ void App::init() {
         sessionCheckPending_ = authView_.state == AuthState::Restored;
     } else {
         authError_ = restored.error;
-        logError(CLIENT_ROOT "/last-error.txt", authError_);
+        logError(CLIENT_PATH("/last-error.txt"), authError_);
     }
     loadCachedCards();
     status_ = recommend_.empty() ? "推荐 · 按 □ 搜索，△ 刷新" : "缓存首页 · 联网后自动刷新";
@@ -364,7 +364,7 @@ void App::shutdown() {
 
 void App::loadCachedCards() {
     BiliHome cached{};
-    const std::string text = readFile(CLIENT_ROOT "/cache/home.json", 128 * 1024);
+    const std::string text = readFile(CLIENT_PATH("/cache/home.json"), 128 * 1024);
     if (text.empty() || bili_parse_home(text.c_str(), &cached) < 0) return;
     recommend_.clear();
     for (int i = 0; i < cached.count; ++i) {
@@ -868,8 +868,8 @@ void App::rememberHistory(const VideoCard& card) {
     saveHistory();
 }
 
-void App::saveHistory() { saveLocal(CLIENT_ROOT "/history.json", history_); }
-void App::saveLater() { saveLocal(CLIENT_ROOT "/later.json", later_); }
+void App::saveHistory() { saveLocal(CLIENT_PATH("/history.json"), history_); }
+void App::saveLater() { saveLocal(CLIENT_PATH("/later.json"), later_); }
 void App::saveSearchHistory() { pspapp::saveSearchHistory(searchHistory_); }
 
 void App::startRecommend() {
@@ -1116,7 +1116,7 @@ void App::poll() {
                                        ? (network_error[0] ? network_error : "载入失败，△ 重试")
                                        : jobError_));
         if (error_)
-            logError(CLIENT_ROOT "/last-error.txt", error_);
+            logError(CLIENT_PATH("/last-error.txt"), error_);
         if (job_ == Job::Search)
             searchError_ = transfer_cancel ? "" : status_;
         if (job_ == Job::AuthGenerate || job_ == Job::AuthPoll || job_ == Job::AuthCheck ||
@@ -1585,8 +1585,8 @@ void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, Psp
     if (playbackFailed_) {
         error_ = pspapp::playbackError(error, stage);
         status_ = errorMessage(error_);
-        logError(CLIENT_ROOT "/last-error.txt", error_);
-        if (FILE *out = std::fopen(CLIENT_ROOT "/last-playback-error.txt", "w")) {
+        logError(CLIENT_PATH("/last-error.txt"), error_);
+        if (FILE *out = std::fopen(CLIENT_PATH("/last-playback-error.txt"), "w")) {
             std::fprintf(out, "stage=%s\nerror=%d\ncleanup_error=%d\nframes=%u\nmessage=%s\n",
                          psp_video_stage_name(stage), error, cacheResult, frames, status_.c_str());
             std::fclose(out);

@@ -16,7 +16,7 @@ namespace {
 
 #ifdef BILI_DEVICE_LIVE
 void liveLog(const char* format, ...) {
-    FILE* file = std::fopen(CLIENT_ROOT "/dash-live.txt", "a");
+    FILE* file = std::fopen(CLIENT_PATH("/dash-live.txt"), "a");
     if (!file) return;
     va_list arguments;
     va_start(arguments, format);

@@ -15,6 +15,7 @@
 
 #include "app.hpp"
 #include "ui.hpp"
+#include "storage_paths.h"
 #ifdef BILI_DEVICE_PLAYBACK_TEST
 #include "../tests/psp_playback_test.hpp"
 #endif
@@ -23,6 +24,9 @@ PSP_MODULE_INFO("Wiliwili PSP", PSP_MODULE_USER, 0, 1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
 // The loader selects the profile before libc initializes this heap.
 PSP_HEAP_SIZE_KB(BILI_CLIENT_HEAP_KB);
+
+int client_storage_index = 0;
+const char *client_storage_device = nullptr;
 
 namespace {
 
@@ -82,8 +86,17 @@ void networkDialog() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+    const char* root = wili_storage_from_client(argc > 0 && argv ? argv[0] : nullptr);
+    if (!root || chdir(root) < 0) {
+        std::printf("CLIENT cannot open package root; start through EBOOT.PBP\n");
+        sceKernelDelayThread(5000000);
+        sceKernelExitGame();
+        return 1;
+    }
+    client_storage_index = root == wili_storage_roots[0] ? 0 : root == wili_storage_roots[1] ? 1 : 2;
+    client_storage_device = std::strncmp(root, "ms0:", 4) == 0 ? "ms0:"
+                          : std::strncmp(root, "ef0:", 4) == 0 ? "ef0:" : "host0:";
+    std::printf("CLIENT root=%s\n", root);
     std::printf("CLIENT heap_kib=%d default_rgb_frames=%d\n",
                 BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
     const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
@@ -92,9 +105,7 @@ int main(int argc, char** argv) {
     scePowerSetClockFrequency(333, 333, 166);
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
-    sceIoMkdir(CLIENT_ROOT, 0777);
-    sceIoMkdir(CLIENT_ROOT "/cache", 0777);
-    chdir(CLIENT_ROOT);
+    sceIoMkdir(CLIENT_PATH("/cache"), 0777);
 
     ui_init();
     logMemory("ui_init");
@@ -123,7 +134,7 @@ int main(int argc, char** argv) {
     app.setTab(pspapp::Tab::Search);
     ui_render(app);
     const std::string osk_text = ui_input_text("PSP OSK 测试", "");
-    FILE* osk_result = std::fopen(CLIENT_ROOT "/osk-result.txt", "w");
+    FILE* osk_result = std::fopen(CLIENT_PATH("/osk-result.txt"), "w");
     if (osk_result) {
         std::fprintf(osk_result, "%s\n", osk_text.c_str());
         std::fclose(osk_result);
@@ -138,7 +149,7 @@ int main(int argc, char** argv) {
     logMemory("network_init");
     if (net < 0) {
         app.setStatus(pspapp::errorMessage(initError));
-        pspapp::logError(CLIENT_ROOT "/last-error.txt", initError);
+        pspapp::logError(CLIENT_PATH("/last-error.txt"), initError);
     }
     if (net >= 0 && !network_ready() && !network_has_profile()) {
         app.setStatus("请选择 Wi-Fi 连接 · ○ 返回离线首页");

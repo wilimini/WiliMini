@@ -72,7 +72,7 @@ static int live_download(SceSize args, void *opaque) {
   curl_easy_setopt(curl, CURLOPT_URL, s->url);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "wiliwili");
   curl_easy_setopt(curl, CURLOPT_REFERER, "https://live.bilibili.com/");
-  curl_easy_setopt(curl, CURLOPT_CAINFO, CLIENT_ROOT "/cacert.pem");
+  curl_easy_setopt(curl, CURLOPT_CAINFO, CLIENT_PATH("/cacert.pem"));
   curl_easy_setopt(curl, CURLOPT_CAPATH, (char *)NULL);
   curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");

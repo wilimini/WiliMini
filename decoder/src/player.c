@@ -38,8 +38,8 @@ static volatile int quit_requested;
 
 #include "psp_video.h"
 #include "source_io.h"
-static const char *video_source = "file:ms0:/PSP/GAME/WiliMini/cache/video.mp4";
-static const char *video_log_root = "ms0:/PSP/GAME/WiliMini";
+static const char *video_source = "file:./cache/video.mp4";
+static const char *video_log_root = ".";
 static const PspVideoSource *video_io_source;
 static const PspVideoSource *audio_io_source;
 static int client_playback;
