@@ -1,6 +1,7 @@
 #ifndef BILIBILI_H
 #define BILIBILI_H
 #include <stddef.h>
+#include "storage_paths.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -8,7 +9,13 @@ extern "C" {
 #define HOME_COUNT 6
 #define BILI_STREAM_SEGMENTS 8
 #define BILI_MEDIA_URLS 4
-#define CLIENT_ROOT "ms0:/PSP/GAME/WiliMini"
+/* Selected once at startup. Literal paths remain absolute and have static lifetime. */
+extern int client_storage_index;
+#define CLIENT_PATH(suffix) (client_storage_index == 0 ? WILI_STORAGE_MS0 suffix : \
+                            client_storage_index == 1 ? WILI_STORAGE_EF0 suffix : \
+                                                        WILI_STORAGE_HOST0 suffix)
+#define CLIENT_ROOT CLIENT_PATH("")
+extern const char *client_storage_device;
 typedef struct {
     char bvid[24], title[256], author[96], picture[512];
     long long cid, views;

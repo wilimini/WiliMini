@@ -982,7 +982,7 @@ void ui_init() {
     sceDisplayWaitVblankStart();
     sceGuDisplay(GU_TRUE);
     draw_buffer = nullptr;
-    bitmapFontInit(CLIENT_ROOT "/wqy.bmf");
+    bitmapFontInit(CLIENT_PATH("/wqy.bmf"));
 }
 
 void ui_startup_status(const char *message) {
@@ -1128,7 +1128,7 @@ std::string ui_input_text(const std::string& title, const std::string& initial, 
     params.data = &data;
 
 #ifdef BILI_DEVICE_OSK_TEST
-    FILE* log = std::fopen(CLIENT_ROOT "/osk.log", "w");
+    FILE* log = std::fopen(CLIENT_PATH("/osk.log"), "w");
 #else
     FILE* log = nullptr;
 #endif

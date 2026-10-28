@@ -52,7 +52,7 @@ void App::changeSetting() {
         case 4: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
     }
-    if (!savePreferences(CLIENT_ROOT "/settings.json", next)) {
+    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
         status_ = "设置保存失败 · 请检查记忆棒空间";
         return;
     }
@@ -63,7 +63,7 @@ void App::changeSetting() {
 void App::updateStorage() {
     coverFiles_ = 0;
     coverBytes_ = 0;
-    const SceUID directory = sceIoDopen(CLIENT_ROOT "/cache");
+    const SceUID directory = sceIoDopen(CLIENT_PATH("/cache"));
     if (directory < 0) {
         status_ = "无法读取封面缓存";
         return;
@@ -79,7 +79,7 @@ void App::updateStorage() {
 }
 
 std::string App::buildVersion() const {
-    const auto text = readSettingsText(CLIENT_ROOT "/build.json", 1024 * 1024);
+    const auto text = readSettingsText(CLIENT_PATH("/build.json"), 1024 * 1024);
     try {
         return nlohmann::json::parse(text).value("build", "本地构建");
     } catch (...) { return "本地构建 · 无版本记录"; }
@@ -114,7 +114,7 @@ void App::activateUtility() {
             return;
         }
         clearingCovers_ = false;
-        const SceUID directory = sceIoDopen(CLIENT_ROOT "/cache");
+        const SceUID directory = sceIoDopen(CLIENT_PATH("/cache"));
         if (directory < 0) { status_ = "无法读取封面缓存"; return; }
         bool failed = false;
         SceIoDirent entry{};

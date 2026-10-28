@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 static int dns_server(char *server,size_t size){
-    FILE *f=fopen(CLIENT_ROOT "/dns-server.txt","r");
+    FILE *f=fopen(CLIENT_PATH("/dns-server.txt"),"r");
     if(f){
         if(!fgets(server,size,f))server[0]=0;
         fclose(f);

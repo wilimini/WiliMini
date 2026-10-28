@@ -171,12 +171,15 @@ cmake --build build/client --target package --parallel 4
 ### 安装到 PSP
 
 从 [GitHub Releases](https://github.com/wilimini/WiliMini/releases/latest) 下载
-`WiliMini-<版本号>.zip` 并解压。将解压得到的 `WiliMini/` 整个目录复制到记忆棒的
-`PSP/GAME/`，最终路径应为 `ms0:/PSP/GAME/WiliMini/EBOOT.PBP`。然后从 PSP 游戏菜单启动
-WiliMini。
-
-如果从源码构建，则将 `dist/PSP/GAME/WiliMini/` 整个目录复制到记忆棒的
+`WiliMini-<版本号>.zip` 并解压。将解压得到的 `WiliMini/` 整个目录复制到
 `PSP/GAME/`。
+
+- 记忆棒或 M2 卡路径为 `ms0:/PSP/GAME/WiliMini/EBOOT.PBP`；
+- PSP Go 内置存储路径通常为 `ef0:/PSP/GAME/WiliMini/EBOOT.PBP`。
+
+然后从 PSP 游戏菜单启动 WiliMini。
+
+如果从源码构建，则将 `dist/PSP/GAME/WiliMini/` 整个目录复制到目标存储的 `PSP/GAME/`。
 
 目录中的主要文件包括：
 
@@ -220,9 +223,10 @@ WiliMini。
 
 ## 开发调试
 
-通过 PSPLink 调试时，可以使用 USBHostFS 将项目目录映射到 PSP：
+通过 PSPLink 调试时，先在项目根目录生成完整包，再使用 USBHostFS 将项目目录映射到 PSP：
 
 ```sh
+make package
 usbhostfs_pc -vv -b 11000 "$PWD"
 pspsh -p 11000
 ```
@@ -233,8 +237,9 @@ pspsh -p 11000
 ./build/client/loader/bootstrap.prx
 ```
 
-加载器从 `host0:` 运行客户端时，仍从
-`ms0:/PSP/GAME/WiliMini/me_bridge.prx` 加载 Media Engine bridge。
+仅当 `ms0:` 和 `ef0:` 都没有完整安装时，加载器才使用
+`host0:/dist/PSP/GAME/WiliMini` 下的客户端、ME bridge 和资源，日志、设置和缓存也写入
+该目录。检查 `LOADER` 和 `CLIENT` 日志中的 `root=`，确认实际使用的位置。
 
 ## 项目结构
 

@@ -47,7 +47,7 @@ int controlledPlaybackTest() {
     json output;
     int code = -1;
     try {
-        FILE* file = std::fopen(CLIENT_ROOT "/playback-test.json", "rb");
+        FILE* file = std::fopen(CLIENT_PATH("/playback-test.json"), "rb");
         if (!file) return -1;
         char text[4096]{};
         const size_t size = std::fread(text, 1, sizeof(text) - 1, file);
@@ -96,7 +96,7 @@ int controlledPlaybackTest() {
             if (code < 0 || result.cancelled) break;
         }
     } catch (...) { output["error"] = "Invalid playback test configuration"; }
-    FILE* file = std::fopen(CLIENT_ROOT "/playback-test-result.json", "wb");
+    FILE* file = std::fopen(CLIENT_PATH("/playback-test-result.json"), "wb");
     if (file) {
         const std::string text = output.dump(2);
         std::fwrite(text.data(), 1, text.size(), file);

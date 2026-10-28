@@ -279,7 +279,7 @@ private:
     BilibiliApi api_;
     CommunityService communityService_{api_};
     SearchService searchService_{api_};
-    SessionStore sessions_{CLIENT_ROOT "/session.json"};
+    SessionStore sessions_{CLIENT_PATH("/session.json")};
     AuthService authService_{api_, sessions_};
     AuthView authView_, stagedAuth_;
     AppError error_, jobTypedError_, authError_;

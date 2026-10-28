@@ -137,7 +137,7 @@ static int buvid3_valid(const char *value) {
  * sessions. Keep it across launches so Bilibili sees a stable client. */
 static void network_ensure_buvid3(void) {
     if(buvid3[0])return;
-    SceUID fd=sceIoOpen(CLIENT_ROOT "/buvid3.txt",PSP_O_RDONLY,0);
+    SceUID fd=sceIoOpen(CLIENT_PATH("/buvid3.txt"),PSP_O_RDONLY,0);
     if(fd>=0){
         char stored[34]={0};
         const int read=sceIoRead(fd,stored,32);
@@ -151,7 +151,7 @@ static void network_ensure_buvid3(void) {
     buvid_seed=(unsigned)sceKernelGetSystemTimeWide() ^ (unsigned)sceKernelGetSystemTimeLow() ^ 0xA5C31E27u;
     for(int i=0;i<32;++i)buvid3[i]=hex[buvid_random()&15u];
     buvid3[32]=0;
-    fd=sceIoOpen(CLIENT_ROOT "/buvid3.txt",PSP_O_WRONLY|PSP_O_CREAT|PSP_O_TRUNC,0777);
+    fd=sceIoOpen(CLIENT_PATH("/buvid3.txt"),PSP_O_WRONLY|PSP_O_CREAT|PSP_O_TRUNC,0777);
     if(fd>=0){
         sceIoWrite(fd,buvid3,32);
         sceIoClose(fd);
@@ -187,7 +187,7 @@ static void network_report(void) {
 }
 #endif
 int network_has_profile(void) {
-    FILE *f=fopen(CLIENT_ROOT "/wifi-profile.txt","r");if(!f)return 0;
+    FILE *f=fopen(CLIENT_PATH("/wifi-profile.txt"),"r");if(!f)return 0;
     int profile=0;int n=fscanf(f,"%d",&profile);fclose(f);
     return n==1 && profile>0 && profile<100 ? profile : 0;
 }
@@ -198,7 +198,7 @@ void network_remember_profile(void) {
     for(int id=1;id<100;++id){
         netData data;memset(&data,0,sizeof(data));
         if(sceUtilityCheckNetParam(id)>=0 && sceUtilityGetNetParam(id,PSP_NETPARAM_NAME,&data)>=0 && !strcmp(data.asString,current.name)){
-            FILE *f=fopen(CLIENT_ROOT "/wifi-profile.txt","w");if(f){fprintf(f,"%d\n",id);fclose(f);}return;
+            FILE *f=fopen(CLIENT_PATH("/wifi-profile.txt"),"w");if(f){fprintf(f,"%d\n",id);fclose(f);}return;
         }
     }
 }
@@ -309,7 +309,7 @@ static int request(const char *url,Sink *sink) {
         curl_easy_setopt(c,CURLOPT_HEADERDATA,sink->response);
     }
     if(headers)curl_easy_setopt(c,CURLOPT_HTTPHEADER,headers);
-    curl_easy_setopt(c,CURLOPT_CAINFO,CLIENT_ROOT "/cacert.pem");
+    curl_easy_setopt(c,CURLOPT_CAINFO,CLIENT_PATH("/cacert.pem"));
     curl_easy_setopt(c,CURLOPT_CAPATH,(char *)NULL);
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,authenticated?0L:1L);
     if(sink->response && bili_http_login_host(url))curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,0L);
@@ -436,13 +436,13 @@ int bili_home(int page,BiliHome *out) {
     if(r==0){
         out->page=page;
         for(int i=0;i<out->count&&!transfer_cancel;++i){
-            char path[192];snprintf(path,sizeof(path),CLIENT_ROOT "/cache/%s.jpg",out->videos[i].bvid);
+            char path[192];snprintf(path,sizeof(path),CLIENT_PATH("/cache/%s.jpg"),out->videos[i].bvid);
             snprintf(url,sizeof(url),"%s@288w_162h_1c.jpg",out->videos[i].picture);
             get_file(url,path,256*1024,0);
         }
         if(transfer_cancel){free(json);return -1;}
-        FILE *f=fopen(CLIENT_ROOT "/cache/home.json.part","wb");
-        if(f){size_t len=strlen(json);int ok=fwrite(json,1,len,f)==len;if(fclose(f))ok=0;if(ok)rename(CLIENT_ROOT "/cache/home.json.part",CLIENT_ROOT "/cache/home.json");}
+        FILE *f=fopen(CLIENT_PATH("/cache/home.json.part"),"wb");
+        if(f){size_t len=strlen(json);int ok=fwrite(json,1,len,f)==len;if(fclose(f))ok=0;if(ok)rename(CLIENT_PATH("/cache/home.json.part"),CLIENT_PATH("/cache/home.json"));}
     }free(json);return r;
 }
 /* Small videos stay in a RAM window. Large videos are spooled to a temporary
@@ -672,7 +672,7 @@ static void range_configure(CURL *curl, const char *url, const char *range,
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "wiliwili");
     curl_easy_setopt(curl, CURLOPT_REFERER, "https://www.bilibili.com");
-    curl_easy_setopt(curl, CURLOPT_CAINFO, CLIENT_ROOT "/cacert.pem");
+    curl_easy_setopt(curl, CURLOPT_CAINFO, CLIENT_PATH("/cacert.pem"));
     curl_easy_setopt(curl, CURLOPT_CAPATH, (char *)NULL);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
@@ -1161,7 +1161,7 @@ static int stream_read_at(void *opaque,int64_t offset,void *buffer,int bytes) {
             if(s->disk){
                 int total=0;
                 for(int attempt=0;attempt<2 && total<bytes;++attempt){
-                    if(attempt)sceIoSync("ms0:",0);
+                    if(attempt)sceIoSync(client_storage_device,0);
                     const SceOff position=sceIoLseek(s->fd,(SceOff)(start+(unsigned)total),SEEK_SET);
                     if(position!=(SceOff)(start+(unsigned)total))break;
                     while(total<bytes){
@@ -1322,13 +1322,13 @@ fail:
 int bili_prepare_stream_playback(const BiliStream *stream,const char *cache_key,BiliPlayback *out) {
     if(!stream||!cache_key||!out)return -1;
     memset(out,0,sizeof(*out));
-    snprintf(out->path,sizeof(out->path),CLIENT_ROOT "/cache/%s.mp4",cache_key);
+    snprintf(out->path,sizeof(out->path),CLIENT_PATH("/cache/%s.mp4"),cache_key);
     return stream_begin(stream,out);
 }
 int bili_prepare_playback(const BiliVideo *v,BiliPlayback *out) {
     if(!v || !out)return -1;
     memset(out,0,sizeof(*out));
-    snprintf(out->path,sizeof(out->path),CLIENT_ROOT "/cache/%s_%lld.mp4",v->bvid,v->cid);
+    snprintf(out->path,sizeof(out->path),CLIENT_PATH("/cache/%s_%lld.mp4"),v->bvid,v->cid);
     SceUID cached=sceIoOpen(out->path,PSP_O_RDONLY,0);
     if(cached>=0){
         const SceOff end=sceIoLseek(cached,0,SEEK_END);
