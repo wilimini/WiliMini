@@ -8,58 +8,13 @@
 #include <pspkernel.h>
 
 #include "bilibili.h"
+#include "navigation.hpp"
 #include "preferences.hpp"
 #include "services/auth_service.hpp"
 #include "services/search_service.hpp"
 #include "services/community_service.hpp"
 
 namespace pspapp {
-
-enum class Tab { Recommend, Hots, Search, Mine, Discover };
-enum class Screen { Home, Detail, Comments, Mine, Login, Settings, Storage, Help, About, Licenses, LicenseText, Browse };
-enum class FocusArea { Content, Navigation, Categories };
-enum class SearchView { Landing, History, Results };
-
-struct VideoCard {
-    std::string bvid;
-    std::string title;
-    std::string author;
-    std::string picture;
-    std::string mid;
-    uint64_t aid = 0;
-    uint64_t cid = 0;
-    uint64_t views = 0;
-    int duration = 0;
-    int64_t startMs = 0;
-};
-
-struct VideoPart {
-    uint64_t cid = 0;
-    std::string title;
-    int duration = 0;
-};
-
-struct VideoDetailView {
-    VideoCard card;
-    std::string description;
-    std::vector<VideoPart> pages;
-    uint64_t danmaku = 0;
-    uint64_t like = 0;
-    uint64_t coin = 0;
-    uint64_t favorite = 0;
-};
-
-struct CommentItem {
-    uint64_t id = 0;
-    std::string author;
-    std::string message;
-    std::string time;
-    int like = 0;
-    bool top = false;
-    bool uploader = false;
-    std::string mid, root, parent;
-    int replies = 0, action = 0;
-};
 
 struct LocalVideo {
     std::string bvid;
@@ -83,24 +38,26 @@ public:
     void shutdown();
 
     void switchTab(int direction);
+    void shoulder(int direction);
+    bool atTabRoot() const;
     void setTab(Tab tab);
-    Tab tab() const { return tab_; }
-    Screen screen() const { return screen_; }
-    FocusArea focusArea() const { return focusArea_; }
-    int navigationSelection() const { return navigationSelection_; }
+    Tab tab() const { return root().tab; }
+    Screen screen() const { return navigation_.current().screen(); }
+    FocusArea focusArea() const { return navigation_.current().focus; }
+    int navigationSelection() const { return root().navigationSelection; }
     void openSettings();
     void changeSetting();
     void updateStorage();
-    bool utilityPage() const { return screen_ >= Screen::Settings && screen_ <= Screen::LicenseText; }
+    bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
     const Preferences& preferences() const { return preferences_; }
-    size_t settingSelection() const { return settingSelection_; }
-    size_t licenseSelection() const { return licenseSelection_; }
-    const std::string& licenseText() const { return licenseText_; }
-    int documentScroll() const { return documentScroll_; }
-    void setDocumentScrollLimit(int limit) { documentScrollLimit_ = limit; }
+    size_t settingSelection() const { return navigation_.get<SettingsRoute>().selection; }
+    size_t licenseSelection() const { return navigation_.get<LicensesRoute>().selection; }
+    const std::string& licenseText() const { return navigation_.get<LicenseTextRoute>().text; }
+    int documentScroll() const { return navigation_.get<LicenseTextRoute>().scroll; }
+    void setDocumentScrollLimit(int limit) { navigation_.get<LicenseTextRoute>().scrollLimit = limit; }
     size_t coverFiles() const { return coverFiles_; }
     uint64_t coverBytes() const { return coverBytes_; }
-    bool clearingCovers() const { return clearingCovers_; }
+    bool clearingCovers() const { return screen() == Screen::Storage && navigation_.get<StorageRoute>().clearing; }
     unsigned coverGeneration() const { return coverGeneration_; }
     const std::string &completedCoverKey() const { return completedCoverKey_; }
     std::string buildVersion() const;
@@ -120,13 +77,13 @@ public:
     bool communityInputPending() const { return communityInputPending_; }
     const std::string &communityDraft() const { return communityDraft_; }
     void cancelCommunityInput() { communityInputPending_ = false; }
-    bool hasBrowse() const { return !browseStack_.empty(); }
-    const BrowsePage &browsePage() const { return browseStack_.back().page; }
-    const AppError &browseError() const { return browseStack_.back().error; }
-    size_t browseSelection() const { return browseStack_.back().selection; }
-    int browseScroll() const { return browseStack_.back().scroll; }
-    size_t selectedComment() const { return selectedComment_; }
-    void setBrowseScrollLimit(int limit) { browseScrollLimit_ = limit; }
+    bool hasBrowse() const { return screen() == Screen::Browse; }
+    const BrowsePage &browsePage() const { return browseState().page; }
+    const AppError &browseError() const { return browseState().error; }
+    size_t browseSelection() const { return browseState().selection; }
+    int browseScroll() const { return browseState().scroll; }
+    size_t selectedComment() const { return commentsState().selected; }
+    void setBrowseScrollLimit(int limit) { browseState().scrollLimit = limit; }
     void communityShortcut();
     void openVideoActions();
 
@@ -138,46 +95,47 @@ public:
     void search(const std::string &keyword);
     bool searchInputSelected() const;
     void removeSearchHistory();
-    SearchView searchView() const { return searchView_; }
-    const std::vector<SearchTopic> &searchTopics() const { return searchTopics_; }
-    const std::string &searchError() const { return searchError_; }
+    SearchView searchView() const { return root().searchView; }
+    const std::vector<SearchTopic> &searchTopics() const { return root().searchTopics; }
+    const std::string &searchError() const { return root().searchError; }
     void retry();
     void openLogin();
     void refreshLogin();
     void logout();
     const AuthView &auth() const { return authView_; }
     const AppError &authError() const { return authError_; }
-    const AppError &error() const { return error_; }
+    const AppError &error() const { return navigation_.current().error; }
     void setStatus(const std::string &status) { status_ = status; }
     void requestComments();
     void loadMoreComments();
     void scrollComments(int amount);
-    void setCommentScrollLimit(int limit) { commentScrollLimit_ = limit; }
+    void setCommentScrollLimit(int limit) { commentsState().scrollLimit = limit; }
     void toggleLater();
     void requestPlayback(bool fromStart = false);
+    bool detailReady() const { return detailState().loaded; }
     int64_t detailStartMs() const { return selectedDetailCard().startMs; }
     void finishPlayback(int error, unsigned frames, int eof, int cancelled,
                         PspVideoStage stage = PSP_VIDEO_STAGE_NONE, int64_t positionMs = 0);
     int64_t playbackStartMs() const { return playbackCard_.startMs; }
-    bool playbackFailed() const { return playbackFailed_; }
+    bool playbackFailed() const { return navigation_.current().playbackFailed; }
 
-    bool busy() const { return busy_; }
+    bool busy() const { return busy_ && (!backgroundJob() || pendingBack_); }
     bool pollingLogin() const { return busy_ && job_ == Job::AuthPoll; }
     bool playbackReady() const { return playbackReady_; }
     BiliPlayback &playback() { return playback_; }
     const BiliPlayback &playback() const { return playback_; }
-    const VideoDetailView &detail() const { return detail_; }
+    const VideoDetailView &detail() const { return detailState().detail; }
     const std::vector<VideoCard> &cards() const;
-    const std::vector<CommentItem> &comments() const { return comments_; }
+    const std::vector<CommentItem> &comments() const { return commentsState().items; }
     const std::vector<LocalVideo> &history() const { return history_; }
     const std::vector<LocalVideo> &later() const { return later_; }
     const std::vector<std::string> &searchHistory() const { return searchHistory_; }
     const std::string &status() const { return status_; }
-    const std::string &query() const { return query_; }
-    size_t selection() const { return selection_; }
-    size_t detailPart() const { return detailPart_; }
-    int commentScroll() const { return commentScroll_; }
-    bool commentsEnd() const { return commentsEnd_; }
+    const std::string &query() const { return root().query; }
+    size_t selection() const { return root().selection; }
+    size_t detailPart() const { return detailState().part; }
+    int commentScroll() const { return commentsState().scroll; }
+    bool commentsEnd() const { return commentsState().end; }
     int page() const;
     bool hasMore() const;
     bool currentIsLater() const;
@@ -202,6 +160,9 @@ private:
         HistoryReport
     };
 
+    bool backgroundJob() const {
+        return job_ == Job::HistoryReport && queuedJob_ == Job::None && !coverActive_;
+    }
     void startJob(Job job);
     void runJob();
     void commitJob();
@@ -230,13 +191,8 @@ private:
     static App *workerApp;
 
     Preferences preferences_;
-    Screen settingsReturnScreen_ = Screen::Home;
-    size_t settingSelection_ = 0, licenseSelection_ = 0;
-    int documentScroll_ = 0, documentScrollLimit_ = 0;
-    std::string licenseText_;
     size_t coverFiles_ = 0;
     uint64_t coverBytes_ = 0;
-    bool clearingCovers_ = false;
     unsigned coverGeneration_ = 0;
     struct CoverRequest { std::string key, url; };
     std::vector<CoverRequest> coverQueue_;
@@ -249,30 +205,30 @@ private:
     Tab coverTab_ = Tab::Recommend;
     size_t coverPage_ = 0, coverDepth_ = 0;
 
-    struct BrowseFrame {
-        BrowsePage page;
-        BrowseItem context;
-        size_t selection = 0;
-        int scroll = 0;
-        AppError error;
-    };
-    std::vector<BrowseFrame> browseStack_;
-    Screen browseReturnScreen_ = Screen::Home, loginReturnScreen_ = Screen::Mine;
-    Screen detailReturnScreen_ = Screen::Home;
     BrowseRequest jobBrowse_;
     BrowsePage stagedBrowse_;
-    CommunityWrite jobWrite_;
+    CommunityWrite jobWrite_, jobHistoryWrite_;
+    uint64_t jobRouteId_ = 0;
     BrowseItem jobMedia_;
     VideoCard playbackCard_;
     uint64_t playbackEpisode_ = 0, playbackSeason_ = 0;
     ApiResponse stagedWrite_;
     BrowseItem activeComment_;
-    size_t selectedComment_ = 0;
-    bool browseAppending_ = false, communityInputPending_ = false, confirmingDelete_ = false;
+    bool browseAppending_ = false, communityInputPending_ = false;
     bool communityLoginPending_ = false, dismissLoginAfterCheck_ = false;
-    int browseScrollLimit_ = 0;
     std::string communityDraft_;
     CommunityWrite inputWrite_;
+    NavigationStack navigation_;
+    RootRoute &root() { return navigation_.get<RootRoute>(); }
+    const RootRoute &root() const { return navigation_.get<RootRoute>(); }
+    DetailRoute &detailState() { return navigation_.get<DetailRoute>(); }
+    const DetailRoute &detailState() const { return navigation_.get<DetailRoute>(); }
+    CommentsRoute &commentsState() { return navigation_.get<CommentsRoute>(); }
+    const CommentsRoute &commentsState() const { return navigation_.get<CommentsRoute>(); }
+    BrowseRoute &browseState() { return navigation_.get<BrowseRoute>(); }
+    const BrowseRoute &browseState() const { return navigation_.get<BrowseRoute>(); }
+    void pushBrowse(BrowseRoute page);
+    void pushCommentActions(const BrowseItem &item);
     void clearAccountPages();
     void commitCommunityWrite();
 
@@ -282,37 +238,22 @@ private:
     SessionStore sessions_{CLIENT_PATH("/session.json")};
     AuthService authService_{api_, sessions_};
     AuthView authView_, stagedAuth_;
-    AppError error_, jobTypedError_, authError_;
+    AppError jobTypedError_, authError_;
     std::string jobAuthKey_;
     uint64_t authPollAt_ = 0;
     bool sessionCheckPending_ = false;
-    bool leaveLogin_ = false;
+    bool pendingBack_ = false;
     bool loginRefreshPending_ = false;
     uint64_t searchGeneration_ = 0, jobSearchGeneration_ = 0, stagedSearchGeneration_ = 0;
 
-    Tab tab_ = Tab::Recommend;
-    Screen screen_ = Screen::Home;
-    FocusArea focusArea_ = FocusArea::Content;
-    int navigationSelection_ = 0;
-    size_t tabSelections_[5]{};
-    size_t selection_ = 0;
-    size_t detailPart_ = 0;
-    int commentScroll_ = 0;
-    int commentScrollLimit_ = 0;
     int recommendPage_ = 1;
     int hotsPage_ = 1;
     int searchPage_ = 1;
-    SearchView searchView_ = SearchView::Landing;
-    size_t searchLandingSelection_ = 0;
-    std::string searchError_;
-    std::vector<SearchTopic> searchTopics_;
     std::vector<SearchTopic> stagedSearchTopics_;
     bool recommendHasMore_ = true;
     bool hotsHasMore_ = true;
     bool searchHasMore_ = true;
     bool busy_ = false;
-    std::string query_;
-    bool playbackFailed_ = false;
     std::string status_ = "Wiliwili C++17 UI · 正在初始化";
 
     std::vector<VideoCard> recommend_;
@@ -321,11 +262,7 @@ private:
     std::vector<LocalVideo> history_;
     std::vector<LocalVideo> later_;
     std::vector<std::string> searchHistory_;
-    VideoDetailView detail_;
-    std::vector<CommentItem> comments_;
     std::vector<CommentItem> stagedComments_;
-    int commentsNext_ = 0;
-    bool commentsEnd_ = true;
     BiliPlayback playback_{};
     bool playbackReady_ = false;
 

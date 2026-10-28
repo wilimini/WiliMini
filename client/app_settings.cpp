@@ -33,18 +33,16 @@ bool coverEntry(const SceIoDirent& entry) {
 } // namespace
 
 void App::openSettings() {
-    if (busy_) return;
-    settingsReturnScreen_ = screen_;
-    screen_ = Screen::Settings;
-    focusArea_ = FocusArea::Content;
-    clearingCovers_ = false;
+    if (busy()) return;
+    navigation_.push<SettingsRoute>();
+    navigation_.current().focus = FocusArea::Content;
     status_ = "设置 · ←→ 调整 · × 打开";
 }
 
 void App::changeSetting() {
-    if (screen_ != Screen::Settings || settingSelection_ > 4) return;
+    if (screen() != Screen::Settings || navigation_.get<SettingsRoute>().selection > 4) return;
     Preferences next = preferences_;
-    switch (settingSelection_) {
+    switch (navigation_.get<SettingsRoute>().selection) {
         case 0: next.darkTheme = !next.darkTheme; break;
         case 1: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
         case 2: next.showCovers = !next.showCovers; break;
@@ -57,7 +55,7 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
-    status_ = settingSelection_ == 4 ? "已保存 · 下次播放生效 · 小缓冲更省内存" : "已保存 · 立即生效";
+    status_ = navigation_.get<SettingsRoute>().selection == 4 ? "已保存 · 下次播放生效 · 小缓冲更省内存" : "已保存 · 立即生效";
 }
 
 void App::updateStorage() {
@@ -87,33 +85,33 @@ std::string App::buildVersion() const {
 
 // Called by App::activate for the utility pages, without changing list selection.
 void App::activateUtility() {
-    if (screen_ == Screen::Settings) {
-        if (settingSelection_ < 5) changeSetting();
-        else if (settingSelection_ == 6) {
-            screen_ = Screen::Storage;
+    if (screen() == Screen::Settings) {
+        if (navigation_.get<SettingsRoute>().selection < 5) changeSetting();
+        else if (navigation_.get<SettingsRoute>().selection == 6) {
+            navigation_.push<StorageRoute>();
             updateStorage();
-        } else if (settingSelection_ == 7) screen_ = Screen::Help;
-        else if (settingSelection_ == 8) screen_ = Screen::About;
-    } else if (screen_ == Screen::About) {
-        screen_ = Screen::Licenses;
-    } else if (screen_ == Screen::Licenses) {
-        const std::string path = std::string(CLIENT_ROOT) + "/licenses/" + settingsLicenses[licenseSelection_].file;
-        licenseText_ = readSettingsText(path.c_str(), 256 * 1024);
-        if (licenseText_.empty()) {
+        } else if (navigation_.get<SettingsRoute>().selection == 7) navigation_.push<HelpRoute>();
+        else if (navigation_.get<SettingsRoute>().selection == 8) navigation_.push<AboutRoute>();
+    } else if (screen() == Screen::About) {
+        navigation_.push<LicensesRoute>();
+    } else if (screen() == Screen::Licenses) {
+        const std::string path = std::string(CLIENT_ROOT) + "/licenses/" + settingsLicenses[navigation_.get<LicensesRoute>().selection].file;
+        auto text = readSettingsText(path.c_str(), 256 * 1024);
+        if (text.empty()) {
             status_ = "许可文件缺失或无法读取";
             return;
         }
-        documentScroll_ = 0;
-        documentScrollLimit_ = 0;
-        screen_ = Screen::LicenseText;
-    } else if (screen_ == Screen::Storage) {
-        if (!clearingCovers_) {
+        LicenseTextRoute page;
+        page.text = std::move(text);
+        navigation_.push(std::move(page));
+    } else if (screen() == Screen::Storage) {
+        if (!navigation_.get<StorageRoute>().clearing) {
             updateStorage();
-            if (coverFiles_) clearingCovers_ = true;
+            if (coverFiles_) navigation_.get<StorageRoute>().clearing = true;
             else status_ = "没有可清理的封面缓存";
             return;
         }
-        clearingCovers_ = false;
+        navigation_.get<StorageRoute>().clearing = false;
         const SceUID directory = sceIoDopen(CLIENT_PATH("/cache"));
         if (directory < 0) { status_ = "无法读取封面缓存"; return; }
         bool failed = false;

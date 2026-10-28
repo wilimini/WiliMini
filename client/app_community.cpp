@@ -13,27 +13,29 @@ BrowseItem destination(BrowseKind kind, const std::string &title,
   return item;
 }
 } // namespace
+void App::pushBrowse(BrowseRoute page) {
+  navigation_.push(std::move(page));
+  coverDirty_ = true;
+}
 void App::openBrowse(BrowseRequest request) {
-  if (busy_)
+  if (busy())
     return;
-  if (screen_ != Screen::Browse) {
-    browseReturnScreen_ = screen_;
-    browseStack_.clear();
+  if (request.kind == BrowseKind::Discover && atTabRoot()) {
+    setTab(Tab::Discover);
+    return;
   }
-  BrowseFrame frame;
+  BrowseRoute frame;
   frame.page.request = std::move(request);
   frame.page.title = frame.page.request.title.empty()
                          ? browseTitle(frame.page.request.kind)
                          : frame.page.request.title;
-  browseStack_.push_back(std::move(frame));
-  screen_ = Screen::Browse;
-  focusArea_ = FocusArea::Content;
+  pushBrowse(std::move(frame));
   browseRefresh();
 }
 void App::browseRefresh() {
-  if (busy_ || browseStack_.empty())
+  if (busy() || !hasBrowse())
     return;
-  auto &frame = browseStack_.back();
+  auto &frame = browseState();
   if (frame.page.request.kind == BrowseKind::Text ||
       frame.page.request.kind == BrowseKind::Image ||
       frame.page.request.kind == BrowseKind::CommentActions)
@@ -48,9 +50,9 @@ void App::browseRefresh() {
   startJob(Job::Browse);
 }
 void App::browseMore() {
-  if (busy_ || browseStack_.empty() || !browseStack_.back().page.hasMore)
+  if (busy() || !hasBrowse() || !browseState().page.hasMore)
     return;
-  auto &frame = browseStack_.back();
+  auto &frame = browseState();
   jobBrowse_ = frame.page.request;
   ++jobBrowse_.page;
   jobBrowse_.cursor = frame.page.nextCursor;
@@ -62,12 +64,12 @@ void App::browseMore() {
   startJob(Job::Browse);
 }
 void App::browseMove(int dx, int dy) {
-  if (browseStack_.empty())
+  if (!hasBrowse())
     return;
-  auto &frame = browseStack_.back();
+  auto &frame = browseState();
   if (frame.page.request.kind == BrowseKind::Text) {
     frame.scroll =
-        std::max(0, std::min(browseScrollLimit_,
+        std::max(0, std::min(browseState().scrollLimit,
                              frame.scroll +
                                  (dy ? dy : dx) * (preferences_.bodySize + 4)));
     return;
@@ -90,31 +92,15 @@ void App::browseMove(int dx, int dy) {
     frame.selection = static_cast<size_t>(
         std::max(0, std::min(static_cast<int>(total) - 1,
                              static_cast<int>(frame.selection) + movement)));
-  confirmingDelete_ = false;
+  browseState().confirmingDelete = false;
 }
 void App::browseBack() {
-  if (busy_) {
-    transfer_cancel = 1;
-    return;
-  }
-  communityInputPending_ = false;
-  confirmingDelete_ = false;
-  if (browseStack_.size() > 1)
-    browseStack_.pop_back();
-  else {
-    browseStack_.clear();
-    screen_ = browseReturnScreen_;
-    if (tab_ == Tab::Discover) {
-      tab_ = Tab::Recommend;
-      screen_ = Screen::Home;
-    }
-  }
-  status_ = "返回";
+  back();
 }
 void App::browseActivate() {
-  if (busy_ || browseStack_.empty())
+  if (busy() || !hasBrowse())
     return;
-  auto &frame = browseStack_.back();
+  auto &frame = browseState();
   if (frame.error.kind == ErrorKind::LoginRequired ||
       frame.error.kind == ErrorKind::SessionExpired) {
     communityLoginPending_ = true;
@@ -158,11 +144,11 @@ void App::browseActivate() {
     activeComment_ = frame.context;
   if (frame.page.request.kind == BrowseKind::CommentActions) {
     if (item.next.id == "read") {
-      BrowseFrame text;
+      BrowseRoute text;
       text.page.request = item.next;
       text.page.title = item.title;
       text.page.description = item.text;
-      browseStack_.push_back(std::move(text));
+      pushBrowse(std::move(text));
       return;
     }
     const auto &c = activeComment_.comment;
@@ -199,8 +185,8 @@ void App::browseActivate() {
     } else if (frame.selection == 4)
       openBrowse(item.next);
     else {
-      if (!confirmingDelete_) {
-        confirmingDelete_ = true;
+      if (!browseState().confirmingDelete) {
+        browseState().confirmingDelete = true;
         status_ = "再次按 × 删除这条评论，○ 取消";
         return;
       }
@@ -232,45 +218,24 @@ void App::browseActivate() {
     return;
   }
   if (item.next.kind == BrowseKind::CommentActions) {
-    activeComment_ = item;
-    BrowseFrame actions;
-    actions.page.request = item.next;
-    actions.page.title = "评论操作";
-    actions.context = item;
-    actions.page.description =
-        item.comment.author + "：" + item.comment.message;
-    actions.page.items = {
-        destination(BrowseKind::Replies, "查看回复"),
-        destination(BrowseKind::Text, "回复评论"),
-        destination(BrowseKind::Text,
-                    item.comment.action == 1 ? "取消点赞" : "点赞"),
-        destination(BrowseKind::Text,
-                    item.comment.action == 2 ? "取消点踩" : "点踩"),
-        destination(BrowseKind::Space, "作者空间", item.comment.mid)};
-    if (item.comment.mid == sessions_.current().mid)
-      actions.page.items.push_back(
-          destination(BrowseKind::Text, "删除我的评论"));
-    auto read = destination(BrowseKind::Text, "阅读评论全文", "read");
-    read.text = item.comment.message;
-    actions.page.items.push_back(std::move(read));
-    browseStack_.push_back(std::move(actions));
+    pushCommentActions(item);
     return;
   }
   if (item.next.kind == BrowseKind::Image) {
-    BrowseFrame image;
+    BrowseRoute image;
     image.page.request = item.next;
     image.page.title = item.title;
     image.context = item;
     image.page.description = "community_image_" + item.next.id;
-    browseStack_.push_back(std::move(image));
+    pushBrowse(std::move(image));
     return;
   }
   if (item.next.kind == BrowseKind::Text) {
-    BrowseFrame text;
+    BrowseRoute text;
     text.page.request = item.next;
     text.page.title = item.title;
     text.page.description = item.text;
-    browseStack_.push_back(std::move(text));
+    pushBrowse(std::move(text));
     return;
   }
   if (item.next.kind == BrowseKind::Episode ||
@@ -281,11 +246,35 @@ void App::browseActivate() {
   }
   openBrowse(item.next);
 }
+void App::pushCommentActions(const BrowseItem &item) {
+  activeComment_ = item;
+  BrowseRoute actions;
+  actions.page.request = item.next;
+  actions.page.title = "评论操作";
+  actions.context = item;
+  actions.page.description =
+      item.comment.author + "：" + item.comment.message;
+  actions.page.items = {
+      destination(BrowseKind::Replies, "查看回复"),
+      destination(BrowseKind::Text, "回复评论"),
+      destination(BrowseKind::Text,
+                  item.comment.action == 1 ? "取消点赞" : "点赞"),
+      destination(BrowseKind::Text,
+                  item.comment.action == 2 ? "取消点踩" : "点踩"),
+      destination(BrowseKind::Space, "作者空间", item.comment.mid)};
+  if (item.comment.mid == sessions_.current().mid)
+    actions.page.items.push_back(
+        destination(BrowseKind::Text, "删除我的评论"));
+  auto read = destination(BrowseKind::Text, "阅读评论全文", "read");
+  read.text = item.comment.message;
+  actions.page.items.push_back(std::move(read));
+  pushBrowse(std::move(actions));
+}
 void App::commentActions() {
-  if (busy_ || comments_.empty())
+  if (busy() || commentsState().items.empty())
     return;
-  selectedComment_ = std::min(selectedComment_, comments_.size() - 1);
-  const auto &c = comments_[selectedComment_];
+  commentsState().selected = std::min(commentsState().selected, commentsState().items.size() - 1);
+  const auto &c = commentsState().items[commentsState().selected];
   BrowseItem item;
   item.comment = {std::to_string(c.id),
                   c.root,
@@ -298,35 +287,27 @@ void App::commentActions() {
                   c.action};
   item.next = {BrowseKind::CommentActions,
                std::to_string(c.id),
-               std::to_string(detail_.card.aid),
+               std::to_string(detailState().detail.card.aid),
                {},
                "评论操作"};
-  browseReturnScreen_ = Screen::Comments;
-  browseStack_.clear();
-  BrowseFrame parent;
-  parent.page.items = {item};
-  browseStack_.push_back(std::move(parent));
-  screen_ = Screen::Browse;
-  browseActivate();
-  // The existing comments screen owns its own list/scroll state.
-  browseStack_.erase(browseStack_.begin());
+  pushCommentActions(item);
 }
 void App::selectComment(int direction) {
-  if (comments_.empty())
+  if (commentsState().items.empty())
     return;
-  selectedComment_ = static_cast<size_t>(
-      std::max(0, std::min(static_cast<int>(comments_.size()) - 1,
-                           static_cast<int>(selectedComment_) + direction)));
+  commentsState().selected = static_cast<size_t>(
+      std::max(0, std::min(static_cast<int>(commentsState().items.size()) - 1,
+                           static_cast<int>(commentsState().selected) + direction)));
 }
 void App::beginComment() {
-  if (busy_)
+  if (busy())
     return;
   inputWrite_ = {};
   inputWrite_.action = CommunityAction::AddComment;
-  if (screen_ == Screen::Comments)
-    inputWrite_.oid = std::to_string(detail_.card.aid);
-  else if (screen_ == Screen::Browse && !browseStack_.empty()) {
-    const auto &r = browseStack_.back().page.request;
+  if (screen() == Screen::Comments)
+    inputWrite_.oid = std::to_string(detailState().detail.card.aid);
+  else if (hasBrowse()) {
+    const auto &r = browseState().page.request;
     if (r.kind != BrowseKind::Comments && r.kind != BrowseKind::Replies)
       return;
     inputWrite_.oid = r.id;
@@ -345,12 +326,12 @@ void App::beginComment() {
   communityInputPending_ = true;
 }
 void App::beginMessage() {
-  if (busy_ || browseStack_.empty() ||
-      browseStack_.back().page.request.kind != BrowseKind::Conversation)
+  if (busy() || !hasBrowse() ||
+      browseState().page.request.kind != BrowseKind::Conversation)
     return;
   inputWrite_ = {};
   inputWrite_.action = CommunityAction::SendMessage;
-  inputWrite_.id = browseStack_.back().page.request.id;
+  inputWrite_.id = browseState().page.request.id;
   if (!sessions_.current().valid()) {
     communityLoginPending_ = true;
     openLogin();
@@ -367,7 +348,7 @@ void App::submitCommunityInput(const std::string &text) {
   communityWrite(inputWrite_);
 }
 void App::communityWrite(CommunityWrite request) {
-  if (busy_)
+  if (busy())
     return;
   if (!sessions_.current().valid()) {
     communityLoginPending_ = true;
@@ -378,21 +359,21 @@ void App::communityWrite(CommunityWrite request) {
   startJob(Job::CommunityWrite);
 }
 void App::openVideoActions() {
-  if (screen_ == Screen::Detail && detail_.card.aid)
-    openBrowse({BrowseKind::VideoActions, std::to_string(detail_.card.aid)});
+  if (screen() == Screen::Detail && detailState().detail.card.aid)
+    openBrowse({BrowseKind::VideoActions, std::to_string(detailState().detail.card.aid)});
 }
 void App::communityShortcut() {
-  if (screen_ == Screen::Mine) {
+  if (screen() == Screen::Mine) {
     openBrowse({BrowseKind::Personal});
     return;
   }
-  if (screen_ == Screen::Browse && !browseStack_.empty()) {
-    const auto kind = browseStack_.back().page.request.kind;
+  if (hasBrowse()) {
+    const auto kind = browseState().page.request.kind;
     if (kind == BrowseKind::DynamicDetail) {
       CommunityWrite w;
       w.action = CommunityAction::LikeDynamic;
-      w.id = browseStack_.back().page.request.id;
-      w.undo = browseStack_.back().page.followed;
+      w.id = browseState().page.request.id;
+      w.undo = browseState().page.followed;
       communityWrite(w);
     } else if (kind == BrowseKind::Conversation)
       beginMessage();
@@ -402,37 +383,41 @@ void App::communityShortcut() {
       CommunityWrite w;
       w.action = kind == BrowseKind::Space ? CommunityAction::Follow
                                            : CommunityAction::FollowSeason;
-      w.id = browseStack_.back().page.request.id;
-      w.undo = browseStack_.back().page.followed;
+      w.id = browseState().page.request.id;
+      w.undo = browseState().page.followed;
       communityWrite(w);
     } else if (kind == BrowseKind::WatchLater &&
-               browseStack_.back().selection <
-                   browseStack_.back().page.items.size()) {
+               browseState().selection <
+                   browseState().page.items.size()) {
       CommunityWrite w;
       w.action = CommunityAction::WatchLaterDelete;
       w.id = std::to_string(
-          browseStack_.back().page.items[browseStack_.back().selection].aid);
+          browseState().page.items[browseState().selection].aid);
       communityWrite(w);
     }
   }
 }
 void App::clearAccountPages() {
-  // Account pages stay in memory only; none are persisted into public caches.
-  browseStack_.clear();
+  // Drop private page instances as well as their navigation history.
+  const bool login = screen() == Screen::Login;
+  const bool hadBrowse = navigation_.find<BrowseRoute>() != nullptr;
+  navigation_.clearChildren();
+  if (hadBrowse) {
+    root().tab = Tab::Mine;
+    root().selection = 0;
+  }
+  navigation_.current().focus = FocusArea::Content;
+  if (login) navigation_.push<LoginRoute>();
   communityDraft_.clear();
   communityInputPending_ = false;
   communityLoginPending_ = false;
   activeComment_ = {};
   jobWrite_ = {};
   inputWrite_ = {};
-  if (screen_ == Screen::Browse)
-    screen_ = Screen::Mine;
-  if (detailReturnScreen_ == Screen::Browse)
-    detailReturnScreen_ = Screen::Mine;
 }
 void App::commitCommunityWrite() {
   communityDraft_.clear();
-  confirmingDelete_ = false;
+  if (hasBrowse()) browseState().confirmingDelete = false;
   auto update = [&](CommunityComment &c) {
     if (c.id != jobWrite_.id)
       return;
@@ -443,7 +428,10 @@ void App::commitCommunityWrite() {
                         jobWrite_.undo);
   };
   update(activeComment_.comment);
-  for (auto &frame : browseStack_) {
+  for (auto &entry : navigation_.entries()) {
+    auto *page = std::get_if<BrowseRoute>(&entry.state);
+    if (!page) continue;
+    auto &frame = *page;
     update(frame.context.comment);
     for (auto &item : frame.page.items) {
       update(item.comment);
@@ -459,40 +447,42 @@ void App::commitCommunityWrite() {
                          }),
           frame.page.items.end());
   }
-  for (auto &c : comments_)
-    if (std::to_string(c.id) == jobWrite_.id) {
-      if (jobWrite_.action == CommunityAction::LikeComment ||
-          jobWrite_.action == CommunityAction::HateComment)
+  for (auto &entry : navigation_.entries()) {
+    auto *page = std::get_if<CommentsRoute>(&entry.state);
+    if (!page) continue;
+    for (auto &c : page->items)
+      if (std::to_string(c.id) == jobWrite_.id &&
+          (jobWrite_.action == CommunityAction::LikeComment ||
+           jobWrite_.action == CommunityAction::HateComment))
         updateCommentVote(c.like, c.action,
                           jobWrite_.action == CommunityAction::LikeComment,
                           jobWrite_.undo);
-    }
+    if (jobWrite_.action == CommunityAction::DeleteComment)
+      page->items.erase(std::remove_if(page->items.begin(), page->items.end(),
+                         [&](const CommentItem &c) {
+                           return std::to_string(c.id) == jobWrite_.id;
+                         }), page->items.end());
+  }
   if (jobWrite_.action == CommunityAction::DeleteComment) {
-    comments_.erase(std::remove_if(comments_.begin(), comments_.end(),
-                                   [&](const CommentItem &c) {
-                                     return std::to_string(c.id) ==
-                                            jobWrite_.id;
-                                   }),
-                    comments_.end());
-    if (screen_ == Screen::Browse)
+    if (screen() == Screen::Browse)
       browseBack();
   } else if (jobWrite_.action == CommunityAction::AddComment ||
              jobWrite_.action == CommunityAction::SendMessage) {
-    if (screen_ == Screen::Comments)
+    if (screen() == Screen::Comments)
       requestComments();
-    else if (screen_ == Screen::Browse) {
-      if (browseStack_.back().page.request.kind == BrowseKind::CommentActions)
+    else if (screen() == Screen::Browse) {
+      if (browseState().page.request.kind == BrowseKind::CommentActions)
         browseBack();
-      if (screen_ == Screen::Browse)
+      if (screen() == Screen::Browse)
         browseRefresh();
-      else if (screen_ == Screen::Comments)
+      else if (screen() == Screen::Comments)
         requestComments();
     }
-  } else if (screen_ == Screen::Browse && !browseStack_.empty() &&
-             browseStack_.back().page.request.kind ==
+  } else if (hasBrowse() &&
+             browseState().page.request.kind ==
                  BrowseKind::CommentActions) {
-    browseStack_.back().context = activeComment_;
-    auto &items = browseStack_.back().page.items;
+    browseState().context = activeComment_;
+    auto &items = browseState().page.items;
     items[2].title = activeComment_.comment.action == 1 ? "取消点赞" : "点赞";
     items[3].title = activeComment_.comment.action == 2 ? "取消点踩" : "点踩";
   }
@@ -502,7 +492,7 @@ void App::commitCommunityWrite() {
       jobWrite_.action == CommunityAction::Collect ||
       jobWrite_.action == CommunityAction::WatchLaterAdd ||
       jobWrite_.action == CommunityAction::WatchLaterDelete) {
-    if (screen_ == Screen::Browse)
+    if (screen() == Screen::Browse)
       browseRefresh();
   }
   status_ = "操作成功";
