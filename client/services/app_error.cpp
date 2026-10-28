@@ -76,7 +76,7 @@ std::string errorMessage(const AppError &e) {
             text = "ME 初始化失败 · 请重启 PSP";
         break;
     case ErrorKind::OutOfMemory:
-        text = "可用内存不足";
+        text = e.domain == ErrorDomain::Playback ? "可用内存不足 · 请在设置中减小播放缓冲" : "可用内存不足";
         break;
     case ErrorKind::IoFailure:
         text = "记忆棒读写失败";

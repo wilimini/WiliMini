@@ -23,6 +23,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 option(BILI_DEVICE_OSK_TEST "Open the PSP on-screen keyboard at startup for diagnostics" OFF)
 option(BILI_DEVICE_PLAYBACK_TEST "Run controlled media decoder tests without account/network APIs" OFF)
 option(BILI_DEVICE_PLAYBACK_CPU_RENDER "Diagnostic CPU display when ME firmware is unavailable" OFF)
+option(BILI_MEMORY_PROFILE "Log large libc allocations for memory diagnostics" OFF)
 
 set(PSP_FFMPEG_PREFIX "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio-install" CACHE PATH
     "PSP FFmpeg installation prefix")
@@ -145,8 +146,8 @@ add_custom_command(
 
 add_executable(me_bridge
     decoder/me/bridge.c
+    decoder/me/mist_backend.c
     "${ME_EXPORTS_C}"
-    "${ME_MIST_ROOT}/me-mist.c"
     "${ME_MIST_ROOT}/me-mist-utils.c"
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_options(me_bridge PRIVATE -ffunction-sections -fdata-sections)
@@ -170,8 +171,7 @@ add_custom_command(TARGET me_bridge POST_BUILD
     COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:me_bridge>" "${CMAKE_BINARY_DIR}/me_bridge.prx"
     COMMENT "Fixing imports and generating me_bridge.prx")
 
-add_executable(wili_mini
-    client/main.cpp
+add_library(wili_client_objects OBJECT
     client/app.cpp
     client/preferences.cpp
     client/app_settings.cpp
@@ -196,55 +196,77 @@ add_executable(wili_mini
     client/psp_select.c
     client/psp_dns.c
     client/dns_packet.c)
-target_compile_definitions(wili_mini PRIVATE _POSIX_C_SOURCE=200809L)
-if(BILI_DEVICE_PLAYBACK_TEST)
-    target_compile_definitions(wili_mini PRIVATE BILI_DEVICE_PLAYBACK_TEST)
-endif()
-if(BILI_DEVICE_OSK_TEST)
-    target_compile_definitions(wili_mini PRIVATE BILI_DEVICE_OSK_TEST)
-endif()
-target_include_directories(wili_mini PRIVATE
+set(CLIENT_INCLUDE_DIRS
     "${ROOT}/decoder/include"
     "${ROOT}/third_party/nlohmann"
     "${ROOT}/third_party/pystring"
     "${ROOT}/client/api/wiliwili"
     "${ROOT}/client"
     "${PSP_CURL_PREFIX}/include")
-target_link_options(wili_mini PRIVATE
-    -G0
-    "-Wl,-Map,${CMAKE_BINARY_DIR}/wili_mini.map"
-    -Wl,--wrap=gethostbyname
-    -Wl,--wrap=time
-    -Wl,--wrap=gettimeofday
-    -Wl,--wrap=ff_h264qpel_init
-    -Wl,--wrap=ff_h264chroma_init
-    -Wl,--wrap=avpriv_float_dsp_alloc
-    "-specs=${PSPSDK}/lib/prxspecs"
-    "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
-    -Wl,-zmax-page-size=128)
-target_link_libraries(wili_mini PRIVATE
-    pspvideo
-    "${PSP_FFMPEG_PREFIX}/lib/libavformat.a"
-    "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a"
-    "${PSP_FFMPEG_PREFIX}/lib/libavutil.a"
-    "${PSP_CURL_PREFIX}/lib/libcurl.a"
-    mbedtls mbedx509 mbedcrypto jpeg
-    pspgu pspdebug m z
-    -Wl,--start-group
-    stdc++ supc++ pthreadglue pthread cglue c
-    -Wl,--end-group
-    pspge pspaudio pspdmac psppower
-    pspnet_apctl pspnet_resolver pspnet_inet pspnet
-    psputility psprtc
-    pspdebug pspdisplay pspge pspctrl)
-set_target_properties(wili_mini PROPERTIES
-    OUTPUT_NAME wili_mini
-    SUFFIX ".elf"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-add_custom_command(TARGET wili_mini POST_BUILD
-    COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:wili_mini>"
-    COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:wili_mini>" "${CMAKE_BINARY_DIR}/wili_mini.prx"
-    COMMENT "Fixing imports and generating wili_mini.prx")
+target_include_directories(wili_client_objects PRIVATE ${CLIENT_INCLUDE_DIRS})
+target_compile_definitions(wili_client_objects PRIVATE _POSIX_C_SOURCE=200809L)
+if(BILI_MEMORY_PROFILE)
+    target_sources(wili_client_objects PRIVATE client/memory_profile.c)
+endif()
+
+# Compile the application once; only startup heap/defaults differ between PRXs.
+foreach(client_target wili_mini wili_mini_1000)
+    add_executable(${client_target}
+        client/main.cpp client/memory_budget.cpp
+        $<TARGET_OBJECTS:wili_client_objects>)
+    if(client_target STREQUAL "wili_mini_1000")
+        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=12288 BILI_DEFAULT_RGB_FRAMES=2)
+    else()
+        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=24576 BILI_DEFAULT_RGB_FRAMES=8)
+    endif()
+    target_compile_definitions(${client_target} PRIVATE _POSIX_C_SOURCE=200809L)
+    if(BILI_MEMORY_PROFILE)
+        target_link_options(${client_target} PRIVATE -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--wrap=memalign)
+    endif()
+    if(BILI_DEVICE_PLAYBACK_TEST)
+        target_compile_definitions(${client_target} PRIVATE BILI_DEVICE_PLAYBACK_TEST)
+    endif()
+    if(BILI_DEVICE_OSK_TEST)
+        target_compile_definitions(${client_target} PRIVATE BILI_DEVICE_OSK_TEST)
+    endif()
+    target_include_directories(${client_target} PRIVATE ${CLIENT_INCLUDE_DIRS})
+
+    target_link_options(${client_target} PRIVATE
+        -G0
+        "-Wl,-Map,${CMAKE_BINARY_DIR}/${client_target}.map"
+        -Wl,--wrap=gethostbyname
+        -Wl,--wrap=time
+        -Wl,--wrap=gettimeofday
+        -Wl,--wrap=ff_h264qpel_init
+        -Wl,--wrap=ff_h264chroma_init
+        -Wl,--wrap=avpriv_float_dsp_alloc
+        "-specs=${PSPSDK}/lib/prxspecs"
+        "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
+        -Wl,-zmax-page-size=128)
+    target_link_libraries(${client_target} PRIVATE
+        pspvideo
+        "${PSP_FFMPEG_PREFIX}/lib/libavformat.a"
+        "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a"
+        "${PSP_FFMPEG_PREFIX}/lib/libavutil.a"
+        "${PSP_CURL_PREFIX}/lib/libcurl.a"
+        mbedtls mbedx509 mbedcrypto jpeg
+        pspgu pspdebug m z
+        -Wl,--start-group
+        stdc++ supc++ pthreadglue pthread cglue c
+        -Wl,--end-group
+        pspge pspaudio pspdmac psppower
+        pspnet_apctl pspnet_resolver pspnet_inet pspnet
+        psputility psprtc
+        pspdebug pspdisplay pspge pspctrl)
+    set_target_properties(${client_target} PROPERTIES
+        OUTPUT_NAME ${client_target}
+        SUFFIX ".elf"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_custom_command(TARGET ${client_target} POST_BUILD
+        COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:${client_target}>"
+        COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:${client_target}>" "${CMAKE_BINARY_DIR}/${client_target}.prx"
+        COMMENT "Fixing imports and generating ${client_target}.prx")
+endforeach()
 
 add_executable(bootstrap client/bootstrap.c)
 target_link_options(bootstrap PRIVATE
@@ -258,7 +280,7 @@ target_link_libraries(bootstrap PRIVATE
     pthreadglue pthread cglue c
     -Wl,--end-group
     psputility
-    pspdebug pspdisplay pspge pspctrl pspnet pspnet_apctl)
+    pspdebug pspdisplay pspge pspctrl pspnet pspnet_apctl pspkubridge)
 set_target_properties(bootstrap PROPERTIES
     OUTPUT_NAME bootstrap
     SUFFIX ".elf"
@@ -273,7 +295,7 @@ set(LOADER_EBOOT_PBP "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP")
 set(ICON0_PNG "${ROOT}/assets/ICON0.png")
 add_custom_command(OUTPUT "${LOADER_EBOOT_PBP}"
     BYPRODUCTS "${LOADER_PARAM_SFO}"
-    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=1 "WiliMini" "${LOADER_PARAM_SFO}" # pspdev/psp/sdk/include/systemctrl_se.h:12 DEFAULT_USE and AUTO_USE becomes FORCE_MAX on homebrew with MEMSIZE=1, and FORCE_16 with MEMSIZE=2
+    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=1 "WiliMini" "${LOADER_PARAM_SFO}"
     COMMAND "${PSPDEV}/bin/pack-pbp"
         "${LOADER_EBOOT_PBP}"
         "${LOADER_PARAM_SFO}"
@@ -293,6 +315,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP"
         "${CMAKE_BINARY_DIR}/wili_mini.prx"
+        "${CMAKE_BINARY_DIR}/wili_mini_1000.prx"
         "${CMAKE_BINARY_DIR}/me_bridge.prx"
         "${PACKAGE_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
@@ -313,7 +336,7 @@ add_custom_target(package
         --ffmpeg "${PSP_FFMPEG_PREFIX}"
         --ffmpeg-source "${BILI_FFMPEG_SOURCE_DIR}"
         --curl "${PSP_CURL_PREFIX}"
-    DEPENDS wili_mini me_bridge eboot
+    DEPENDS wili_mini wili_mini_1000 me_bridge eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
 endif()

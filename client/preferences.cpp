@@ -29,7 +29,10 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.bodySize = root.at("body_size").get<int>();
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
+        loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
+        if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
+            loaded.playbackBufferFrames != 8) return false;
         preferences = loaded;
         return true;
     } catch (...) {
@@ -39,9 +42,12 @@ bool loadPreferences(const char* path, Preferences& preferences) {
 
 bool savePreferences(const char* path, const Preferences& preferences) {
     if (preferences.bodySize != 14 && preferences.bodySize != 16) return false;
+    if (preferences.playbackBufferFrames != 2 && preferences.playbackBufferFrames != 4 &&
+        preferences.playbackBufferFrames != 8) return false;
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
-        {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat}}).dump();
+        {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
+        {"playback_buffer_frames", preferences.playbackBufferFrames}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
     if (!file) return false;

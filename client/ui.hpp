@@ -8,6 +8,7 @@ void ui_init();
 void ui_startup_status(const char *message);
 void ui_shutdown();
 void ui_resume();
+void ui_prepare_playback();
 void ui_dialog_frame();
 void ui_dialog_present();
 void ui_render(const pspapp::App& app);

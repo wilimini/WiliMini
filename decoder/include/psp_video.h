@@ -22,6 +22,7 @@ typedef struct {
      * progressive MP4 path; DASH supplies independent video and audio URLs. */
     const PspVideoSource *audio_source;
     int64_t start_ms; /* VOD resume position; live sources must start at zero. */
+    int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

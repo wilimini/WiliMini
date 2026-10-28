@@ -488,8 +488,8 @@ void App::moveSelection(int dx, int dy) {
     if (screen_ == Screen::Browse) { browseMove(dx, dy); return; }
     if (utilityPage()) {
         if (screen_ == Screen::Settings) {
-            if (dy) settingSelection_ = static_cast<size_t>(std::max(0, std::min(7, static_cast<int>(settingSelection_) + dy)));
-            else if (dx && settingSelection_ < 4) changeSetting();
+            if (dy) settingSelection_ = static_cast<size_t>(std::max(0, std::min(8, static_cast<int>(settingSelection_) + dy)));
+            else if (dx && settingSelection_ < 5) changeSetting();
         } else if (screen_ == Screen::Licenses && dy) {
             licenseSelection_ = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1, static_cast<int>(licenseSelection_) + dy)));
         } else if (screen_ == Screen::LicenseText && dy) {

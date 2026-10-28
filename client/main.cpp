@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <malloc.h>
 #include <unistd.h>
 
 #include <pspctrl.h>
@@ -20,11 +21,19 @@
 
 PSP_MODULE_INFO("Wiliwili PSP", PSP_MODULE_USER, 0, 1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
-PSP_HEAP_SIZE_KB(24 * 1024);
+// The loader selects the profile before libc initializes this heap.
+PSP_HEAP_SIZE_KB(BILI_CLIENT_HEAP_KB);
 
 namespace {
 
 volatile int exiting = 0;
+
+void logMemory(const char* phase) {
+    const auto heap = mallinfo();
+    std::printf("MEM %s heap_used=%u heap_arena_free=%u system_free=%u system_max=%u\n",
+                phase, static_cast<unsigned>(heap.uordblks), static_cast<unsigned>(heap.fordblks),
+                sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+}
 
 int exitCallback(int, int, void*) {
     exiting = 1;
@@ -75,6 +84,8 @@ void networkDialog() {
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
+    std::printf("CLIENT heap_kib=%d default_rgb_frames=%d\n",
+                BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
     const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
                                                PSP_THREAD_ATTR_USER, nullptr);
     if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
@@ -86,8 +97,18 @@ int main(int argc, char** argv) {
     chdir(CLIENT_ROOT);
 
     ui_init();
+    logMemory("ui_init");
 #ifdef BILI_DEVICE_PLAYBACK_TEST
     const int playbackTest = controlledPlaybackTest();
+    logMemory("playback_test_complete");
+    ui_resume();
+    ui_startup_status("播放测试完成 · START 退出");
+    for (;;) {
+        SceCtrlData pad{};
+        sceCtrlReadBufferPositive(&pad, 1);
+        if (pad.Buttons & PSP_CTRL_START) break;
+        sceKernelDelayThreadCB(10000);
+    }
     ui_shutdown();
     sceKernelExitGame();
     return playbackTest;
@@ -95,6 +116,7 @@ int main(int argc, char** argv) {
     pspapp::App app;
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
+    logMemory("app_init");
     app.setStatus("正在初始化网络…");
     ui_render(app);
 #ifdef BILI_DEVICE_OSK_TEST
@@ -113,6 +135,7 @@ int main(int argc, char** argv) {
 
     const auto initError = pspapp::WifiManager{}.initialize();
     const int net = initError ? initError.rawCode : 0;
+    logMemory("network_init");
     if (net < 0) {
         app.setStatus(pspapp::errorMessage(initError));
         pspapp::logError(CLIENT_ROOT "/last-error.txt", initError);
@@ -135,14 +158,18 @@ int main(int argc, char** argv) {
 
         if (app.playbackReady()) {
             ui_render(app);
+            ui_prepare_playback();
+            logMemory("before_playback");
             PspVideoOptions options{};
             options.path = app.playback().path;
             options.log_root = CLIENT_ROOT;
             options.source = bili_playback_source(&app.playback());
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
+            options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
             PspVideoResult result{};
             const int error = psp_video_play(&options, &result);
+            logMemory("after_playback");
             ui_resume();
             app.finishPlayback(error, result.frames, result.eof, result.cancelled, result.error_stage, result.position_ms);
             previous = ~0u;
@@ -159,7 +186,7 @@ int main(int argc, char** argv) {
             repeatAt = now + (app.preferences().slowRepeat ? 500000 : 350000);
         } else if (direction && now >= repeatAt) {
             // Repeat navigation only; held confirm/back must never activate twice.
-            const bool adjustingSetting = app.screen() == pspapp::Screen::Settings && app.settingSelection() < 4;
+            const bool adjustingSetting = app.screen() == pspapp::Screen::Settings && app.settingSelection() < 5;
             pressed |= adjustingSetting ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
             repeatAt = now + (app.preferences().slowRepeat ? 180000 : 90000);
         }
@@ -169,7 +196,7 @@ int main(int argc, char** argv) {
             if (pressed & PSP_CTRL_START) break;
             if (pressed & PSP_CTRL_CIRCLE) app.back();
             else if (pressed & PSP_CTRL_CROSS) {
-                if (app.screen() == pspapp::Screen::Settings && app.settingSelection() == 4) {
+                if (app.screen() == pspapp::Screen::Settings && app.settingSelection() == 5) {
                     networkDialog();
                     app.setStatus(network_ready() ? "Wi-Fi 已连接" : "已返回 · 未连接 Wi-Fi");
                     previous = ~0u;
@@ -305,6 +332,7 @@ int main(int argc, char** argv) {
     app.shutdown();
     network_close();
     ui_shutdown();
+    logMemory("shutdown");
     sceKernelExitGame();
     return 0;
 }

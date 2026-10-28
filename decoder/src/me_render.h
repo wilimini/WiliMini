@@ -185,10 +185,15 @@ static int me_render_shutdown(void)
 #if PSP_ME_RENDER_QUEUE
     int ret = present_shutdown();
     int shutdown = meLabShutdown();
-    return ret < 0 ? ret : shutdown;
 #else
-    return meLabShutdown();
+    int ret = 0;
+    int shutdown = meLabShutdown();
 #endif
+#if PSP_AUDIO && PSP_RGB_PACE
+    // A timeout does not prove the ME stopped writing. Keep its output alive.
+    if (shutdown >= 0) rgb_release();
+#endif
+    return ret < 0 ? ret : shutdown;
 }
 #endif
 #endif
