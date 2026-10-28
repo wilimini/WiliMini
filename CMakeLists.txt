@@ -20,8 +20,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-option(BILI_UI_REVIEW "Build offline native visual review screens" OFF)
-option(BILI_DEVICE_OFFLINE_UI "Use local API fixtures and skip network startup for PPSSPP UI checks" OFF)
 option(BILI_DEVICE_SMOKE "Run the automated client smoke flow" OFF)
 option(BILI_DEVICE_SMOKE_SEARCH "Start the automated smoke flow from search" OFF)
 option(BILI_DEVICE_SMOKE_HOTS "Start the automated smoke flow from hots" OFF)
@@ -44,7 +42,6 @@ set(BILI_CA_BUNDLE "/etc/ssl/cert.pem" CACHE FILEPATH "CA bundle installed with 
 set(BILI_DIST_DIR "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "Packaging root")
 option(BILI_BUILD_CLIENT "Configure the PSP client and packaging targets" ON)
 set(BILI_FONT_FILE "" CACHE FILEPATH "Font source used by the generate-font target")
-set(BILI_WILIWILI_DIR "" CACHE PATH "Wiliwili checkout used by the UI asset generator")
 
 set(ROOT "${CMAKE_SOURCE_DIR}")
 set(PSPSDK "${PSPDEV}/psp/sdk")
@@ -213,12 +210,6 @@ target_compile_definitions(wili_mini PRIVATE _POSIX_C_SOURCE=200809L)
 if(BILI_DEVICE_PLAYBACK_TEST)
     target_compile_definitions(wili_mini PRIVATE BILI_DEVICE_PLAYBACK_TEST)
 endif()
-if(BILI_UI_REVIEW)
-    target_compile_definitions(wili_mini PRIVATE BILI_UI_REVIEW)
-endif()
-if(BILI_DEVICE_OFFLINE_UI)
-    target_compile_definitions(wili_mini PRIVATE BILI_DEVICE_OFFLINE_UI)
-endif()
 if(BILI_DEVICE_SMOKE)
     target_compile_definitions(wili_mini PRIVATE BILI_DEVICE_SMOKE)
 endif()
@@ -284,9 +275,6 @@ add_custom_command(TARGET wili_mini POST_BUILD
     COMMENT "Fixing imports and generating wili_mini.prx")
 
 add_executable(bootstrap client/bootstrap.c)
-if(BILI_UI_REVIEW)
-    target_compile_definitions(bootstrap PRIVATE BILI_UI_REVIEW)
-endif()
 target_link_options(bootstrap PRIVATE
     -G0
     "-specs=${PSPSDK}/lib/prxspecs"
@@ -356,13 +344,6 @@ add_custom_target(package
     DEPENDS wili_mini me_bridge eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
-if(BILI_UI_REVIEW)
-    add_custom_command(TARGET package POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${ROOT}/client/assets/wiliwili/FONT-LICENSE.txt"
-            "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt"
-            "${PACKAGE_DIR}/licenses")
-endif()
 endif()
 
 add_custom_target(assets)
@@ -374,14 +355,6 @@ if(BILI_FONT_FILE)
         COMMENT "Generating PSP bitmap font")
     add_dependencies(assets generate-font)
 endif()
-if(BILI_WILIWILI_DIR)
-    add_custom_target(generate-ui-assets
-        COMMAND python3 "${ROOT}/scripts/prepare-ui-review-assets.py" "${BILI_WILIWILI_DIR}"
-        BYPRODUCTS "${ROOT}/client/assets/wiliwili/generated.hpp"
-        COMMENT "Generating UI review assets")
-    add_dependencies(assets generate-ui-assets)
-endif()
-
 if(BILI_BUILD_CLIENT)
     add_custom_target(me DEPENDS me_bridge)
     add_dependencies(package assets)

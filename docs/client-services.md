@@ -111,14 +111,10 @@ cover cache key, without replacing cards or clearing other decoded covers.
 
 - `sh scripts/test-services.sh`: production service code with injected transport;
   retry bounds, cancellation, WBI failure/refresh, schema errors, pagination,
-  QR states, persistence, offline validation, expiry, logout, write failures,
+  QR states, persistence, session validation, expiry, logout, write failures,
   credential host checks and header bounds, error-log redaction.
-- Build an offline client into build/client-services-offline and package it into
-  build/services-offline-dist, then run `python3 scripts/check-services-ui.py`.
-  It drives the real App through PPSSPP Headless with synthetic API fixtures.
-  Screenshots and assertions are written under build/services-ui-check.
 - Real account confirmation requires scanning the real PSP login screen with
-  the account owner's phone. A fixture test is not evidence of a live login.
+  the account owner's phone.
 - Do not use PSPLink scrshot with the current ME decoder: its partition-4
   scratch allocation overlaps the decoder's ME firmware image. Direct VRAM
   savemem also caused USB transfer stalls. Headless captures do not use either.

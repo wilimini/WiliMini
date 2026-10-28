@@ -49,12 +49,7 @@ make package
 `make` defaults to packaging. `make curl` and `make ffmpeg` build individual
 dependencies; `make me` builds the client and Media Engine components;
 `make assets` generates configured assets. Configure builds with `BUILD_DIR`,
-`BUILD_TYPE`, `PARALLEL`, and `CMAKE_ARGS`, for example:
-
-```sh
-make package BUILD_DIR=build/client-offline \
-  CMAKE_ARGS='-DBILI_DEVICE_OFFLINE_UI=ON'
-```
+`BUILD_TYPE`, `PARALLEL`, and `CMAKE_ARGS`.
 
 Packages are written to `dist/PSP/GAME/WiliMini/` by default. Launch through
 `EBOOT.PBP`, not directly through `wili_mini.prx`: the loader initializes required

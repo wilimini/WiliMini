@@ -1192,7 +1192,3 @@ std::string ui_input_text(const std::string& title, const std::string& initial, 
     }
     return result;
 }
-
-#ifdef BILI_UI_REVIEW
-#include "ui_review.inc"
-#endif

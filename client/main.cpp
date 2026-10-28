@@ -124,115 +124,6 @@ int main(int argc, char** argv) {
     sceKernelExitGame();
     return playbackTest;
 #endif
-#ifdef BILI_UI_REVIEW
-    // Offline fixture build: no networking, credentials, or actual playback.
-    int reviewPage = 0, reviewFocus = 0;
-    unsigned reviewPlayerFlags = 0;
-    int reviewPlayerSeconds = 198;
-    int reviewPlayerControl = 0, reviewPlayerQuality = 0, reviewPlayerDanmaku = 0;
-    int reviewPlayerPart = 1, reviewPlayerAspect = 0;
-    uint64_t reviewPlayerTick = sceKernelGetSystemTimeWide();
-    uint64_t reviewOsdDeadline = 0;
-    unsigned previousButtons = 0;
-    FILE* reviewAutoFile = std::fopen("review-auto.txt", "r");
-    const bool reviewAuto = reviewAutoFile != nullptr;
-    if (reviewAutoFile) std::fclose(reviewAutoFile);
-    const auto reviewStart = sceKernelGetSystemTimeWide();
-    while (!exiting) {
-        SceCtrlData input{};
-        sceCtrlPeekBufferPositive(&input, 1);
-        unsigned pressed = input.Buttons & ~previousButtons;
-        previousButtons = input.Buttons;
-        const uint64_t reviewNow = sceKernelGetSystemTimeWide();
-        if (reviewPage == 7 && !(reviewPlayerFlags & 2u)) {
-            reviewPlayerSeconds += static_cast<int>((reviewNow - reviewPlayerTick) / 1000000u);
-            if (reviewPlayerSeconds > 760) reviewPlayerSeconds = 760;
-        }
-        reviewPlayerTick = reviewNow;
-        if (reviewPage == 7 && (reviewPlayerFlags & 1u) && !(reviewPlayerFlags & 2u) &&
-            !(reviewPlayerFlags & 4u) && reviewOsdDeadline && reviewNow >= reviewOsdDeadline)
-            reviewPlayerFlags &= ~1u;
-        if (reviewAuto) reviewPage = ((reviewNow - reviewStart) / 2000000) % 14;
-        else {
-            if (pressed & PSP_CTRL_RTRIGGER) reviewPage = (reviewPage + 1) % 14;
-            if (pressed & PSP_CTRL_LTRIGGER) reviewPage = (reviewPage + 13) % 14;
-            if (reviewPage == 0) {
-                reviewFocus %= 4;
-                if ((pressed & PSP_CTRL_RIGHT) && reviewFocus % 2 == 0) ++reviewFocus;
-                if ((pressed & PSP_CTRL_LEFT) && reviewFocus % 2 == 1) --reviewFocus;
-                if ((pressed & PSP_CTRL_DOWN) && reviewFocus < 2) reviewFocus += 2;
-                if ((pressed & PSP_CTRL_UP) && reviewFocus >= 2) reviewFocus -= 2;
-            } else {
-                if (pressed & (PSP_CTRL_RIGHT | PSP_CTRL_DOWN)) ++reviewFocus;
-                if (pressed & (PSP_CTRL_LEFT | PSP_CTRL_UP)) reviewFocus = reviewFocus > 0 ? reviewFocus - 1 : 0;
-            }
-            if (reviewPage == 7) {
-                if (pressed & PSP_CTRL_TRIANGLE) {
-                    reviewPlayerFlags ^= 1u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if ((pressed & PSP_CTRL_CROSS) && reviewPlayerControl == 0) {
-                    reviewPlayerFlags ^= 2u;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_START) {
-                    reviewPlayerFlags ^= 2u;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_LEFT) {
-                    reviewPlayerControl = (reviewPlayerControl + 5) % 6;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_RIGHT) {
-                    reviewPlayerControl = (reviewPlayerControl + 1) % 6;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_UP) {
-                    if (reviewPlayerControl == 1) reviewPlayerSeconds = reviewPlayerSeconds < 750 ? reviewPlayerSeconds + 10 : 760;
-                    else if (reviewPlayerControl == 2) reviewPlayerQuality = (reviewPlayerQuality + 1) % 3;
-                    else if (reviewPlayerControl == 3) reviewPlayerDanmaku = (reviewPlayerDanmaku + 1) % 2;
-                    else if (reviewPlayerControl == 4) reviewPlayerPart = reviewPlayerPart == 1 ? 2 : 1;
-                    else if (reviewPlayerControl == 5) reviewPlayerAspect = (reviewPlayerAspect + 1) % 3;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_DOWN) {
-                    if (reviewPlayerControl == 1) reviewPlayerSeconds = reviewPlayerSeconds > 10 ? reviewPlayerSeconds - 10 : 0;
-                    else if (reviewPlayerControl == 2) reviewPlayerQuality = (reviewPlayerQuality + 2) % 3;
-                    else if (reviewPlayerControl == 3) reviewPlayerDanmaku = (reviewPlayerDanmaku + 1) % 2;
-                    else if (reviewPlayerControl == 4) reviewPlayerPart = reviewPlayerPart == 1 ? 2 : 1;
-                    else if (reviewPlayerControl == 5) reviewPlayerAspect = (reviewPlayerAspect + 2) % 3;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_SQUARE) {
-                    reviewPlayerControl = 5;
-                    reviewPlayerFlags = (reviewPlayerFlags | 1u) & ~8u;
-                    reviewOsdDeadline = reviewNow + 3000000u;
-                }
-                if (pressed & PSP_CTRL_CIRCLE) {
-                    if (reviewPlayerFlags & 1u) reviewPlayerFlags &= ~1u;
-                    else reviewPage = 6;
-                }
-                if (reviewPlayerControl == 3 && (pressed & PSP_CTRL_CROSS)) reviewPlayerDanmaku ^= 1;
-            } else {
-                if (pressed & PSP_CTRL_CROSS) reviewPage = reviewPage == 0 ? 6 : reviewPage == 6 ? 7 : (reviewPage + 1) % 14;
-                if (pressed & PSP_CTRL_CIRCLE) reviewPage = 0;
-            }
-        }
-        if (reviewPage != 7) reviewPlayerFlags = 0;
-        ui_render_review(reviewPage, reviewFocus, reviewPlayerFlags, reviewPlayerSeconds,
-                         reviewPlayerControl, reviewPlayerQuality, reviewPlayerDanmaku,
-                         reviewPlayerPart, reviewPlayerAspect);
-    }
-    ui_shutdown();
-    sceKernelExitGame();
-    return 0;
-#endif
     pspapp::App app;
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
@@ -256,17 +147,11 @@ int main(int argc, char** argv) {
     return 0;
 #endif
 
-#ifdef BILI_DEVICE_OFFLINE_UI
-    const int net = -1;
-    app.setStatus("离线缓存 · PPSSPP UI 预览");
-#else
     const auto initError = pspapp::WifiManager{}.initialize();
     const int net = initError ? initError.rawCode : 0;
-#endif
 #ifdef BILI_DEVICE_SMOKE
     smokeLog("network init=%d ready=%d profile=%d", net, network_ready(), network_has_profile());
 #endif
-#ifndef BILI_DEVICE_OFFLINE_UI
     if (net < 0) {
         app.setStatus(pspapp::errorMessage(initError));
         pspapp::logError(CLIENT_ROOT "/last-error.txt", initError);
@@ -276,7 +161,6 @@ int main(int argc, char** argv) {
         ui_render(app);
         networkDialog();
     }
-#endif
     if (net >= 0) {
 #ifdef BILI_DEVICE_SMOKE_SEARCH
         app.search("wiliwili");
@@ -424,13 +308,9 @@ int main(int argc, char** argv) {
             if (pressed & PSP_CTRL_CIRCLE) app.back();
             else if (pressed & PSP_CTRL_CROSS) {
                 if (app.screen() == pspapp::Screen::Settings && app.settingSelection() == 4) {
-#ifdef BILI_DEVICE_OFFLINE_UI
-                    app.setStatus("离线 UI 验证：请在正常构建中打开系统 Wi-Fi");
-#else
                     networkDialog();
                     app.setStatus(network_ready() ? "Wi-Fi 已连接" : "已返回 · 未连接 Wi-Fi");
                     previous = ~0u;
-#endif
                 } else app.activate();
             } else if ((pressed & PSP_CTRL_TRIANGLE) && app.screen() == pspapp::Screen::Storage)
                 app.updateStorage();
@@ -556,43 +436,6 @@ int main(int argc, char** argv) {
             else app.cancelCommunityInput();
             previous = ~0u;
         }
-#ifdef BILI_DEVICE_OFFLINE_UI
-        // State evidence for deterministic controller replays, excluded from normal builds.
-        static std::string lastUiState;
-        char uiState[768];
-        std::snprintf(
-            uiState, sizeof(uiState),
-            "{\"screen\":%d,\"selection\":%zu,\"part\":%zu,\"focus\":%d,\"comments\":%zu,"
-            "\"scroll\":%d,\"end\":%d,\"later\":%zu,\"busy\":%d,\"tab\":%d,\"search_view\":%d,"
-            "\"topics\":%zu,\"cards\":%zu,\"search_error\":%d,\"auth_state\":%d,\"auth_error\":%d,"
-            "\"setting\":%zu,\"dark\":%d,\"body_size\":%d,\"show_covers\":%d,\"slow_repeat\":%d,"
-            "\"cover_files\":%zu,\"clearing_covers\":%d,\"cover_generation\":%u,\"document_scroll\":%d}",
-            static_cast<int>(app.screen()), app.selection(), app.detailPart(),
-            static_cast<int>(app.focusArea()), app.comments().size(), app.commentScroll(),
-            app.commentsEnd(), app.later().size(), app.busy(), static_cast<int>(app.tab()),
-            static_cast<int>(app.searchView()), app.searchTopics().size(), app.cards().size(),
-            !app.searchError().empty(), static_cast<int>(app.auth().state), bool(app.authError()),
-            app.settingSelection(), app.preferences().darkTheme, app.preferences().bodySize,
-            app.preferences().showCovers, app.preferences().slowRepeat, app.coverFiles(),
-            app.clearingCovers(), app.coverGeneration(), app.documentScroll());
-        auto traceState = nlohmann::json::parse(uiState);
-        if (app.hasBrowse()) {
-            traceState["browse_kind"] = static_cast<int>(app.browsePage().request.kind);
-            traceState["browse_items"] = app.browsePage().items.size();
-            traceState["browse_selection"] = app.browseSelection();
-            traceState["browse_page"] = app.browsePage().request.page;
-            traceState["browse_more"] = app.browsePage().hasMore;
-            traceState["browse_error"] = bool(app.browseError());
-        }
-        const std::string traceRecord = traceState.dump();
-        if (lastUiState != traceRecord) {
-            if (FILE* trace = std::fopen(CLIENT_ROOT "/ui-trace.jsonl", "a")) {
-                std::fprintf(trace, "%s\n", traceRecord.c_str());
-                std::fclose(trace);
-            }
-            lastUiState = traceRecord;
-        }
-#endif
         ui_render(app);
     }
 

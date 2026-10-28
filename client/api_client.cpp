@@ -165,54 +165,6 @@ pspapp::Result<pspapp::ApiResponse> requestDocument(pspapp::HttpClient &http,
                                                     pspapp::ErrorOperation op, bool retrySafe) {
     using namespace pspapp;
     Result<ApiResponse> response;
-#ifdef BILI_DEVICE_OFFLINE_UI
-    (void)http;
-    (void)signedRequest;
-    (void)retrySafe;
-    auto parameter = [&](const char *key) {
-        for (const auto &p : params)
-            if (p.first == key)
-                return p.second;
-        return std::string();
-    };
-    std::string name;
-    if (endpoint == Api::Detail)
-        name = "detail_" + parameter("bvid");
-    else if (endpoint == Api::Comment)
-        name = "comments_" + parameter("oid") + "_" + parameter("next");
-    else if (endpoint == Api::SearchHots)
-        name = "search_topics";
-    else if (endpoint == Api::Search)
-        name = "search_" + percentEncode(parameter("keyword")) + "_" + parameter("page");
-    else if (endpoint == Api::QrLoginUrlV2)
-        name = "login_generate";
-    else if (endpoint == Api::QrLoginInfoV2)
-        name = "login_poll";
-    else if (endpoint == Api::Nav)
-        name = "session";
-    if (name.empty()) name = "api_" + websocketpp::md5::md5_hash_hex(joinUrl(endpoint, params));
-    if (name.size() > 240 ||
-        name.find_first_not_of(
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_%") !=
-            std::string::npos)
-        return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, op});
-    FILE *file = std::fopen((std::string(CLIENT_ROOT) + "/cache/" + name + ".json").c_str(), "rb");
-    if (!file)
-        return Result<ApiResponse>::failure({ErrorDomain::Storage, ErrorKind::IoFailure, op});
-    std::fseek(file, 0, SEEK_END);
-    long length = std::ftell(file);
-    std::rewind(file);
-    std::string body(length > 0 && length <= 512 * 1024 ? length : 0, '\0');
-    bool read = !body.empty() && std::fread(&body[0], 1, body.size(), file) == body.size();
-    std::fclose(file);
-    try {
-        if (!read)
-            throw std::runtime_error("Invalid fixture");
-        response.value.data = nlohmann::json::parse(body);
-    } catch (const std::exception &) {
-        return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, op});
-    }
-#else
     if (signedRequest) {
         auto error = fetchWbiMixin(http);
         if (error)
@@ -235,7 +187,6 @@ pspapp::Result<pspapp::ApiResponse> requestDocument(pspapp::HttpClient &http,
         if (!response)
             return response;
     }
-#endif
     try {
         const auto &root = response.value.data;
         int code = root.at("code").get<int>();
@@ -438,10 +389,6 @@ Result<ApiResponse> BilibiliApi::post(const std::string &endpoint, const ApiPara
     std::string url = endpoint.rfind("//", 0) == 0 ? "https:" + endpoint : endpoint;
     if (!bili_http_credential_host(url.c_str()))
         return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, operation});
-#ifdef BILI_DEVICE_OFFLINE_UI
-    // Offline UI builds never issue writes to a real account.
-    return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::ApiRejected, operation});
-#else
     std::string body;
     for (const auto &field : form) {
         if (!body.empty()) body += '&';
@@ -460,6 +407,5 @@ Result<ApiResponse> BilibiliApi::post(const std::string &endpoint, const ApiPara
     } catch (const std::exception &) {
         return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, operation});
     }
-#endif
 }
 } // namespace pspapp

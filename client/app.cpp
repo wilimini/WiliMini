@@ -853,10 +853,6 @@ VideoCard App::selectedDetailCard() const {
 
 void App::requestPlayback(bool fromStart) {
     if (busy_ || detail_.card.bvid.empty()) return;
-#ifdef BILI_DEVICE_OFFLINE_UI
-    status_ = "离线 UI 构建：播放不可用";
-    return;
-#endif
     VideoCard card = selectedDetailCard();
     if (fromStart || (card.duration > 0 && card.startMs >= card.duration * 1000LL)) card.startMs = 0;
     startPlay(card, card.cid, card.duration);
@@ -924,7 +920,6 @@ void App::startPlay(const VideoCard& card, uint64_t cid, int duration) {
 }
 
 void App::updateCoverQueue() {
-#ifndef BILI_DEVICE_OFFLINE_UI
     if (busy_ && !coverActive_) return;
     const size_t selected = screen_ == Screen::Browse && !browseStack_.empty()
                                 ? browseStack_.back().selection : selection_;
@@ -980,11 +975,9 @@ void App::updateCoverQueue() {
             enqueue(pgcCoverKey(item), std::move(url));
         }
     }
-#endif
 }
 
 void App::startCover() {
-#ifndef BILI_DEVICE_OFFLINE_UI
     if (coverActive_ || workerStarted_ || !preferences_.showCovers || playbackReady_ ||
         !network_ready() || queuedJob_ != Job::None) return;
     while (!coverQueue_.empty()) {
@@ -1012,7 +1005,6 @@ void App::startCover() {
         }
         return;
     }
-#endif
 }
 
 void App::startJob(Job job) {
@@ -1029,14 +1021,6 @@ void App::startJob(Job job) {
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
         return;
     }
-#ifdef BILI_DEVICE_OFFLINE_UI
-    if (job != Job::Detail && job != Job::Comments && job != Job::Search &&
-        job != Job::SearchTopics && job != Job::AuthGenerate && job != Job::AuthPoll &&
-        job != Job::AuthCheck && job != Job::AuthLogout && job != Job::Browse && job != Job::CommunityWrite) {
-        status_ = "离线 UI 构建：联网与播放不可用";
-        return;
-    }
-#endif
     playbackFailed_ = false;
     job_ = job;
     jobResult_ = -1;
@@ -1321,7 +1305,6 @@ void App::runJob() {
         if (!result) { jobTypedError_ = result.error; jobResult_ = -1; }
         else {
             stagedBrowse_ = std::move(result.value);
-#ifndef BILI_DEVICE_OFFLINE_UI
             if (jobBrowse_.kind == BrowseKind::Conversation &&
                 !stagedBrowse_.nextCursor.empty() &&
                 stagedBrowse_.nextCursor != jobBrowse_.cursor) {
@@ -1344,7 +1327,6 @@ void App::runJob() {
                     bili_http_download(url.c_str(),path.c_str(),320*1024);
                 }
             }
-#endif
             jobResult_ = 0;
         }
     } else if (job_ == Job::CommunityWrite || job_ == Job::HistoryReport) {
@@ -1515,7 +1497,6 @@ void App::runJob() {
                 break;
             }
         }
-#ifndef BILI_DEVICE_OFFLINE_UI
         if (sessions_.current().valid()) {
             auto progress = communityService_.videoProgress(stagedDetail_.card.bvid, stagedDetail_.card.cid);
             // Match Wiliwili: a different last_play_cid must not silently
@@ -1523,7 +1504,6 @@ void App::runJob() {
             if (progress && progress.value.cid == stagedDetail_.card.cid)
                 stagedDetail_.card.startMs = progress.value.positionMs;
         }
-#endif
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Comments) {
         bool ok = false;
@@ -1626,7 +1606,6 @@ void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, Psp
             for (auto &item : frame.page.items)
                 if (item.aid == playbackCard_.aid && item.cid == playbackCard_.cid)
                     item.startMs = playbackCard_.startMs;
-#ifndef BILI_DEVICE_OFFLINE_UI
         if (!playbackFailed_ && sessions_.current().valid()) {
             jobWrite_ = {};
             jobWrite_.action = CommunityAction::ReportHistory;
@@ -1638,7 +1617,6 @@ void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, Psp
             jobWrite_.seasonId = playbackSeason_;
             startJob(Job::HistoryReport);
         }
-#endif
     }
     (void)error;
 }

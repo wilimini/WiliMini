@@ -275,12 +275,8 @@ void App::browseActivate() {
   }
   if (item.next.kind == BrowseKind::Episode ||
       item.next.kind == BrowseKind::LiveStream) {
-#ifdef BILI_DEVICE_OFFLINE_UI
-    status_ = "离线 UI 构建：播放不可用";
-#else
     jobMedia_ = item;
     startJob(Job::CommunityPlay);
-#endif
     return;
   }
   openBrowse(item.next);
