@@ -366,7 +366,8 @@ void drawFooter(const pspapp::App& app) {
     } else if (app.screen() == pspapp::Screen::Login) {
         hint = "○ 返回   △ 重试 / 刷新   SELECT 网络";
     } else if (app.busy()) {
-        hint = std::string("载入中 · ") + std::to_string(static_cast<unsigned>(transfer_kb)) + " KB · ○ 取消";
+        const char *progress = network_progress_message();
+        hint = std::string(progress[0] ? progress : app.status()) + " · ○ 取消";
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
         hint = "↑↓ 选择分区   × 进入   → 返回内容";
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
@@ -981,6 +982,17 @@ void ui_init() {
     bitmapFontInit(CLIENT_ROOT "/wqy.bmf");
 }
 
+void ui_startup_status(const char *message) {
+    beginFrame();
+    fillRect(0, 0, kWidth, kHeight, kBackground);
+    drawText(12, 12, 0.8f, kText, "WiliMini", 456);
+    drawText(12, 254, 0.46f, kTextDim, message, 456);
+    sceGuFinish();
+    sceGuSync(0, 0);
+    sceDisplayWaitVblankStart();
+    draw_buffer = sceGuSwapBuffers();
+}
+
 void ui_shutdown() {
     bitmapFontShutdown();
     sceGuTerm();
@@ -1014,7 +1026,9 @@ void ui_render(const pspapp::App& app) {
     applyPreferences(app.preferences());
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
-        for (auto& cover : covers) cover = CoverSlot{};
+        for (auto& cover : covers)
+            if (app.completedCoverKey().empty() || cover.key == app.completedCoverKey())
+                cover = CoverSlot{};
         coverGeneration = app.coverGeneration();
     }
     beginFrame();

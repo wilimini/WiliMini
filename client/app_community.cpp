@@ -13,31 +13,6 @@ BrowseItem destination(BrowseKind kind, const std::string &title,
   return item;
 }
 } // namespace
-void App::cacheBrowseCovers(const BrowsePage &page) {
-#ifndef BILI_DEVICE_OFFLINE_UI
-  if (!preferences_.showCovers) return;
-  for (const auto &item : page.items) {
-    if (transfer_cancel) break;
-    const auto key = pgcCoverKey(item);
-    if (key.empty() || item.picture.empty()) continue;
-    const std::string path = std::string(CLIENT_ROOT) + "/cache/" + key + ".jpg";
-    if (FILE *cached = std::fopen(path.c_str(), "rb")) {
-      std::fseek(cached, 0, SEEK_END);
-      const auto size = std::ftell(cached);
-      std::fclose(cached);
-      if (size > 512) continue;
-    }
-    auto url = item.picture;
-    if (url.rfind("//", 0) == 0) url = "https:" + url;
-    const auto suffix = url.find('@');
-    if (suffix != std::string::npos) url.resize(suffix);
-    url += item.next.kind == BrowseKind::Season ? "@204w_272h_1c.jpg" : "@196w_110h_1c.jpg";
-    bili_http_download(url.c_str(), path.c_str(), 160 * 1024);
-  }
-#else
-  (void)page;
-#endif
-}
 void App::openBrowse(BrowseRequest request) {
   if (busy_)
     return;

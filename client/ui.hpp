@@ -5,6 +5,7 @@
 #include "app.hpp"
 
 void ui_init();
+void ui_startup_status(const char *message);
 void ui_shutdown();
 void ui_resume();
 void ui_dialog_frame();

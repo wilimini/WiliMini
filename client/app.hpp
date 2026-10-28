@@ -102,6 +102,7 @@ public:
     uint64_t coverBytes() const { return coverBytes_; }
     bool clearingCovers() const { return clearingCovers_; }
     unsigned coverGeneration() const { return coverGeneration_; }
+    const std::string &completedCoverKey() const { return completedCoverKey_; }
     std::string buildVersion() const;
 
     void openBrowse(BrowseRequest request);
@@ -128,9 +129,9 @@ public:
     void setBrowseScrollLimit(int limit) { browseScrollLimit_ = limit; }
     void communityShortcut();
     void openVideoActions();
-    void cacheBrowseCovers(const BrowsePage &page);
 
     void refresh();
+    void cancelRequest();
     void moveSelection(int dx, int dy);
     void activate();
     void back();
@@ -205,6 +206,8 @@ private:
     void runJob();
     void commitJob();
     void joinJob();
+    void updateCoverQueue();
+    void startCover();
     void loadDefault();
     void loadCachedCards();
     void saveHistory();
@@ -235,6 +238,16 @@ private:
     uint64_t coverBytes_ = 0;
     bool clearingCovers_ = false;
     unsigned coverGeneration_ = 0;
+    struct CoverRequest { std::string key, url; };
+    std::vector<CoverRequest> coverQueue_;
+    CoverRequest jobCover_;
+    std::string completedCoverKey_;
+    bool coverActive_ = false, coverDirty_ = true, coverEnabled_ = false;
+    SearchView coverSearchView_ = SearchView::Landing;
+    bool coverSucceeded_ = false;
+    Screen coverScreen_ = Screen::Home;
+    Tab coverTab_ = Tab::Recommend;
+    size_t coverPage_ = 0, coverDepth_ = 0;
 
     struct BrowseFrame {
         BrowsePage page;
@@ -318,6 +331,7 @@ private:
     bool playbackReady_ = false;
 
     Job job_ = Job::None;
+    Job queuedJob_ = Job::None;
     int jobPage_ = 1;
     int jobCommentNext_ = 0;
     int stagedCommentNext_ = 0;

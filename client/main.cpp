@@ -234,7 +234,9 @@ int main(int argc, char** argv) {
     return 0;
 #endif
     pspapp::App app;
+    ui_startup_status("正在读取设置与本地缓存…");
     app.init();
+    app.setStatus("正在初始化网络…");
     ui_render(app);
 #ifdef BILI_DEVICE_SMOKE
     smokeLog("init cards=%zu", app.cards().size());
@@ -461,7 +463,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (app.busy()) {
-            if (pressed & PSP_CTRL_CIRCLE) transfer_cancel = 1;
+            if (pressed & PSP_CTRL_CIRCLE) app.cancelRequest();
             else if (pressed & PSP_CTRL_RTRIGGER) {
                 if (app.screen() == pspapp::Screen::Detail) app.requestComments();
                 else if (app.screen() == pspapp::Screen::Comments) app.loadMoreComments();

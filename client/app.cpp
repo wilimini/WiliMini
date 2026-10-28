@@ -113,21 +113,6 @@ std::string cachePath(const std::string& bvid) {
     return std::string(CLIENT_ROOT) + "/cache/" + safe + ".jpg";
 }
 
-void downloadCover(const std::string& bvid, const std::string& picture, bool force) {
-    if (bvid.empty() || picture.empty() || transfer_cancel) return;
-    const std::string path = cachePath(bvid);
-    if (!force) {
-        FILE* existing = std::fopen(path.c_str(), "rb");
-        if (existing) {
-            std::fseek(existing, 0, SEEK_END);
-            const long size = std::ftell(existing);
-            std::fclose(existing);
-            if (size > 512) return;
-        }
-    }
-    bili_http_download(normalizePicture(picture, true).c_str(), path.c_str(), 320 * 1024);
-}
-
 VideoCard fromRecommend(const bilibili::RecommendVideoResult& item) {
     VideoCard card;
     card.bvid = item.bvid;
@@ -320,7 +305,11 @@ App::~App() {
 int App::workerEntry(SceSize, void*) {
     if (workerApp) {
         try {
-            workerApp->runJob();
+            if (workerApp->coverActive_) {
+                const auto &cover = workerApp->jobCover_;
+                workerApp->coverSucceeded_ = bili_http_download(
+                    cover.url.c_str(), cachePath(cover.key).c_str(), 320 * 1024) == 0;
+            } else workerApp->runJob();
         } catch (const std::bad_alloc &) {
             workerApp->jobTypedError_ = {ErrorDomain::Api, ErrorKind::OutOfMemory,
                                          ErrorOperation::Request};
@@ -356,6 +345,8 @@ void App::init() {
 }
 
 void App::shutdown() {
+    coverQueue_.clear();
+    queuedJob_ = Job::None;
     if (workerStarted_ && worker_ >= 0) {
         transfer_cancel = 1;
         SceUInt timeout = 2000000;
@@ -366,6 +357,7 @@ void App::shutdown() {
         worker_ = -1;
         workerStarted_ = false;
     }
+    coverActive_ = false;
     bili_finish_playback(&stagedPlayback_);
     stagedPlayback_ = BiliPlayback{};
 }
@@ -672,7 +664,21 @@ void App::logout() {
     sessionCheckPending_ = false;
     startJob(Job::AuthLogout);
 }
+void App::cancelRequest() {
+    transfer_cancel = 1;
+    if (coverActive_ && queuedJob_ != Job::None) {
+        queuedJob_ = Job::None;
+        busy_ = false;
+        coverDirty_ = true;
+        status_ = "已取消";
+    }
+}
+
 void App::back() {
+    if (coverActive_ && queuedJob_ != Job::None) {
+        cancelRequest();
+        return;
+    }
     if (screen_ == Screen::Browse) {
         if (confirmingDelete_) { confirmingDelete_ = false; status_ = "已取消删除"; return; }
         browseBack(); return;
@@ -917,8 +923,112 @@ void App::startPlay(const VideoCard& card, uint64_t cid, int duration) {
     startJob(Job::Play);
 }
 
+void App::updateCoverQueue() {
+#ifndef BILI_DEVICE_OFFLINE_UI
+    if (busy_ && !coverActive_) return;
+    const size_t selected = screen_ == Screen::Browse && !browseStack_.empty()
+                                ? browseStack_.back().selection : selection_;
+    const bool posters = screen_ == Screen::Browse && !browseStack_.empty() &&
+                         isPgcPosterPage(browseStack_.back().page.request.kind);
+    const bool grid = screen_ == Screen::Home && tab_ != Tab::Search;
+    // Include the preceding row while the selected row scrolls into view.
+    const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
+                                                          : (selected > 2 ? selected - 2 : 0);
+    if (!coverDirty_ && coverScreen_ == screen_ && coverTab_ == tab_ &&
+        coverPage_ == first && coverDepth_ == browseStack_.size() &&
+        coverSearchView_ == searchView_ &&
+        coverEnabled_ == preferences_.showCovers) return;
+    coverDirty_ = false;
+    coverScreen_ = screen_;
+    coverTab_ = tab_;
+    coverPage_ = first;
+    coverDepth_ = browseStack_.size();
+    coverSearchView_ = searchView_;
+    coverEnabled_ = preferences_.showCovers;
+    coverQueue_.clear();
+    if (coverActive_) transfer_cancel = 1;
+    if (!preferences_.showCovers || playbackReady_ || queuedJob_ != Job::None) return;
+    auto enqueue = [&](const std::string &key, std::string url) {
+        if (key.empty() || url.empty() || url.size() > 4096 || coverQueue_.size() >= kPageSize) return;
+        if (std::any_of(coverQueue_.begin(), coverQueue_.end(), [&](const CoverRequest &c) {
+                return c.key == key;
+            })) return;
+        coverQueue_.push_back({key, std::move(url)});
+    };
+    if (screen_ == Screen::Detail) {
+        enqueue(detail_.card.bvid, normalizePicture(detail_.card.picture, true));
+    } else if (screen_ == Screen::Home && tab_ != Tab::Mine &&
+               (tab_ != Tab::Search || searchView_ == SearchView::Results)) {
+        const auto &list = cards();
+        for (size_t i = first; i < list.size() && i < first + kPageSize; ++i)
+            enqueue(list[i].bvid, normalizePicture(list[i].picture, true));
+    } else if (screen_ == Screen::Mine) {
+        const size_t total = history_.size() + later_.size();
+        for (size_t i = first; i < total && i < first + 2; ++i) {
+            const auto &card = i < history_.size() ? history_[i] : later_[i - history_.size()];
+            enqueue(card.bvid, normalizePicture(card.picture, true));
+        }
+    } else if (screen_ == Screen::Browse && !browseStack_.empty()) {
+        const auto &items = browseStack_.back().page.items;
+        for (size_t i = first; i < items.size() && i < first + (posters ? 4 : kPageSize); ++i) {
+            const auto &item = items[i];
+            if (item.picture.empty()) continue;
+            auto url = normalizePicture(item.picture, false);
+            const auto suffix = url.find('@');
+            if (suffix != std::string::npos) url.resize(suffix);
+            url += item.next.kind == BrowseKind::Season ? "@204w_272h_1c.jpg" : "@196w_110h_1c.jpg";
+            enqueue(pgcCoverKey(item), std::move(url));
+        }
+    }
+#endif
+}
+
+void App::startCover() {
+#ifndef BILI_DEVICE_OFFLINE_UI
+    if (coverActive_ || workerStarted_ || !preferences_.showCovers || playbackReady_ ||
+        !network_ready() || queuedJob_ != Job::None) return;
+    while (!coverQueue_.empty()) {
+        jobCover_ = std::move(coverQueue_.front());
+        coverQueue_.erase(coverQueue_.begin());
+        if (FILE *file = std::fopen(cachePath(jobCover_.key).c_str(), "rb")) {
+            std::fseek(file, 0, SEEK_END);
+            const long size = std::ftell(file);
+            std::fclose(file);
+            if (size > 512) continue;
+        }
+        coverSucceeded_ = false;
+        jobFinished_ = false;
+        transfer_cancel = 0;
+        workerApp = this;
+        worker_ = sceKernelCreateThread("wilimini_cover", workerEntry, 0x24, 224 * 1024,
+                                        PSP_THREAD_ATTR_USER, nullptr);
+        if (worker_ < 0) return;
+        coverActive_ = true;
+        workerStarted_ = true;
+        if (sceKernelStartThread(worker_, 0, nullptr) < 0) {
+            sceKernelDeleteThread(worker_);
+            worker_ = -1;
+            coverActive_ = workerStarted_ = false;
+        }
+        return;
+    }
+#endif
+}
+
 void App::startJob(Job job) {
     if (busy_) return;
+    coverQueue_.clear();
+    coverDirty_ = true;
+    if (coverActive_) {
+        // Keep curl and the shared resolver on one worker. Foreground work
+        // starts only after the cancelled cover has closed its file/socket.
+        queuedJob_ = job;
+        transfer_cancel = 1;
+        network_progress_reset();
+        busy_ = true;
+        status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
+        return;
+    }
 #ifdef BILI_DEVICE_OFFLINE_UI
     if (job != Job::Detail && job != Job::Comments && job != Job::Search &&
         job != Job::SearchTopics && job != Job::AuthGenerate && job != Job::AuthPoll &&
@@ -935,6 +1045,7 @@ void App::startJob(Job job) {
     error_ = {};
     jobFinished_ = false;
     transfer_cancel = 0;
+    network_progress_reset();
     network_error[0] = 0;
     stagedCards_.clear();
     stagedSearchTopics_.clear();
@@ -967,6 +1078,26 @@ void App::startJob(Job job) {
 }
 
 void App::poll() {
+    updateCoverQueue();
+    if (coverActive_) {
+        if (!jobFinished_) return;
+        joinJob();
+        coverActive_ = false;
+        // Invalidate only this cache key, even if navigation changed while the
+        // completed file was being published. No card or page state is changed.
+        if (coverSucceeded_) {
+            completedCoverKey_ = jobCover_.key;
+            ++coverGeneration_;
+        }
+        transfer_cancel = 0;
+        if (queuedJob_ != Job::None) {
+            const Job next = queuedJob_;
+            queuedJob_ = Job::None;
+            busy_ = false;
+            startJob(next);
+            return;
+        }
+    }
     if (!busy_) {
         if (sessionCheckPending_) {
             sessionCheckPending_ = false;
@@ -977,7 +1108,7 @@ void App::poll() {
                    static_cast<uint64_t>(sceKernelGetSystemTimeWide()) >= authPollAt_) {
             jobAuthKey_ = authView_.key;
             startJob(Job::AuthPoll);
-        }
+        } else if (!playbackReady_) startCover();
         return;
     }
     if (!jobFinished_)
@@ -986,6 +1117,7 @@ void App::poll() {
     busy_ = false;
     if (jobResult_ == 0 && !transfer_cancel) {
         commitJob();
+        coverDirty_ = true;
     } else {
         if (job_ == Job::Play || job_ == Job::CommunityPlay) {
             bili_finish_playback(&stagedPlayback_);
@@ -1190,7 +1322,6 @@ void App::runJob() {
         else {
             stagedBrowse_ = std::move(result.value);
 #ifndef BILI_DEVICE_OFFLINE_UI
-            cacheBrowseCovers(stagedBrowse_);
             if (jobBrowse_.kind == BrowseKind::Conversation &&
                 !stagedBrowse_.nextCursor.empty() &&
                 stagedBrowse_.nextCursor != jobBrowse_.cursor) {
@@ -1289,8 +1420,6 @@ void App::runJob() {
             jobResult_ = -1;
             return;
         }
-        for (size_t i = 0; i < stagedCards_.size() && i < kPageSize && !transfer_cancel && preferences_.showCovers; ++i)
-            downloadCover(stagedCards_[i].bvid, stagedCards_[i].picture, false);
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Hots) {
         bool responded = false;
@@ -1331,8 +1460,6 @@ void App::runJob() {
             jobResult_ = -1;
             return;
         }
-        for (size_t i = 0; i < stagedCards_.size() && i < kPageSize && !transfer_cancel && preferences_.showCovers; ++i)
-            downloadCover(stagedCards_[i].bvid, stagedCards_[i].picture, false);
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Search) {
         auto result = searchService_.search(
@@ -1346,8 +1473,6 @@ void App::runJob() {
         stagedHasMore_ = result.value.hasMore;
         for (const auto &video : result.value.videos)
             stagedCards_.push_back(fromSearch(video));
-        for (size_t i = 0; i < stagedCards_.size() && i < kPageSize && !transfer_cancel && preferences_.showCovers; ++i)
-            downloadCover(stagedCards_[i].bvid, stagedCards_[i].picture, false);
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Detail) {
         bool ok = false;
@@ -1399,8 +1524,6 @@ void App::runJob() {
                 stagedDetail_.card.startMs = progress.value.positionMs;
         }
 #endif
-        if (preferences_.showCovers && !stagedDetail_.card.picture.empty())
-            downloadCover(stagedDetail_.card.bvid, stagedDetail_.card.picture, false);
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Comments) {
         bool ok = false;

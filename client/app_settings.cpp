@@ -126,6 +126,8 @@ void App::activateUtility() {
         }
         sceIoDclose(directory);
         ++coverGeneration_;
+        completedCoverKey_.clear();
+        coverDirty_ = true;
         updateStorage();
         status_ = failed || result < 0 ? "部分缓存未能清理 · 可重试" : "封面缓存已清理";
     }

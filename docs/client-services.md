@@ -83,6 +83,30 @@ sticks that cannot rename over an existing file. Logout also removes temporary
 and backup credentials. Errors leave the live session unchanged where possible.
 The credentials file is local plaintext; it is not included in build packages.
 
+## Startup feedback and covers
+
+The footer shows the active Wi-Fi connection stage, including address acquisition,
+then identifies request preparation, recommendation loading or the popular-feed
+fallback. Before networking starts, startup shows local-data loading and network
+initialization messages. These messages do not change the connection timeout.
+
+Recommendation, popular, search, detail and browse metadata no longer wait for
+cover downloads. The UI shows text and placeholders as soon as metadata commits.
+While idle, the existing network worker downloads one cover at a time from a
+bounded queue for the visible area. Cached files are skipped and duplicate keys
+are queued once. Local history/later pages can also load missing covers.
+
+A new foreground job cancels the current cover and waits asynchronously for that
+worker to finish before starting. Curl handles, the resolver, cancellation state
+and credentials remain serialized. Navigation and disabling covers discard the
+old queue. Playback takes priority over cover work. A failed cover leaves its
+placeholder; it is not retried every frame. Refreshing or revisiting the area can
+retry it.
+
+Downloads retain the existing temporary-file/rename publication path. Only the
+UI thread reads JPEGs into display buffers. Completion invalidates the matching
+cover cache key, without replacing cards or clearing other decoded covers.
+
 ## Verification
 
 - `sh scripts/test-services.sh`: production service code with injected transport;
