@@ -6,7 +6,9 @@ connect with `pspsh -p 11000`. The PSP must already be running PSPLink.
 Before each experiment, save `thlist` and `meminfo`. Copy the packaged
 `me_bridge.prx` to `ms0:/PSP/GAME/WiliMini/me_bridge.prx` and launch
 `./build/client/loader/bootstrap.prx` from `host0:/`. The loader uses the
-packaged client on the memory stick, so copy that client before launching too.
+packaged clients on the memory stick, so copy both `wili_mini.prx` and
+`wili_mini_1000.prx` before launching too. Save the `LOADER` and `CLIENT`
+startup lines to identify the selected profile and compiled heap/defaults.
 
 Run one experiment at a time. Save its logs and result files, exit normally
 with START, and compare `thlist` against the baseline. All application workers

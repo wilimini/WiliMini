@@ -19,6 +19,11 @@ case "$model" in
 esac
 
 test -x "$runner" || { echo "Build PPSSPPHeadless first (tools/ppsspp/build-ppsspp-headless.sh)." >&2; exit 1; }
+runner_help=$("$runner" --help 2>&1 || true)
+case "$runner_help" in
+    *--appendconfig*) ;;
+    *) echo "PPSSPPHeadless lacks --appendconfig; use a runner with model configuration support." >&2; exit 1 ;;
+esac
 test -f "$client_dir/loader/bootstrap.prx" || { echo "Build the client first (make package)." >&2; exit 1; }
 test -f "$package/wili_mini.prx" || { echo "Missing packaged client: $package" >&2; exit 1; }
 test -f "$package/wili_mini_1000.prx" || { echo "Missing PSP-1000 client: $package" >&2; exit 1; }
