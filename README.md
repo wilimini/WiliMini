@@ -209,11 +209,25 @@ cmake --build build/client --target package --parallel 4
 
 ## 开发调试
 
-通过 PSPLink 调试时，先在项目根目录生成完整包，再使用 USBHostFS 将项目目录映射到 PSP：
+通过 PSPLink 调试时，先在项目根目录生成完整包：
 
 ```sh
 make package
+```
+
+每次重新构建后，将 `dist/PSP/GAME/WiliMini/` 整个目录复制到 PSP 的
+`ms0:/PSP/GAME/WiliMini/`（PSP Go 内置存储为 `ef0:/PSP/GAME/WiliMini/`），
+覆盖对应的构建产物。
+
+让 PSP 进入 PSPLink，在项目根目录启动 USBHostFS，并保持该终端运行：
+
+```sh
 usbhostfs_pc -vv -b 11000 "$PWD"
+```
+
+另开一个主机终端连接：
+
+```sh
 pspsh -p 11000
 ```
 

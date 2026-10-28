@@ -78,8 +78,9 @@ network modules and the Media Engine bridge.
 
 Read `docs/debug.md` before running physical-device experiments. The device must
 already be running PSPLink, and the host needs `usbhostfs_pc` and `pspsh`.
-Build the client and deploy `me_bridge.prx` to
-`ms0:/PSP/GAME/WiliMini/me_bridge.prx` before launching.
+Run `make package` after each change.
+Copy the entire `dist/PSP/GAME/WiliMini/` directory to `ms0:/PSP/GAME/WiliMini/`
+or PSP Go internal storage at `ef0:/PSP/GAME/WiliMini/` before each test.
 
 From the repository root, start USBHostFS and leave it running:
 
@@ -102,8 +103,9 @@ cd host0:/
 ```
 
 Use the loader rather than loading the client PRX directly. Adjust the loader
-path if using a different build directory. Even when launching from `host0:`,
-the loader loads the ME bridge from the memory-stick path listed above.
+path if using a different build directory. The loader selects a complete package
+from `ms0:`, then `ef0:`, then `host0:/dist/PSP/GAME/WiliMini`.
+Check `root=` in the startup logs to confirm the package location.
 
 - Save the initial `thlist` output and run only one experiment at a time.
 - Wait for results to be written, then exit the interactive client normally

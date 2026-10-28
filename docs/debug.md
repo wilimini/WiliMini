@@ -1,14 +1,19 @@
 # PSPLink device checks
 
-Start `usbhostfs_pc -vv -b 11000 "$PWD"` from the repository root, then
-connect with `pspsh -p 11000`. The PSP must already be running PSPLink.
+Run `make package` from the repository root after each change.
+Before each test, copy the entire `dist/PSP/GAME/WiliMini/` directory to
+`ms0:/PSP/GAME/WiliMini/` or PSP Go internal storage at `ef0:/PSP/GAME/WiliMini/`.
 
-Before each experiment, save `thlist` and `meminfo`. Copy the packaged
-`me_bridge.prx` to `ms0:/PSP/GAME/WiliMini/me_bridge.prx` and launch
-`./build/client/loader/bootstrap.prx` from `host0:/`. The loader uses the
-packaged clients on the memory stick, so copy both `wili_mini.prx` and
-`wili_mini_1000.prx` before launching too. Save the `LOADER` and `CLIENT`
-startup lines to identify the selected profile and compiled heap/defaults.
+The PSP must already be running PSPLink.
+Start `usbhostfs_pc -vv -b 11000 "$PWD"` from the repository root.
+Connect with `pspsh -p 11000` from a second host terminal.
+
+Before each experiment, save `thlist` and `meminfo` output from `pspsh`.
+In `pspsh`, run `cd host0:/`, then `./build/client/loader/bootstrap.prx`.
+The loader selects a complete package from `ms0:`, then `ef0:`, then
+`host0:/dist/PSP/GAME/WiliMini`.
+Save the `LOADER` and `CLIENT` startup lines.
+Check `root=`, the selected profile and the compiled heap/defaults.
 
 Run one experiment at a time. Save its logs and result files, exit normally
 with START, and compare `thlist` against the baseline. All application workers
