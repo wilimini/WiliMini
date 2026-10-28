@@ -313,7 +313,7 @@ set(LOADER_EBOOT_PBP "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP")
 set(ICON0_PNG "${ROOT}/assets/ICON0.png")
 add_custom_command(OUTPUT "${LOADER_EBOOT_PBP}"
     BYPRODUCTS "${LOADER_PARAM_SFO}"
-    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=2 "WiliMini" "${LOADER_PARAM_SFO}"
+    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=1 "WiliMini" "${LOADER_PARAM_SFO}" # pspdev/psp/sdk/include/systemctrl_se.h:12 DEFAULT_USE and AUTO_USE becomes FORCE_MAX on homebrew with MEMSIZE=1, and FORCE_16 with MEMSIZE=2
     COMMAND "${PSPDEV}/bin/pack-pbp"
         "${LOADER_EBOOT_PBP}"
         "${LOADER_PARAM_SFO}"
