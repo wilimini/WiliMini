@@ -56,6 +56,8 @@ int bili_finish_playback(BiliPlayback *playback);
 int network_init(void);
 int network_connect(void);
 int network_ready(void);
+const char *network_progress_message(void);
+void network_progress_reset(void);
 int network_has_profile(void);
 void network_remember_profile(void);
 void network_close(void);

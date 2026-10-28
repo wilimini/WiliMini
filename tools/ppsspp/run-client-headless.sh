@@ -7,7 +7,7 @@ memstick=${BILI_HEADLESS_MEMSTICK:-"$root/build/headless/memstick"}
 client_dir=${BILI_HEADLESS_CLIENT_DIR:-"$root/build/client"}
 package=${BILI_HEADLESS_PACKAGE:-"$root/dist/PSP/GAME/WiliMini"}
 font_dir="$root/build/ppsspp-headless/assets/flash0/font"
-output=${BILI_HEADLESS_SCREENSHOT:-"$root/results/ui-review/home.png"}
+output=${BILI_HEADLESS_SCREENSHOT:-"$root/results/headless/home.png"}
 screenshot_at=${BILI_HEADLESS_SCREENSHOT_AT:-"5.0:$output"}
 timeout=${BILI_HEADLESS_TIMEOUT:-7}
 timeout_emulated=${BILI_HEADLESS_TIMEOUT_EMULATED:-}
@@ -23,10 +23,6 @@ fi
 for artifact in EBOOT.PBP wili_mini.prx me_bridge.prx cacert.pem build.json wqy.bmf; do
     cp -f "$package/$artifact" "$memstick/PSP/GAME/WiliMini/$artifact"
 done
-if [ ! -f "$memstick/PSP/GAME/WiliMini/cache/home.json" ]; then
-    mkdir -p "$memstick/PSP/GAME/WiliMini/cache"
-    cp "$root/tests/fixtures/ui-home.json" "$memstick/PSP/GAME/WiliMini/cache/home.json"
-fi
 if [ ! -f "$memstick/PSP/GAME/WiliMini/wifi-profile.txt" ]; then
     printf '1\n' > "$memstick/PSP/GAME/WiliMini/wifi-profile.txt"
 fi

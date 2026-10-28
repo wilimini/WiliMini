@@ -140,16 +140,11 @@ make ffmpeg        # 只构建 FFmpeg
 make build         # 编译客户端
 make package       # 编译并生成 dist/PSP/GAME/WiliMini
 make me            # 编译客户端和 Media Engine 组件
-make assets        # 生成已配置的字体/UI review 资源
+make assets        # 生成已配置的字体资源
 ```
 
 通过 `BUILD_DIR`、`BUILD_TYPE` 和 `PARALLEL` 调整构建目录、类型和并行度；
-CMake 选项统一通过 `CMAKE_ARGS` 传递，例如：
-
-```sh
-make package BUILD_DIR=build/client-offline \
-  CMAKE_ARGS='-DBILI_DEVICE_OFFLINE_UI=ON'
-```
+需要传入额外 CMake 选项时使用 `CMAKE_ARGS`。
 
 也可以直接使用 CMake：
 
@@ -239,7 +234,7 @@ tools/        PPSSPP 回放、PSP 辅助工具和主机测试
 third_party/  固定版本的第三方依赖
 docs/         设计文档、故障分析和研究记录
 experiments/  独立实验及其复现资料
-results/      PPSSPP、真机和离线回放结果
+results/      PPSSPP、真机和性能实验结果
 ```
 
 ## 已知限制

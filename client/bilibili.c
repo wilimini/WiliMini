@@ -92,6 +92,22 @@ int bili_parse_stream(const char *text,BiliStream *out) {
 }
 #ifndef HOST_TEST
 static int initialized;
+enum { NET_IDLE, NET_CONNECTING, NET_AUTHENTICATING, NET_GETTING_IP,
+       NET_SIGNING, NET_RECOMMEND, NET_FALLBACK, NET_REQUEST };
+static volatile int network_phase;
+void network_progress_reset(void) { network_phase=NET_IDLE; }
+const char *network_progress_message(void) {
+    switch(network_phase){
+    case NET_CONNECTING:return "正在连接 Wi-Fi…";
+    case NET_AUTHENTICATING:return "正在验证 Wi-Fi 连接…";
+    case NET_GETTING_IP:return "正在获取 IP 地址…";
+    case NET_SIGNING:return "正在准备首页请求…";
+    case NET_RECOMMEND:return "正在获取推荐列表…";
+    case NET_FALLBACK:return "正在获取热门列表…";
+    case NET_REQUEST:return "正在请求数据…";
+    default:return "";
+    }
+}
 static CURL *transport;
 static char buvid3[33];
 static char session_cookies[4096];
@@ -193,6 +209,7 @@ int network_connect(void) {
 #endif
         return 0;
     }
+    network_phase=NET_CONNECTING;
     int profile=network_has_profile();
     if(profile && sceNetApctlConnect(profile)>=0){
         for(int n=0;n<200&&!transfer_cancel;++n){
@@ -201,6 +218,12 @@ int network_connect(void) {
                 network_report();
 #endif
                 return 0;
+            }
+            int state=0;
+            if(sceNetApctlGetState(&state)>=0){
+                if(state==PSP_NET_APCTL_STATE_GETTING_IP)network_phase=NET_GETTING_IP;
+                else if(state==PSP_NET_APCTL_STATE_EAP_AUTH || state==PSP_NET_APCTL_STATE_KEY_EXCHANGE)
+                    network_phase=NET_AUTHENTICATING;
             }
             sceKernelDelayThread(100000);
         }
@@ -245,6 +268,9 @@ static int progress(void *ctx,curl_off_t total,curl_off_t now,curl_off_t up,curl
 }
 
 static int request(const char *url,Sink *sink) {
+    network_phase=strstr(url,"/x/web-interface/nav")?NET_SIGNING:
+        strstr(url,"/wbi/index/top/feed/rcmd")?NET_RECOMMEND:
+        strstr(url,"/x/web-interface/popular")?NET_FALLBACK:NET_REQUEST;
     CURL *c=sink->response?curl_easy_init():transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
