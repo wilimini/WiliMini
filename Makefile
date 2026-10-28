@@ -6,10 +6,12 @@ BUILD_TYPE ?= Release
 PARALLEL ?= 4
 PSP_CMAKE ?= $(PSPDEV)/bin/psp-cmake
 BUILD_TOOL ?= cmake
+PPSSPP_PACKAGE_DIR ?= dist/PSP/GAME/WiliMini
+PPSSPP_GAME_DIR ?= $(HOME)/.config/ppsspp/PSP/GAME
 
 COMMON_CONFIG := -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
-.PHONY: all configure build package dependencies curl ffmpeg me assets clean
+.PHONY: all configure build package ppsspp-install dependencies curl ffmpeg me assets clean
 
 all: package
 
@@ -21,6 +23,12 @@ build: configure
 
 package: configure
 	$(BUILD_TOOL) --build $(BUILD_DIR) --target package --parallel $(PARALLEL)
+
+ppsspp-install:
+	@test -f "$(PPSSPP_PACKAGE_DIR)/EBOOT.PBP" || { echo "Missing package: $(PPSSPP_PACKAGE_DIR)/EBOOT.PBP; run make package first." >&2; exit 1; }
+	mkdir -p "$(PPSSPP_GAME_DIR)/WiliMini"
+	cp -R "$(PPSSPP_PACKAGE_DIR)/." "$(PPSSPP_GAME_DIR)/WiliMini/"
+	@echo "Installed WiliMini to $(PPSSPP_GAME_DIR)/WiliMini"
 
 dependencies:
 	PSPDEV="$(PSPDEV)" PATH="$(PSPDEV)/bin:$$PATH" $(PSP_CMAKE) -S . -B build/dependencies \
