@@ -146,8 +146,8 @@ add_custom_command(
 
 add_executable(me_bridge
     decoder/me/bridge.c
+    decoder/me/mist_backend.c
     "${ME_EXPORTS_C}"
-    "${ME_MIST_ROOT}/me-mist.c"
     "${ME_MIST_ROOT}/me-mist-utils.c"
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_options(me_bridge PRIVATE -ffunction-sections -fdata-sections)
