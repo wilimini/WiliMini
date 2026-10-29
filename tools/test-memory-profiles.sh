@@ -4,7 +4,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 out=build/host-memory
 mkdir -p "$out"
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -Iclient tests/loader_profile_test.c -o "$out/loader-profile-test"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -Iplatform/include tests/loader_profile_test.c -o "$out/loader-profile-test"
 "$out/loader-profile-test"
 for frames in 2 8; do
     ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient -Ithird_party/nlohmann \

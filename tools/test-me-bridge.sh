@@ -7,3 +7,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -fsanitize=address,undefined -Itests/me_bridge_stubs \
     tests/me_bridge_test.c -o build/host-me-bridge/test
 build/host-me-bridge/test
+${CC:-cc} -std=c11 -Wall -Wextra -Werror \
+    -fsanitize=address,undefined -Itests/me_bridge_stubs \
+    tests/me_refresh_test.c -o build/host-me-bridge/refresh-test
+build/host-me-bridge/refresh-test
