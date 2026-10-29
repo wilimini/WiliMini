@@ -8,20 +8,22 @@ WiliMini 是一个运行在 Sony PlayStation Portable（PSP）上的第三方 B�
 
 项目的目标是在 PSP 硬件限制下，提供接近 Wiliwili 风格的 B站 浏览体验，并持续研究 H.264/AAC 解码、VFPU、DMA 和 Media Engine 加速。
 
-> 当前项目处于持续开发阶段，当前版本可以运行。
-> 仅在 PSP-3000 + ARK-5 上测试。
+> 当前项目处于持续开发阶段
+> 在 PSP-3000 + ARK-5 上进行测试
 
 # 特点
 
 WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
 
 - 原生支持PSP：使用PSP连接网络，本地进行解码，不依赖外部设备串流
+  - 支持所有PSP：PSP-1000, PSP-2000, PSP-3000, PSP Go, PSP-E1000
 - 原速播放视频：
   - 跳过参考帧解码，关闭去块滤波，使用双线性近似运动插值
   - 实现`360p H.264 High`视频原速播放，流畅播放`HE-ACC`音频
 - 性能优化：使用主CPU解码、副CPU（ME）渲染，DMA写入显存。帧率相比 `ffplay` 基线提升17.8%
 - 功能齐全：推荐、热门、动态、用户、收藏、设置等
 - 主题色：拥有深浅两色主题
+- 支持 PPSSPP ME
 
 ## 界面截图
 
@@ -50,19 +52,14 @@ WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
 - 360p H.264/AAC 视频播放
 - DASH 视频和音频分离下载
 - HTTP Range 按需读取
-- 渐进式 MP4 回退
 - 视频缓存和观看进度保存
 - PPSSPP 默认使用原生 ME 路径，需启用 ME 模拟并提供对应固件镜像
 - PSP 原生音频输出
-- FLV 直播播放实验
 
 ### PSP 特性
 
 - PSP 原生网络连接
 - PSP 原生屏幕键盘搜索
-- 深色和浅色主题
-- 中文点阵字体
-- 封面缓存
 - VFPU、DMA 和 Media Engine 渲染实验
 
 ## 当前状态
@@ -71,19 +68,15 @@ WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
 | --- | --- |
 | PSP 客户端构建 | 可构建 |
 | 推荐、热门、搜索 | 已接入 |
-| 视频详情和评论 | 已接入，部分线上流程待验证 |
+| 视频详情和评论 | 已接入 |
 | 360p DASH 播放 | 已接入 |
 | 渐进式 MP4 回退 | 已接入 |
-| 音频播放 | 已接入，持续验证中 |
-| 登录和扫码会话 | 已接入，失效恢复待验证 |
-| 番剧和影视页面 | 已接入，播放流程待验证 |
-| 直播播放 | 实验性，仍有失败样本 |
+| 音频播放 | 已接入 |
+| 登录和扫码会话 | 已接入 |
+| 番剧和影视页面 | 已接入 |
+| 直播播放 | 不支持 |
 | 续播和退出恢复 | 部分完成 |
 | Media Engine 加速 | 实验性 |
-| PSP-1000 兼容性 | 尚未完成验证 |
-
-详细进度和已知限制见
-[当前开发进度](docs/CURRENT-PROGRESS.md)。
 
 ## 构建
 
@@ -259,15 +252,10 @@ results/      PPSSPP、真机和性能实验结果
 
 ## 相关文档
 
-- [当前开发进度](docs/CURRENT-PROGRESS.md)
-- [总体实施计划](PLAN.md)
 - [播放器说明](decoder/README.md)
 - [PSP select 网络问题分析](docs/PSP-SELECT-NETWORK-BUG.md)
-- [UI 设计计划](docs/UI-DESIGN-PLAN.md)
-- [UI 待办事项](docs/UI-TODO.md)
 - [PSP 解码优化记录](docs/psp-decode-optimization-journey.md)
 - [Media Engine 实验](experiments/me/)
-- [实验结果](results/)
 
 ## 许可证
 
