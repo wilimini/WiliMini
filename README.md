@@ -29,8 +29,8 @@ WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
   <img src="docs/screenshots/home.png" alt="首页" width="480">
   <img src="docs/screenshots/pgc.png" alt="番剧列表" width="480">
   <img src="docs/screenshots/video-detail.png" alt="视频详情" width="480">
-  <img src="docs/screenshots/settings-light.png" alt="视频详情" width="480">
-  <img src="docs/screenshots/settings.png" alt="视频详情" width="480">
+  <img src="docs/screenshots/settings-light.png" alt="设置（浅色主题）" width="480">
+  <img src="docs/screenshots/settings.png" alt="设置（深色主题）" width="480">
 </p>
 
 ## 功能概览
