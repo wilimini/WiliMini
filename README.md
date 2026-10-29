@@ -43,6 +43,38 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 - **模拟器支持**：可以在启用 Media Engine 的 PPSSPP 中运行和验证
 - **主题切换**：支持深色和浅色主题
 
+## 性能优化架构
+
+视频播放路径将 CPU 解码和 Media Engine 渲染分工处理，减少主线程等待和显存拷贝：
+
+```mermaid
+flowchart LR
+    A[网络下载与缓存] --> B
+
+    subgraph CPU["CPU + VFPU"]
+        direction TB
+        B[FFmpeg<br/>H.264 / AAC 解码]
+        C[音频处理<br/>与播放时钟]
+        D[视频帧队列]
+        B --> C
+        B --> D
+    end
+
+    subgraph ME["Media Engine"]
+        direction TB
+        E[YUV → RGB<br/>色彩空间转换]
+        F[视频缩放]
+    end
+
+    D -- ME 任务 --> E
+    E --> F
+    C --> H[音频输出]
+    F -->|DMA| G[显存] --> I[PSP 屏幕]
+```
+
+其中，CPU + VFPU 负责 FFmpeg 解码和音频播放；视频解码后的 YUV 帧进入共享队列，并通过 ME 任务交给 Media Engine。Media Engine 负责色彩空间转换和缩放，处理结果通过 DMA 写入显存。音频播放时钟作为同步基准，CPU 解码与 ME 视频渲染可以并行工作，
+减少主 CPU 等待和不必要的显存拷贝。
+
 ## 界面截图
 
 <p align="center">
