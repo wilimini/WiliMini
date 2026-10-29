@@ -354,9 +354,11 @@ static int64_t audio_clock_us(void)
     if (!anchor) return audio.first_pts_us + now - (int64_t)audio.epoch_us;
     int64_t elapsed = now - (int64_t)anchor;
     if (elapsed < 0) elapsed = 0;
-    /* Do not run the media clock beyond PCM actually submitted to hardware. */
+    /* Bound interpolation while more PCM may arrive. After the last submitted
+     * block, continue from the same anchor so a longer video can reach EOF. */
     int64_t block_us = (int64_t)AUDIO_SAMPLES * 1000000 / audio.rate;
-    if (elapsed > block_us) elapsed = block_us;
+    if (!(audio.eof && audio.consumed == audio.produced) && elapsed > block_us)
+        elapsed = block_us;
     return audio.first_pts_us + (int64_t)samples * 1000000 / audio.rate + elapsed;
 }
 static int audio_playback_failed(void)

@@ -23,6 +23,7 @@ set(CMAKE_CXX_EXTENSIONS ON)
 option(BILI_DEVICE_OSK_TEST "Open the PSP on-screen keyboard at startup for diagnostics" OFF)
 option(BILI_DEVICE_PLAYBACK_TEST "Run controlled media decoder tests without account/network APIs" OFF)
 option(BILI_DEVICE_PLAYBACK_CPU_RENDER "Diagnostic CPU display when ME firmware is unavailable" OFF)
+option(BILI_PPSSPP_SCE_MPEG "Use the legacy PPSSPP sceMpeg backend instead of native ME" OFF)
 option(BILI_MEMORY_PROFILE "Log large libc allocations for memory diagnostics" OFF)
 
 set(PSP_FFMPEG_PREFIX "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio-install" CACHE PATH
@@ -122,6 +123,7 @@ add_library(pspvideo STATIC
     decoder/me/me_lab.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
+target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
     "${ROOT}/decoder/include"
     "${ROOT}/decoder/src"
@@ -172,6 +174,7 @@ add_custom_command(TARGET me_bridge POST_BUILD
     COMMENT "Fixing imports and generating me_bridge.prx")
 
 add_library(wili_client_objects OBJECT
+    platform/src/psp_device.c
     client/app.cpp
     client/preferences.cpp
     client/app_settings.cpp
@@ -198,6 +201,7 @@ add_library(wili_client_objects OBJECT
     client/dns_packet.c)
 set(CLIENT_INCLUDE_DIRS
     "${ROOT}/decoder/include"
+    "${ROOT}/platform/include"
     "${ROOT}/third_party/nlohmann"
     "${ROOT}/third_party/pystring"
     "${ROOT}/client/api/wiliwili"
@@ -205,6 +209,7 @@ set(CLIENT_INCLUDE_DIRS
     "${PSP_CURL_PREFIX}/include")
 target_include_directories(wili_client_objects PRIVATE ${CLIENT_INCLUDE_DIRS})
 target_compile_definitions(wili_client_objects PRIVATE _POSIX_C_SOURCE=200809L)
+target_compile_definitions(wili_client_objects PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 if(BILI_MEMORY_PROFILE)
     target_sources(wili_client_objects PRIVATE client/memory_profile.c)
 endif()
@@ -220,6 +225,7 @@ foreach(client_target wili_mini wili_mini_1000)
         target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=24576 BILI_DEFAULT_RGB_FRAMES=8)
     endif()
     target_compile_definitions(${client_target} PRIVATE _POSIX_C_SOURCE=200809L)
+    target_compile_definitions(${client_target} PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
     if(BILI_MEMORY_PROFILE)
         target_link_options(${client_target} PRIVATE -Wl,--wrap=malloc -Wl,--wrap=realloc -Wl,--wrap=memalign)
     endif()
@@ -258,6 +264,9 @@ foreach(client_target wili_mini wili_mini_1000)
         pspnet_apctl pspnet_resolver pspnet_inet pspnet
         psputility psprtc
         pspdebug pspdisplay pspge pspctrl)
+    if(BILI_PPSSPP_SCE_MPEG)
+        target_link_libraries(${client_target} PRIVATE pspmpeg)
+    endif()
     set_target_properties(${client_target} PROPERTIES
         OUTPUT_NAME ${client_target}
         SUFFIX ".elf"
@@ -269,6 +278,11 @@ foreach(client_target wili_mini wili_mini_1000)
 endforeach()
 
 add_executable(bootstrap client/bootstrap.c)
+target_sources(bootstrap PRIVATE platform/src/psp_device.c)
+target_compile_definitions(bootstrap PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
+target_include_directories(bootstrap PRIVATE
+    "${ROOT}/decoder/include"
+    "${ROOT}/platform/include")
 target_link_options(bootstrap PRIVATE
     -G0
     "-specs=${PSPSDK}/lib/prxspecs"

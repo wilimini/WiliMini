@@ -211,6 +211,8 @@ int me_decode_start(void)
 #endif
     int ret = meLabInit((unsigned)me_task);
     if (ret < 0) return ret;
+    meCoreSelectSystemTable(ret);
+    sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));
     sceKernelDcacheWritebackInvalidateRange(&queue, sizeof(queue));
     job.output = (void *)&queue;
     ret = meLabSubmit(&job);

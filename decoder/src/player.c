@@ -331,6 +331,10 @@ static int select_run_dir(char *path, size_t length)
     return -1;
 }
 
+#if BILI_PPSSPP_SCE_MPEG
+#include "ppsspp_player.h"
+#endif
+
 static void save_results(const char *path, const RunStats *s, int render,
                          int full, int error_code)
 {
@@ -420,6 +424,7 @@ static void save_results(const char *path, const RunStats *s, int render,
     out = fopen(file, "w");
     if (out) {
         fputs("{\n", out);
+        fputs("  \"backend\": \"psp-native\",\n", out);
         fprintf(out, "  \"start_ms\": %lld,\n  \"position_ms\": %lld,\n  \"first_video_us\": %lld,\n",
                 (long long)playback_start_ms, (long long)(playback_position_us / 1000), (long long)first_video_us);
         fprintf(out, "  \"client_catchup_events\": %u,\n  \"client_catchup_packets\": %u,\n", s->catchup_events, s->catchup_packets);
@@ -1072,7 +1077,16 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     }
     RunStats stats = {0};
     char path[128] = {0};
-    int ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
+    int ret;
+#if BILI_PPSSPP_SCE_MPEG
+    if (options->backend == PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG)
+        ret = ppsspp_run_decode(options, &stats);
+    else
+#endif
+    {
+        printf("PLAYER backend=psp-native\n");
+        ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
+    }
     poll_controller = 0;
     if (control >= 0) {
         sceKernelWaitThreadEnd(control, NULL);

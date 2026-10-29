@@ -52,6 +52,7 @@ WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
 - HTTP Range 按需读取
 - 渐进式 MP4 回退
 - 视频缓存和观看进度保存
+- PPSSPP 默认使用原生 ME 路径，需启用 ME 模拟并提供对应固件镜像
 - PSP 原生音频输出
 - FLV 直播播放实验
 
@@ -183,7 +184,7 @@ cmake --build build/client --target package --parallel 4
 
 目录中的主要文件包括：
 
-- `EBOOT.PBP`：加载器，负责启动网络模块和 Media Engine bridge。
+- `EBOOT.PBP`：加载器，启动网络模块和 ME bridge；可选构建提供 PPSSPP sceMpeg 后端。
 - `wili_mini.prx`：24 MiB 堆的客户端，默认 8 帧播放缓冲。
 - `wili_mini_1000.prx`：12 MiB 堆的客户端，默认 2 帧播放缓冲。
 - `cacert.pem`：CA 证书集合。

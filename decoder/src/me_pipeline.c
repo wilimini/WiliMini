@@ -361,6 +361,8 @@ int me_decode_start(void)
     yuv_rgb_init(&tables);
     int ret = meLabInit((unsigned)me_task);
     if (ret < 0) return ret;
+    meCoreSelectSystemTable(ret);
+    sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));
     sceKernelDcacheWritebackInvalidateRange(&pipeline, sizeof(pipeline));
     job.output = (void *)&pipeline;
     ret = meLabSubmit(&job);

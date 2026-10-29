@@ -1,8 +1,14 @@
 #ifndef PSP_VIDEO_H
 #define PSP_VIDEO_H
 /* No FFmpeg or UI types cross this boundary. Call on a VFPU-enabled thread.
- * The ME bridge PRX must be loaded before playback. One player at a time. */
+ * The ME bridge PRX must be loaded before native playback, including PPSSPP.
+ * BILI_PPSSPP_SCE_MPEG enables the optional emulator HLE backend instead.
+ * One player at a time. */
 #include <stdint.h>
+typedef enum {
+    PSP_VIDEO_BACKEND_NATIVE_ME = 0,
+    PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG = 1
+} PspVideoBackend;
 typedef struct {
     void *opaque;
     int64_t size; /* -1 denotes a live, non-seekable source. */
@@ -23,6 +29,7 @@ typedef struct {
     const PspVideoSource *audio_source;
     int64_t start_ms; /* VOD resume position; live sources must start at zero. */
     int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
+    PspVideoBackend backend;
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

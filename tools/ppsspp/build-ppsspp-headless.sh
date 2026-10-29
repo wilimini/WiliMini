@@ -14,8 +14,8 @@ fi
 cmake -S "$source" -B "$build" \
     -DHEADLESS=ON \
     -DHEADLESS_CROSS=ON \
-    -DUSE_FFMPEG=OFF \
-    -DBUILD_BUNDLED_FFMPEG=OFF \
+    -DUSE_FFMPEG=ON \
+    -DBUILD_BUNDLED_FFMPEG=ON \
     -DUSE_DISCORD=OFF \
     -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build" --target PPSSPPHeadless --parallel "${JOBS:-4}"
