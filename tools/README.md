@@ -13,11 +13,68 @@ sh tools/ppsspp/build-ppsspp-headless.sh
 sh tools/ppsspp/run-client-headless.sh
 ```
 
-Headless 启动器使用生产客户端和当前网络配置；截图路径可通过 `BILI_HEADLESS_SCREENSHOT` 指定。
-默认通过 `--appendconfig` 设置 PSP-1000；可用 `BILI_HEADLESS_MODEL=2000` 或 `3000`
-切换为扩展内存机型。需要支持 `--appendconfig`、`--memstick`、`--screenshot-at`、
-`--press` 和 `--me-core` 的 Headless 构建，旧构建不满足测试条件。
-检查日志中的 `LOADER` 和 `CLIENT` 行，确认实际选择的机型与内存配置。
+Headless 启动器运行生产版客户端，并为每次运行创建独立的 memstick。
+它支持机型配置、截图、按键回放和音频导出；名字中的 PSP 不表示真机测试。
+
+### 基本运行
+
+```sh
+sh tools/ppsspp/build-ppsspp-headless.sh
+sh tools/ppsspp/run-client-headless.sh
+```
+
+`BILI_HEADLESS_MODEL` 控制模拟的 PSP 机型：
+
+| 值 | 模拟机型 | 客户端 profile |
+|---|---|---|
+| `1000`（默认） | PSP-1000 | 12 MiB 客户端 |
+| `2000` | PSP-2000 | 扩展内存客户端 |
+| `3000` | PSP-3000 | 扩展内存客户端 |
+
+启动器通过 `--appendconfig` 设置机型，通过 `--memstick` 使用隔离的
+memstick。所用 Headless 构建必须支持 `--appendconfig`、`--memstick`、
+`--screenshot-at` 和 `--press`；不支持这些参数的旧构建不能用于本流程。
+检查日志中的 `LOADER` 和 `CLIENT` 行，确认实际机型、内存和客户端 profile。
+
+### 播放后端
+
+默认后端是原生 ME：
+
+```text
+BILI_HEADLESS_PLAYER=psp-native
+```
+
+运行 native ME 前，需要：
+
+1. 客户端按默认配置构建；
+2. PPSSPP 启用 ME 模拟；
+3. 设置 `BILI_HEADLESS_FIRMWARE_DIR`，指向解出的 `flash0` 目录；
+4. 该目录包含所选机型的 `kd/resource/meimg.img`（PSP-1000）或
+   `kd/resource/me_t2img.img`（PSP-2000/3000）。
+
+旧的 `sceMpeg` 后端是可选兼容路径。它必须使用以下配置构建和运行：
+
+```sh
+cmake -S . -B build/client -DBILI_PPSSPP_SCE_MPEG=ON
+BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
+  sh tools/ppsspp/run-client-headless.sh
+```
+
+该模式不加载 native ME bridge，但 Headless 仍需使用启用了 FFmpeg 的构建。
+`BILI_HEADLESS_PLAYER` 必须是 `psp-native` 或 `ppsspp-sceMpeg`。
+
+### 输出和诊断
+
+- `BILI_HEADLESS_SCREENSHOT`：指定截图路径。
+- `BILI_HEADLESS_SCREENSHOT_AT`：指定截图时间和路径，例如 `5.0:results/home.png`。
+- `BILI_HEADLESS_PRESS_SCRIPT`：指定按键回放脚本。
+- `BILI_HEADLESS_LOG=1`：保存完整 PPSSPP 日志。
+- `BILI_HEADLESS_DUMP_AUDIO=/absolute/path/output.wav`：导出混音音频。
+- `BILI_HEADLESS_FIRMWARE_DIR`：native ME 使用的解出 `flash0` 目录。
+- `BILI_HEADLESS_MEMSTICK`：指定 memstick；默认使用 `build/headless/memstick`。
+
+自定义 runner 默认从相邻的 `assets/flash0/font` 查找字体。
+播放器测试构建和覆盖范围见 [PPSSPP 播放后端](../docs/ppsspp-player.md)。
 PPSSPP 启动与 UI 测试不能替代真实 ME 播放验证。
 
 ## 内存配置主机检查

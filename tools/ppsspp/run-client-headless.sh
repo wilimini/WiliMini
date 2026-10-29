@@ -6,12 +6,17 @@ runner=${PPSSPP_HEADLESS:-"$root/build/ppsspp-headless/PPSSPPHeadless"}
 memstick=${BILI_HEADLESS_MEMSTICK:-"$root/build/headless/memstick"}
 client_dir=${BILI_HEADLESS_CLIENT_DIR:-"$root/build/client"}
 package=${BILI_HEADLESS_PACKAGE:-"$root/dist/PSP/GAME/WiliMini"}
-font_dir="$root/build/ppsspp-headless/assets/flash0/font"
+font_dir=${BILI_HEADLESS_FONT_DIR:-"$(dirname -- "$runner")/assets/flash0/font"}
 output=${BILI_HEADLESS_SCREENSHOT:-"$root/results/headless/home.png"}
 screenshot_at=${BILI_HEADLESS_SCREENSHOT_AT:-"5.0:$output"}
 timeout=${BILI_HEADLESS_TIMEOUT:-7}
 timeout_emulated=${BILI_HEADLESS_TIMEOUT_EMULATED:-}
 model=${BILI_HEADLESS_MODEL:-1000}
+player=${BILI_HEADLESS_PLAYER:-psp-native}
+case "$player" in
+    psp-native|ppsspp-sceMpeg) ;;
+    *) echo "BILI_HEADLESS_PLAYER must be psp-native or ppsspp-sceMpeg." >&2; exit 1 ;;
+esac
 case "$model" in
     1000) model_id=0 ;;
     2000|3000) model_id=1 ;;
@@ -30,6 +35,19 @@ test -f "$package/wili_mini_1000.prx" || { echo "Missing PSP-1000 client: $packa
 
 mkdir -p "$memstick/PSP/GAME" "$memstick/PSP/NAND/flash0/font" "$(dirname -- "$output")"
 printf '[SystemParam]\nPSPModel = %s\n' "$model_id" > "$memstick/headless-model.ini"
+if [ "$player" = psp-native ]; then
+    printf '\n[CPU]\nEmulateMediaEngine = True\n' >> "$memstick/headless-model.ini"
+    if [ "$model_id" = 0 ]; then image=meimg.img; else image=me_t2img.img; fi
+    resource_dir="$memstick/PSP/NAND/flash0/kd/resource"
+    if [ -n "${BILI_HEADLESS_FIRMWARE_DIR:-}" ]; then
+        mkdir -p "$resource_dir"
+        cp "$BILI_HEADLESS_FIRMWARE_DIR/kd/resource/$image" "$resource_dir/$image"
+    fi
+    test -f "$resource_dir/$image" || {
+        echo "Native MIST playback needs flash0:/kd/resource/$image; set BILI_HEADLESS_FIRMWARE_DIR to an extracted flash0 directory." >&2
+        exit 1
+    }
+fi
 if [ ! -d "$memstick/PSP/GAME/WiliMini" ]; then
     cp -R "$package" "$memstick/PSP/GAME/WiliMini"
 fi
@@ -51,7 +69,6 @@ fi
 set -- \
     "--appendconfig=$memstick/headless-model.ini" \
     --graphics=software \
-    --me-core \
     "--root=$root" \
     "--memstick=$memstick" \
     "--screenshot-at=$screenshot_at" \
@@ -61,5 +78,11 @@ if [ -n "$timeout_emulated" ]; then
 fi
 if [ -n "${BILI_HEADLESS_PRESS_SCRIPT:-}" ]; then
     set -- "$@" "--press=$BILI_HEADLESS_PRESS_SCRIPT"
+fi
+if [ "${BILI_HEADLESS_LOG:-0}" = 1 ]; then
+    set -- "$@" --log
+fi
+if [ -n "${BILI_HEADLESS_DUMP_AUDIO:-}" ]; then
+    set -- "$@" "--dump-audio=$BILI_HEADLESS_DUMP_AUDIO"
 fi
 "$runner" "$@" "$client_dir/loader/bootstrap.prx"

@@ -10,6 +10,8 @@ typedef struct __attribute__((aligned(64))) {
     volatile uint32_t value;
     int width, height;
 } MeJob;
+/* Returns the selected ME_CORE_* image table (>= 0), or a negative error.
+ * Each client PRX must select its own mapper copy before submitting ME work. */
 int meLabInit(uint32_t entry);
 int meLabSubmit(MeJob *job);
 int meLabWait(void);

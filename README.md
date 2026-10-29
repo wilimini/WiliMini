@@ -1,211 +1,125 @@
-# WiliMini
+<p align="center">
+    <img src="assets/ICON0.svg" alt="WiliMini logo" height="128" width="128"/>
+</p>
+<h1 align="center">
+WiliMini
+</h1>
+<p align="center">
+  一个运行在 Sony PlayStation Portable（PSP）上的第三方
+  <a href="https://www.bilibili.com">B站</a> 客户端
+</p>
+<p align="center">
+  <b><a href="#特点">特点</a></b>
+  |
+  <b><a href="#安装">安装</a></b>
+  |
+  <b><a href="#文档">文档</a></b>
+  |
+  <b><a href="#开发">开发</a></b>
+</p>
 
-![WiliMini Logo](assets/ICON0.svg)
+- - -
 
-WiliMini 是一个运行在 Sony PlayStation Portable（PSP）上的第三方 B站 客户端。
+[![GitHub release](https://img.shields.io/github/v/release/wilimini/WiliMini)](https://github.com/wilimini/WiliMini/releases)
+[![GitHub license](https://img.shields.io/github/license/wilimini/WiliMini)](LICENSE)
+![PSP](https://img.shields.io/badge/PlayStation-Portable-003791?style=flat&logo=PlayStation)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat&logo=cplusplus)
 
-它使用 PSP 原生网络访问服务，在设备本地完成页面渲染、视频下载、音视频解码和显示，不依赖外部串流设备。
+WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界面渲染、视频下载、
+音视频解码和显示都在 PSP 本机完成，不依赖外部串流设备。
 
-项目的目标是在 PSP 硬件限制下，提供接近 Wiliwili 风格的 B站 浏览体验，并持续研究 H.264/AAC 解码、VFPU、DMA 和 Media Engine 加速。
-
-> 当前项目处于持续开发阶段，当前版本可以运行。
-> 仅在 PSP-3000 + ARK-5 上测试。
+项目以接近 wiliwili 的浏览体验为目标，并针对 PSP 的内存、带宽和 Media Engine
+进行适配。目前主要在 PSP-3000 + ARK-5 上验证，理论支持 PSP-1000 和其他型号。
 
 # 特点
 
-WiliMini 拥有非常接近 wiliwili 客户端的B站浏览体验
+WiliMini 让 PSP 也可以直接浏览 B站内容：
 
-- 原生支持PSP：使用PSP连接网络，本地进行解码，不依赖外部设备串流
-- 原速播放视频：
-  - 跳过参考帧解码，关闭去块滤波，使用双线性近似运动插值
-  - 实现`360p H.264 High`视频原速播放，流畅播放`HE-ACC`音频
-- 性能优化：使用主CPU解码、副CPU（ME）渲染，DMA写入显存。帧率相比 `ffplay` 基线提升17.8%
-- 功能齐全：推荐、热门、动态、用户、收藏、设置等
-- 主题色：拥有深浅两色主题
+- **原生运行**：使用 PSP 网络连接，在设备本地渲染和解码
+- **内容浏览**：推荐、热门、搜索、动态、用户空间、番剧、影视和收藏
+- **视频播放**：支持 360p H.264/AAC，支持 DASH 和 MP4
+- **播放体验**：视频缓存、观看历史、播放进度、评论与分页加载
+- **PSP 优化**：使用 VFPU、DMA 和 Media Engine 路径优化画面处理
+- **模拟器支持**：可以在启用 Media Engine 的 PPSSPP 中运行和验证
+- **主题切换**：支持深色和浅色主题
 
 ## 界面截图
 
-<p>
+<p align="center">
   <img src="docs/screenshots/home.png" alt="首页" width="480">
   <img src="docs/screenshots/pgc.png" alt="番剧列表" width="480">
   <img src="docs/screenshots/video-detail.png" alt="视频详情" width="480">
-  <img src="docs/screenshots/settings-light.png" alt="视频详情" width="480">
-  <img src="docs/screenshots/settings.png" alt="视频详情" width="480">
+  <img src="docs/screenshots/settings-light.png" alt="设置（浅色主题）" width="480">
+  <img src="docs/screenshots/settings.png" alt="设置（深色主题）" width="480">
 </p>
 
-## 功能概览
+# 安装
 
-### 内容浏览
+### PSP
 
-- 推荐、热门和搜索
-- 视频详情、UP 主信息和投稿列表
-- 动态、图文内容和用户空间
-- 收藏夹、稍后观看和观看历史
-- 番剧、影视和分集列表
-- 评论、回复、楼中楼和分页加载
-- 消息通知和私信入口
+1. 从 [GitHub Releases](https://github.com/wilimini/WiliMini/releases/latest) 下载
+   `WiliMini-<版本号>.zip`。
+2. 解压后，将完整的 `WiliMini/` 目录复制到记忆棒或 PSP Go 内置存储的
+   `PSP/GAME/` 目录。
+3. 从 PSP 游戏菜单启动 WiliMini。
 
-### 播放功能
+最终路径应为：
 
-- 360p H.264/AAC 视频播放
-- DASH 视频和音频分离下载
-- HTTP Range 按需读取
-- 渐进式 MP4 回退
-- 视频缓存和观看进度保存
-- PSP 原生音频输出
-- FLV 直播播放实验
+```text
+ms0:/PSP/GAME/WiliMini/EBOOT.PBP
+```
 
-### PSP 特性
+PSP Go 也可以使用：
 
-- PSP 原生网络连接
-- PSP 原生屏幕键盘搜索
-- 深色和浅色主题
-- 中文点阵字体
-- 封面缓存
-- VFPU、DMA 和 Media Engine 渲染实验
+```text
+ef0:/PSP/GAME/WiliMini/EBOOT.PBP
+```
 
-## 当前状态
+### 从源码构建
+
+构建完成后，将整个 `dist/PSP/GAME/WiliMini/` 目录复制到目标设备的
+`PSP/GAME/` 目录。必须启动 `EBOOT.PBP`，不要直接加载客户端 PRX；
+加载器会初始化网络模块和 Media Engine bridge。
+
+### PPSSPP
+
+PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`。
+使用原生 ME 播放路径时，还需要准备对应机型的 PSP `flash0` 固件目录。
+具体配置请参考 [PPSSPP 播放后端](docs/ppsspp-player.md)。
+
+# 文档
+
+- [播放器说明](decoder/README.md)：播放器 API、音视频格式和 Media Engine 生命周期
+- [客户端服务说明](docs/client-services.md)：网络服务和客户端模块
+- [PPSSPP 播放后端](docs/ppsspp-player.md)：模拟器构建、固件和播放测试
+- [Media Engine 兼容性分析](docs/me-compatibility.md)：ME bridge 与固件差异
+- [内存配置说明](docs/memory-profiles.md)：PSP-1000 与扩展内存配置
+- [调试指南](docs/debug.md)：PSPLink、USBHostFS 和真机实验流程
+- [PSP SELECT 网络问题分析](docs/PSP-SELECT-NETWORK-BUG.md)
+- [PSP 解码优化记录](docs/psp-decode-optimization-journey.md)
+- [开发与验证工具](tools/README.md)
+- [Media Engine 实验](experiments/me/)
+
+# 功能状态
 
 | 模块 | 状态 |
 | --- | --- |
-| PSP 客户端构建 | 可构建 |
-| 推荐、热门、搜索 | 已接入 |
-| 视频详情和评论 | 已接入，部分线上流程待验证 |
+| PSP 客户端构建与打包 | 可用 |
+| 推荐、热门和搜索 | 已接入 |
+| 视频详情、UP 主信息和评论 | 已接入 |
+| 番剧、影视和分集列表 | 已接入 |
+| 收藏夹、稍后观看和观看历史 | 已接入 |
+| 登录和扫码会话 | 已接入 |
 | 360p DASH 播放 | 已接入 |
 | 渐进式 MP4 回退 | 已接入 |
-| 音频播放 | 已接入，持续验证中 |
-| 登录和扫码会话 | 已接入，失效恢复待验证 |
-| 番剧和影视页面 | 已接入，播放流程待验证 |
-| 直播播放 | 实验性，仍有失败样本 |
+| 音频播放 | 已接入 |
+| 直播播放 | 暂不支持 |
 | 续播和退出恢复 | 部分完成 |
 | Media Engine 加速 | 实验性 |
-| PSP-1000 兼容性 | 尚未完成验证 |
 
-详细进度和已知限制见
-[当前开发进度](docs/CURRENT-PROGRESS.md)。
+当前主要针对 360p H.264/AAC 内容进行验证。复杂画面可能出现跳帧或停顿。
 
-## 构建
-
-### 环境准备
-
-需要安装 PSPSDK 和对应的 PSP 工具链，并设置 `PSPDEV`：
-
-```sh
-export PSPDEV=/path/to/pspdev
-export PATH="$PSPDEV/bin:$PATH"
-```
-
-两个 Media Engine 源码库作为 Git submodule 固定版本。首次克隆时初始化它们：
-
-```sh
-git clone --recurse-submodules <repo-url>
-```
-
-如果主仓库已经克隆，则在仓库根目录运行：
-
-```sh
-git submodule update --init --recursive
-```
-
-FFmpeg 和 libcurl 不使用 submodule。`make dependencies` 会下载固定版本的源码包、
-校验 SHA-256 并自动应用补丁；也可以分别运行 `make ffmpeg` 和 `make curl`。
-FFmpeg 保持原 n6.1.2 对应的 commit，不下载 Git 历史。
-下载缓存位于 `build/downloads/`，解压源码位于 `build/ffmpeg-source/` 和
-`build/curl-source/`，需要联网完成首次下载。
-
-客户端依赖 PSP 版本的 FFmpeg、libcurl 和 Media Engine 组件。默认情况下，
-CMake 从以下目录查找已构建的依赖：
-
-```text
-build/ffmpeg-audio-install/
-build/curl-install/
-third_party/psp-media-engine-mist/
-third_party/psp-media-engine-custom-core/
-```
-
-### 构建客户端
-
-使用项目根目录的 Makefile。默认目标会先准备依赖，再编译打包：
-
-```sh
-make
-```
-
-Makefile 会调用 CMake 编排配置、编译和打包流程。常用目标包括：
-
-```sh
-make dependencies  # 构建 PSP curl 和 FFmpeg
-make curl          # 只构建 curl
-make ffmpeg        # 只构建 FFmpeg
-make build         # 编译客户端
-make package       # 编译并生成 dist/PSP/GAME/WiliMini
-make me            # 编译客户端和 Media Engine 组件
-make assets        # 生成已配置的字体资源
-```
-
-通过 `BUILD_DIR`、`BUILD_TYPE` 和 `PARALLEL` 调整构建目录、类型和并行度；
-需要传入额外 CMake 选项时使用 `CMAKE_ARGS`。
-
-也可以直接使用 CMake：
-
-```sh
-psp-cmake -S . -B build/client
-cmake --build build/client --target package --parallel 4
-```
-
-构建完成后，打包目录为：
-
-```text
-dist/PSP/GAME/WiliMini/
-```
-
-如果依赖安装在其他目录，可以通过以下 CMake 选项指定：
-
-```sh
-psp-cmake -S . -B build/client \
-  -DPSP_FFMPEG_PREFIX=/path/to/ffmpeg \
-  -DPSP_CURL_PREFIX=/path/to/curl
-cmake --build build/client --target package --parallel 4
-```
-
-### 安装到 PSP
-
-从 [GitHub Releases](https://github.com/wilimini/WiliMini/releases/latest) 下载
-`WiliMini-<版本号>.zip` 并解压。将解压得到的 `WiliMini/` 整个目录复制到
-`PSP/GAME/`。
-
-- 记忆棒或 M2 卡路径为 `ms0:/PSP/GAME/WiliMini/EBOOT.PBP`；
-- PSP Go 内置存储路径通常为 `ef0:/PSP/GAME/WiliMini/EBOOT.PBP`。
-
-然后从 PSP 游戏菜单启动 WiliMini。
-
-如果从源码构建，则将 `dist/PSP/GAME/WiliMini/` 整个目录复制到目标存储的 `PSP/GAME/`。
-
-目录中的主要文件包括：
-
-- `EBOOT.PBP`：加载器，负责启动网络模块和 Media Engine bridge。
-- `wili_mini.prx`：24 MiB 堆的客户端，默认 8 帧播放缓冲。
-- `wili_mini_1000.prx`：12 MiB 堆的客户端，默认 2 帧播放缓冲。
-- `cacert.pem`：CA 证书集合。
-- `cache/`：封面和视频缓存。
-- `licenses/`：第三方许可证。
-- `build.json`：源文件和产物的 SHA-256 清单。
-
-不要直接加载客户端 PRX。客户端依赖加载器初始化的网络模块和
-`me_bridge.prx`。
-
-加载器根据机型和可用连续内存自动选择客户端：PSP-1000 使用 12 MiB 版本；
-后续机型至少有 36 MiB 连续空闲内存时使用 24 MiB 版本，否则回退到小堆版本。
-两个 PRX 必须一起安装。SFO 保留 `MEMSIZE=1`；它用于后续机型的扩展用户内存，
-不会让 PSP-1000 获得额外物理内存。实际支持取决于固件；PPSSPP 的 PSP-1000 模式会忽略该标志。
-
-设置中的“播放缓冲”可选择 2、4、8 帧，分别占用约 1.06、2.13、4.25 MiB RGB 内存。
-缓冲在每次播放开始时分配，播放结束后释放，不逐帧申请和释放。
-已保存的设置优先于对应客户端的默认值。堆大小是分配上限，不代表实时占用，也不包含
-程序代码、静态数据、系统模块和线程等开销。内存配置完成不代表 PSP-1000 的 ME 播放已验证；
-目前真机验证仍限于 PSP-3000，ME 桥保留固件匹配检查。
-
-## 操作说明
+# 操作说明
 
 | 按键 | 操作 |
 | --- | --- |
@@ -221,32 +135,122 @@ cmake --build build/client --target package --parallel 4
 搜索页面使用 PSP 原生屏幕键盘输入关键词。视频详情页支持评论、收藏、
 稍后观看和播放进度操作。
 
-## 开发调试
+# 开发
 
-通过 PSPLink 调试时，先在项目根目录生成完整包，再使用 USBHostFS 将项目目录映射到 PSP：
+## 环境准备
+
+需要安装 PSPSDK 和对应的 PSP 工具链，并设置 `PSPDEV`：
+
+```sh
+export PSPDEV=/path/to/pspdev
+export PATH="$PSPDEV/bin:$PATH"
+```
+
+首次克隆时初始化 Git submodule：
+
+```sh
+git clone --recurse-submodules https://github.com/wilimini/WiliMini.git
+cd WiliMini
+```
+
+已有工作区可以运行：
+
+```sh
+git submodule update --init --recursive
+```
+
+## 构建依赖和客户端
+
+从仓库根目录使用 Makefile。首次构建需要联网下载固定版本的 FFmpeg 和
+libcurl 源码包，构建过程会校验 SHA-256 并自动应用 PSP 补丁。
+
+```sh
+make dependencies
+make build
+make package
+```
+
+常用目标：
+
+```sh
+make curl          # 只构建 PSP curl
+make ffmpeg        # 只构建 PSP FFmpeg
+make me            # 构建客户端和 Media Engine 组件
+make assets        # 生成字体等资源
+```
+
+可以通过 `BUILD_DIR`、`BUILD_TYPE`、`PARALLEL` 和 `CMAKE_ARGS` 调整构建：
+
+```sh
+BUILD_TYPE=Release PARALLEL=4 make package
+```
+
+默认产物位于：
+
+```text
+dist/PSP/GAME/WiliMini/
+```
+
+也可以直接使用 CMake：
+
+```sh
+psp-cmake -S . -B build/client
+cmake --build build/client --target package --parallel 4
+```
+
+如果依赖安装在其他目录，可传入 `PSP_FFMPEG_PREFIX` 和 `PSP_CURL_PREFIX`。
+
+## PPSSPP 回放与主机检查
+
+构建 Headless PPSSPP 并运行客户端：
+
+```sh
+sh tools/ppsspp/build-ppsspp-headless.sh
+sh tools/ppsspp/run-client-headless.sh
+```
+
+内存配置和清理路径的主机检查：
+
+```sh
+sh tools/test-memory-profiles.sh
+```
+
+PPSSPP 回放可以验证 UI、下载和播放器路径，但不能替代真实 PSP Media Engine
+播放验证，也不能据此推断 PSP-1000 或其他固件版本的兼容性。
+
+## PSPLink 真机调试
+
+详细实验要求见 [调试指南](docs/debug.md)。每次变更后先生成完整安装包：
 
 ```sh
 make package
 usbhostfs_pc -vv -b 11000 "$PWD"
+```
+
+另开终端连接 PSPLink：
+
+```sh
 pspsh -p 11000
 ```
 
-在 `pspsh` 中启动加载器：
+在 `pspsh` 中使用加载器启动：
 
 ```text
+cd host0:/
 ./build/client/loader/bootstrap.prx
 ```
 
-仅当 `ms0:` 和 `ef0:` 都没有完整安装时，加载器才使用
-`host0:/dist/PSP/GAME/WiliMini` 下的客户端、ME bridge 和资源，日志、设置和缓存也写入
-该目录。检查 `LOADER` 和 `CLIENT` 日志中的 `root=`，确认实际使用的位置。
+测试前应复制完整的 `dist/PSP/GAME/WiliMini/` 目录到设备。正常退出客户端后，
+再次检查线程是否全部结束；不要把 PSPLink 查询超时直接当作设备崩溃。
 
-## 项目结构
+# 项目结构
 
 ```text
 client/       Bilibili 客户端、UI、网络服务和播放控制
 decoder/      FFmpeg 播放器、音频、VFPU 和 Media Engine 路径
-scripts/      资源生成和构建清单的 Python 脚本
+cmake/        依赖、客户端和打包配置
+platform/     PSP 平台集成
+scripts/      资源生成和构建清单脚本
 tools/        PPSSPP 回放、PSP 辅助工具和主机测试
 third_party/  固定版本的第三方依赖
 docs/         设计文档、故障分析和研究记录
@@ -254,31 +258,37 @@ experiments/  独立实验及其复现资料
 results/      PPSSPP、真机和性能实验结果
 ```
 
-## 已知限制
+# 反馈问题前
 
-- 当前主要针对 360p H.264/AAC 内容进行验证。
-- 直播播放目前仍有真实样本失败。
-- PSP-1000 与 PSP Slim 的兼容性需要分别验证。
+1. 确认 PSP 系统时间和网络设置正确。
+2. 确认使用的是完整的 `WiliMini/` 安装目录，而不是源码。
+3. 先搜索已有的 [Issues](https://github.com/wilimini/WiliMini/issues) 和讨论。
+4. 尽量提供完整复现步骤、设备型号、固件/自制系统版本、日志和截图。
+5. 如果是 PPSSPP 问题，请同时提供模拟器版本、机型配置和 Media Engine 设置。
 
-## 相关文档
+# 贡献
 
-- [当前开发进度](docs/CURRENT-PROGRESS.md)
-- [总体实施计划](PLAN.md)
-- [播放器说明](decoder/README.md)
-- [PSP select 网络问题分析](docs/PSP-SELECT-NETWORK-BUG.md)
-- [UI 设计计划](docs/UI-DESIGN-PLAN.md)
-- [UI 待办事项](docs/UI-TODO.md)
-- [PSP 解码优化记录](docs/psp-decode-optimization-journey.md)
-- [Media Engine 实验](experiments/me/)
-- [实验结果](results/)
+欢迎提交 Issue、改进文档和 Pull Request。
 
-## 许可证
+提交代码前请：
 
-WiliMini 采用 GNU General Public License v3 协议开源
+- 先确认改动对应的功能或问题，并说明测试环境；
+- 保持 PSP 特定代码、平台无关服务逻辑和实验性调优相互隔离；
+- 不提交账号 Cookie、扫码登录会话、令牌或私人设备日志；
+- 使用 `make package` 验证构建，并在可能时补充 PPSSPP 或真机验证结果。
 
-## 致谢
+如果要改进播放器、Media Engine、VFPU 或 DMA 路径，请先阅读
+[播放器说明](decoder/README.md) 和相关实验文档，特别注意缓冲区所有权、
+缓存一致性、线程退出和固件差异。
 
-感谢以下项目及其贡献者。
+# 许可证
+
+WiliMini 采用 GNU General Public License v3 协议开源。第三方依赖及其许可证
+见安装包中的 `licenses/` 目录和 [致谢](#致谢)。
+
+# 致谢
+
+感谢以下项目及其贡献者：
 
 | 项目 | 使用内容 | 许可证 |
 | --- | --- | --- |
@@ -287,7 +297,7 @@ WiliMini 采用 GNU General Public License v3 协议开源
 | [PSP Media Engine MIST](https://github.com/mcidclan/psp-media-engine-mist) | Media Engine 集成 | MIT |
 | [PSP Media Engine Custom Core](https://github.com/mcidclan/psp-media-engine-custom-core) | Media Engine core mapper 与辅助库 | MIT |
 | [Wiliwili](https://github.com/xfangfang/wiliwili) | Bilibili API/result 代码及界面资源 | GPL-3.0-only |
-| [WenQuanYi Micro Hei](https://sourceforge.net/projects/wqy/) | 客户端使用的字体 | Apache-2.0 |
+| [WenQuanYi Micro Hei](https://sourceforge.net/projects/wqy/) | 客户端字体 | Apache-2.0 |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON 解析 | MIT |
-| [QR Code generator by Project Nayuki](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/c) | 登录二维码生成 | MIT |
-| [PSPSDK](https://github.com/pspdev/pspsdk) | PSP SDK 兼容代码及许可证声明 | BSD-3-Clause |
+| [QR Code generator](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/c) | 登录二维码生成 | MIT |
+| [PSPSDK](https://github.com/pspdev/pspsdk) | PSP SDK 兼容代码 | BSD-3-Clause |

@@ -11,13 +11,14 @@
 #include "firmware_profile.h"
 #include <stdio.h>
 
-int wiliMeMistInit(unsigned restart_entry);
+int wiliMeMistInit(void);
 
 PSP_MODULE_INFO("Full ME Bridge", 0x1006, 1, 0);
 PSP_NO_CREATE_MAIN_THREAD();
 static int ready;
 static MeJob *pending;
 static unsigned original_entry;
+static int ready_table;
 
 /* MIST user-mode entry points are unused in this kernel-only bridge. */
 int meMistCall(FPCall f, void *p) { return f(p); }
@@ -27,18 +28,17 @@ int kCall_3(FPCall f, unsigned int seg, void *p) { return ((FPCall)((uintptr_t)f
 int meLabInit(uint32_t entry)
 {
     int k1 = pspSdkSetK1(0);
-    if (ready) { pspSdkSetK1(k1); return 0; }
+    if (ready) { pspSdkSetK1(k1); return ready_table; }
     int table = meCoreGetTableIdFromWitnessWord();
     unsigned table_address = me_bridge_table_address(table);
     if (!table_address) { pspSdkSetK1(k1); return -100 - table; }
-    unsigned firmware_entry = hw(0xbfc0071c);
-    unsigned restart_entry = me_bridge_restart_entry(table, firmware_entry);
-    printf("ME profile=%s table=0x%08x firmware_restart=0x%08x restart=0x%08x\n",
+    unsigned ram = hw(0xbfc00060), high = hw(0xbfc00064), low = hw(0xbfc00068);
+    printf("ME profile=%s table=0x%08x bootstrap=%08x/%08x/%08x\n",
            table == ME_CORE_IMG_TABLE ? "img" : "t2img",
-           table_address, firmware_entry, restart_entry);
-    if (!restart_entry) { pspSdkSetK1(k1); return -8; }
+           table_address, ram, high, low);
+    if (!me_bridge_bootstrap_valid(ram, high, low)) { pspSdkSetK1(k1); return -8; }
     sceKernelDcacheWritebackInvalidateAll();
-    int ret = wiliMeMistInit(restart_entry);
+    int ret = wiliMeMistInit();
     if (ret >= 0) {
         /* Read the actual live ME table, not its SC-side firmware image. */
         Aligned64 saved = meMistGetAligned64Mem("me-original", PSP_MEMORY_PARTITION_USER, 64);
@@ -63,6 +63,8 @@ int meLabInit(uint32_t entry)
         MistInjector injector = {13, entry | 0x80000000u};
         meKernelMistInjectSyscall(&injector);
         ready = 1;
+        ready_table = table;
+        ret = table;
     }
     pspSdkSetK1(k1);
     return ret;

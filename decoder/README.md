@@ -18,8 +18,9 @@ PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 ```c
 #include "psp_video.h"
 PspVideoOptions options = {
-    "ms0:/PSP/GAME/WiliMini/cache/video.mp4",
-    "ms0:/PSP/GAME/WiliMini", 0
+    .path = "ms0:/PSP/GAME/WiliMini/cache/video.mp4",
+    .log_root = "ms0:/PSP/GAME/WiliMini",
+    .backend = PSP_VIDEO_BACKEND_NATIVE_ME
 };
 PspVideoResult result;
 int error = psp_video_play(&options, &result);
@@ -28,14 +29,18 @@ int error = psp_video_play(&options, &result);
 在带 `PSP_THREAD_ATTR_VFPU` 的线程上同步调用。路径必须是可 seek 的本地 MP4；
 也可以设置 `PspVideoOptions.source`，由宿主提供随机读取、取消和大小回调，
 播放器会等待尚未到达的区间。路径或 source 二者必须提供其一。
-根目录必须存在。播放器独占 ME、音频 SRC 和视频帧缓冲。同一时刻仅允许一个实例。
+根目录必须存在。真机播放器独占 ME、音频 SRC 和视频帧缓冲。同一时刻仅允许一个实例。
 圆圈取消；HOME 退出由宿主注册回调并调用 `psp_video_stop()`。返回前会等待音频、
 RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后可再次调用。
 播放器不退出游戏、不连接网络、不管理 B 站或下载缓存。
 
 `PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
 客户端传入用户设置，新设置默认值由启动器选中的客户端决定。
+`PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
+默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`，只有启用
+`BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时才选择 `PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG`。
 RGB 队列使用一次对齐分配，在播放期间复用，等待显示线程和 ME 停止后才释放。
+音频先于视频 EOF 时，所有 PCM 提交后时钟继续推进，视频可播放至自身结尾。
 若 ME 停止超时，保留其仍可能访问的缓冲，并拒绝再次启动，避免释放后写入。
 
 客户端配置保留 VFPU_DSP=4、近似双线性 qpel、关闭去块滤波、丢弃非参考帧、
@@ -47,8 +52,17 @@ ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不�
 640×360 复用原专用缩放内核；其他尺寸等比缩放并留黑边。
 音频：AAC / HE-AAC，双声道，44.1 或 48 kHz；不提供重采样。
 其他编码、无音频、单声道等组合在本 demo 仍会报错。PSP-1000 尚未验证。
-ME 桥保留原固件表检测，拒绝不匹配的环境。
+ME 桥按固件标识选表，播放器同步选择自身的 FAT/T2 函数表。
+刷新 ME 时保留固件已有的启动跳转与 RAM 配置，不要求重启邮箱等于猜测地址。
 
 FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源及 MIT 许可见
 `me/LICENSE.MIST.txt` 和 `docs/references.lock.json`。已有实验日志保留，记录中的
 旧 app 源路径是历史路径。
+
+## PPSSPP
+
+默认与真机共用 FFmpeg 解码 + ME 转色路径，加载 ME bridge。需要支持真正 ME
+执行的 PPSSPP、启用 `EmulateMediaEngine`，并提供对应的 Sony ME 固件镜像。
+旧模拟器可显式构建 `-DBILI_PPSSPP_SCE_MPEG=ON` 使用保留的 sceMpeg 后端。
+详见 [模拟器后端与验证](../docs/ppsspp-player.md) 和
+[ME 兼容性分析](../docs/me-compatibility.md)。

@@ -102,6 +102,9 @@ static int me_render_start(void)
     me_late_frames = me_max_lateness_us = 0;
 #endif
     int ret = meLabInit((unsigned)me_task);
+    if (ret < 0) return ret;
+    meCoreSelectSystemTable(ret);
+    sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));
 #if PSP_AUDIO && PSP_RGB_PACE
     if (ret >= 0) ret = rgb_start();
 #endif
