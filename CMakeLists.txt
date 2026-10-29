@@ -262,7 +262,7 @@ foreach(client_target wili_mini wili_mini_1000)
         -Wl,--end-group
         pspge pspaudio pspdmac psppower
         pspnet_apctl pspnet_resolver pspnet_inet pspnet
-        psputility psprtc
+        psputility psprtc pspkubridge
         pspdebug pspdisplay pspge pspctrl)
     if(BILI_PPSSPP_SCE_MPEG)
         target_link_libraries(${client_target} PRIVATE pspmpeg)
