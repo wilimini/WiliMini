@@ -406,7 +406,9 @@ void App::refresh() {
             startJob(Job::SearchTopics);
         }
     } else {
-        status_ = root().tab == Tab::Search ? "按 × 输入搜索关键词" : "我的 · 历史与稍后观看";
+        status_ = root().tab == Tab::Search
+            ? "按 " + std::string(preferences_.confirmButton()) + " 输入搜索关键词"
+            : "我的 · 历史与稍后观看";
     }
 }
 
@@ -461,7 +463,7 @@ void App::setTab(Tab nextTab) {
     root().selection = list.empty() ? 0 : std::min(root().selection, list.size() - 1);
     if (list.empty()) {
         if (nextTab == Tab::Search)
-            status_ = "搜索 · 按 × 打开系统键盘";
+            status_ = "搜索 · 按 " + std::string(preferences_.confirmButton()) + " 打开系统键盘";
         else
             loadDefault();
     } else {
@@ -523,8 +525,9 @@ void App::moveSelection(int dx, int dy) {
     if (utilityPage()) {
         if (screen() == Screen::Settings) {
             auto &selected = navigation_.get<SettingsRoute>().selection;
-            if (dy) selected = static_cast<size_t>(std::max(0, std::min(8, static_cast<int>(selected) + dy)));
-            else if (dx && selected < 5) changeSetting();
+            if (dy) selected = static_cast<size_t>(std::max(0, std::min(
+                static_cast<int>(SettingItem::Count) - 1, static_cast<int>(selected) + dy)));
+            else if (dx && selected < static_cast<size_t>(SettingItem::Wifi)) changeSetting();
         } else if (screen() == Screen::Licenses && dy) {
             auto &selected = navigation_.get<LicensesRoute>().selection;
             selected = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1,
@@ -649,7 +652,7 @@ void App::activate() {
             root().searchLandingSelection = root().selection;
             root().searchView = SearchView::History;
             root().selection = 0;
-            status_ = "搜索历史 · × 搜索 · △ 删除当前项";
+            status_ = "搜索历史 · " + std::string(preferences_.confirmButton()) + " 搜索 · △ 删除当前项";
         } else if (root().selection >= 2 && root().selection - 2 < root().searchTopics.size()) {
             root().searchLandingSelection = root().selection;
             search(root().searchTopics[root().selection - 2].keyword);
@@ -660,7 +663,7 @@ void App::activate() {
     if (root().selection < list.size()) {
         startDetail(list[root().selection]);
     } else if (root().tab == Tab::Search) {
-        status_ = "按 × 打开系统键盘输入关键词";
+        status_ = "按 " + std::string(preferences_.confirmButton()) + " 打开系统键盘输入关键词";
     }
 }
 
@@ -1261,7 +1264,7 @@ void App::commitJob() {
         authView_ = std::move(stagedAuth_);
         authError_ = {};
         authPollAt_ = sceKernelGetSystemTimeWide() + 2000000;
-        status_ = authStateMessage(authView_.state);
+        status_ = authStateMessage(authView_.state, preferences_.confirmWithCircle);
         if (job_ == Job::AuthCheck && dismissLoginAfterCheck_ && authView_.state == AuthState::SignedIn && screen() == Screen::Login) {
             dismissLoginAfterCheck_ = false; job_ = Job::None; back(); return;
         }
@@ -1275,7 +1278,7 @@ void App::commitJob() {
             authView_.state = next;
         authError_ = {};
         authPollAt_ = sceKernelGetSystemTimeWide() + 2000000;
-        status_ = authStateMessage(authView_.state);
+        status_ = authStateMessage(authView_.state, preferences_.confirmWithCircle);
     } else if (job_ == Job::SearchTopics) {
         root().searchTopics = std::move(stagedSearchTopics_);
         status_ = root().searchTopics.empty() ? "暂无热搜 · □ 输入关键词" : "热搜已更新";
@@ -1318,7 +1321,7 @@ void App::commitJob() {
         detailState().part = 0;
         for (size_t i = 0; i < detailState().detail.pages.size(); ++i)
             if (detailState().detail.pages[i].cid == detailState().detail.card.cid) detailState().part = i;
-        status_ = "视频详情 · × 播放 · R 评论 · □ 稍后观看";
+        status_ = "视频详情 · " + std::string(preferences_.confirmButton()) + " 播放 · R 评论 · □ 稍后观看";
     } else if (job_ == Job::Comments) {
         if (jobCommentNext_ == 0) commentsState().items = std::move(stagedComments_);
         else commentsState().items.insert(commentsState().items.end(), stagedComments_.begin(), stagedComments_.end());

@@ -32,5 +32,5 @@ class AuthService {
     BilibiliApi &api_;
     SessionStore &sessions_;
 };
-const char *authStateMessage(AuthState state);
+const char *authStateMessage(AuthState state, bool confirmWithCircle = false);
 } // namespace pspapp

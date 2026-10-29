@@ -350,6 +350,8 @@ void drawFooter(const pspapp::App& app) {
     static std::string lastStatus;
     static uint64_t statusUntil = 0;
     const uint64_t nowTicks = sceKernelGetSystemTimeWide();
+    const std::string confirm = app.preferences().confirmButton();
+    const std::string back = app.preferences().backButton();
     if (lastStatus != app.status()) {
         lastStatus = app.status();
         statusUntil = nowTicks + 2000000;
@@ -357,46 +359,76 @@ void drawFooter(const pspapp::App& app) {
     fillRect(0, 258, kWidth, 14, kBackground);
     std::string hint;
     if (app.utilityPage()) {
-        if (app.screen() == pspapp::Screen::Settings) hint = "↑↓ 选择  ←→ 调整  × 打开  ○ 返回";
-        else if (app.screen() == pspapp::Screen::Storage) hint = app.clearingCovers() ? "× 确认清理封面  ○ 取消" : "× 清理封面  △ 刷新统计  ○ 返回";
-        else if (app.screen() == pspapp::Screen::Licenses) hint = "↑↓ 选择许可  × 阅读  ○ 返回";
-        else if (app.screen() == pspapp::Screen::LicenseText) hint = "↑↓ 滚动全文  ○ 返回许可列表";
-        else if (app.screen() == pspapp::Screen::About) hint = "× 开源许可  ○ 返回";
-        else hint = "○ 返回设置";
+        if (app.screen() == pspapp::Screen::Settings)
+            hint = "↑↓ 选择  ←→ 调整  " + confirm + " 打开  " + back + " 返回";
+        else if (app.screen() == pspapp::Screen::Storage)
+            hint = app.clearingCovers() ? confirm + " 确认清理封面  " + back + " 取消"
+                                        : confirm + " 清理封面  △ 刷新统计  " + back + " 返回";
+        else if (app.screen() == pspapp::Screen::Licenses)
+            hint = "↑↓ 选择许可  " + confirm + " 阅读  " + back + " 返回";
+        else if (app.screen() == pspapp::Screen::LicenseText)
+            hint = "↑↓ 滚动全文  " + back + " 返回许可列表";
+        else if (app.screen() == pspapp::Screen::About)
+            hint = confirm + " 开源许可  " + back + " 返回";
+        else hint = back + " 返回设置";
     } else if (app.screen() == pspapp::Screen::Login) {
-        hint = "○ 返回   △ 重试 / 刷新   SELECT 网络";
+        hint = back + " 返回   △ 重试 / 刷新   SELECT 网络";
     } else if (app.busy()) {
         const char *progress = network_progress_message();
-        hint = std::string(progress[0] ? progress : app.status()) + " · ○ 取消并返回";
+        hint = std::string(progress[0] ? progress : app.status()) + " · " + back + " 取消并返回";
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
-        hint = "↑↓ 选择分区   × 进入   → 返回内容";
+        hint = "↑↓ 选择分区   " + confirm + " 进入   → 返回内容";
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
         hint = "←→ 切换分类   ↓ 返回内容";
     } else if (app.screen() == pspapp::Screen::Detail && !app.detailReady()) {
-        hint = "△ 重试详情  ○ 返回";
+        hint = "△ 重试详情  " + back + " 返回";
     } else if (app.screen() == pspapp::Screen::Detail) {
-        hint = std::string(app.detailStartMs() > 0 ? "× 续播" : "× 播放") + "  R 评论  L 收藏/云端  □ 本地稍后  ○ 返回";
+        hint = confirm + (app.detailStartMs() > 0 ? " 续播" : " 播放") +
+               "  R 评论  L 收藏/云端  □ 本地稍后  " + back + " 返回";
     } else if (app.screen() == pspapp::Screen::Browse) {
-        const auto& page=app.browsePage();
-        if(app.atTabRoot())hint="↑↓ 选择  × 打开  L/R 切换标签  ○ 首页";
-        else if(page.request.kind==pspapp::BrowseKind::Text)hint="↑↓ 滚动全文  ○ 返回";
-        else if(page.request.kind==pspapp::BrowseKind::Image)hint="○ 返回动态";
-        else if(pspapp::isPgcPosterPage(page.request.kind))hint="方向键选择  × 详情  R 更多  ○ 返回";
-        else if(page.request.kind==pspapp::BrowseKind::Season)hint="↑↓ 选择  ← 分集 → 简介  × 打开  □ 追番  ○ 返回";
-        else if(page.request.kind==pspapp::BrowseKind::Space)hint=page.followed?"↑↓ 选择  × 打开  □ 取消关注  ○ 返回":"↑↓ 选择  × 打开  □ 关注  ○ 返回";
-        else if(page.request.kind==pspapp::BrowseKind::DynamicDetail)hint=page.followed?"↑↓ 选择  × 打开  □ 取消点赞  ○ 返回":"↑↓ 选择  × 打开  □ 点赞  ○ 返回";
-        else if(page.request.kind==pspapp::BrowseKind::Conversation||page.request.kind==pspapp::BrowseKind::Comments||page.request.kind==pspapp::BrowseKind::Replies)hint="↑↓ 选择  × 打开  □ 撰写  R 更多  ○ 返回";
-        else hint = "↑↓ 选择  × 打开  △ 刷新  R 更多  ○ 返回";
+        const auto& page = app.browsePage();
+        if (app.atTabRoot()) {
+            hint = "↑↓ 选择  " + confirm + " 打开  L/R 切换标签  " + back + " 首页";
+        } else if (page.request.kind == pspapp::BrowseKind::Text) {
+            hint = "↑↓ 滚动全文  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::Image) {
+            hint = back + " 返回动态";
+        } else if (pspapp::isPgcPosterPage(page.request.kind)) {
+            hint = "方向键选择  " + confirm + " 详情  R 更多  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::Season) {
+            hint = "↑↓ 选择  ← 分集 → 简介  " + confirm + " 打开  □ 追番  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::Space) {
+            hint = page.followed ? "↑↓ 选择  " + confirm + " 打开  □ 取消关注  " + back + " 返回"
+                                : "↑↓ 选择  " + confirm + " 打开  □ 关注  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::DynamicDetail) {
+            hint = page.followed ? "↑↓ 选择  " + confirm + " 打开  □ 取消点赞  " + back + " 返回"
+                                : "↑↓ 选择  " + confirm + " 打开  □ 点赞  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::ChooseCollection) {
+            const bool removesCollection = !page.items.empty() &&
+                app.browseSelection() < page.items.size() && page.items[app.browseSelection()].duration;
+            hint = "↑↓ 选择  " + confirm + (removesCollection ? " 移除收藏" : " 加入收藏") +
+                   "  " + back + " 返回";
+        } else if (page.request.kind == pspapp::BrowseKind::Conversation ||
+                   page.request.kind == pspapp::BrowseKind::Comments ||
+                   page.request.kind == pspapp::BrowseKind::Replies) {
+            hint = "↑↓ 选择  " + confirm + " 打开  □ 撰写  R 更多  " + back + " 返回";
+        } else {
+            hint = "↑↓ 选择  " + confirm + " 打开  △ 刷新  R 更多  " + back + " 返回";
+        }
     } else if (app.screen() == pspapp::Screen::Comments) {
-        hint = "↑↓ 滚动  ←→ 选评论  × 操作  □ 写评论  R 更多";
+        hint = "↑↓ 滚动  ←→ 选评论  " + confirm + " 操作  □ 写评论  R 更多";
     } else if (app.tab() == pspapp::Tab::Search) {
-        hint = app.searchView() == pspapp::SearchView::History ? "↑↓ 选择  × 搜索  △ 删除  □ 输入  ○ 返回" :
-               app.searchView() == pspapp::SearchView::Landing ? "↑↓ 选择  × 确认  □ 输入  △ 刷新热搜  ○ 返回" :
-               "↑↓ 选择  × 打开  □ 修改关键词  △ 重试  ○ 返回";
+        if (app.searchView() == pspapp::SearchView::History) {
+            hint = "↑↓ 选择  " + confirm + " 搜索  △ 删除  □ 输入  " + back + " 返回";
+        } else if (app.searchView() == pspapp::SearchView::Landing) {
+            hint = "↑↓ 选择  " + confirm + " 确认  □ 输入  △ 刷新热搜  " + back + " 返回";
+        } else {
+            hint = "↑↓ 选择  " + confirm + " 打开  □ 修改关键词  △ 重试  " + back + " 返回";
+        }
     } else if (app.tab() == pspapp::Tab::Mine) {
-        hint = "↑↓ 选择  × 打开  □ 云端内容  ○ 返回";
+        hint = "↑↓ 选择  " + confirm + " 打开  □ 云端内容  " + back + " 返回";
     } else {
-        hint = "方向键选择  × 打开  □ 搜索  L/R 分类";
+        hint = "方向键选择  " + confirm + " 打开  □ 搜索  L/R 分类";
     }
     if (app.screen() != pspapp::Screen::Login && !app.clearingCovers() && !app.busy() &&
         (nowTicks < statusUntil ||
@@ -423,8 +455,9 @@ void drawCardGrid(const pspapp::App& app) {
     const auto& cards = app.cards();
     if (cards.empty()) {
         if (app.tab() == pspapp::Tab::Search) {
-            drawEmpty(app.query().empty() ? "搜索 Bilibili" : "没有找到相关视频",
-                      app.query().empty() ? "按 × 打开系统键盘，支持中文输入" : "按 × 修改关键词");
+        drawEmpty(app.query().empty() ? "搜索 Bilibili" : "没有找到相关视频",
+                      app.query().empty() ? "按 " + std::string(app.preferences().confirmButton()) + " 打开系统键盘，支持中文输入"
+                                          : "按 " + std::string(app.preferences().confirmButton()) + " 修改关键词");
             if (!app.searchHistory().empty()) {
                 drawText(62, 183, 0.45f, kTextDim, "最近搜索", 250);
                 std::string history;
@@ -493,7 +526,7 @@ void drawDetail(const pspapp::App& app) {
     std::string stats = formatCount(detail.card.views) + " 播放  ·  " + formatCount(detail.danmaku) + " 弹幕";
     drawText(151, 92, 0.5f, kTextDim, stats, 317);
 
-    drawText(12, 113, 0.5f, kPink, "× 播放", 74);
+    drawText(12, 113, 0.5f, kPink, std::string(app.preferences().confirmButton()) + " 播放", 74);
     drawText(86, 113, 0.5f, kTextDim, "R 评论", 74);
     drawText(158, 113, 0.5f, app.currentIsLater() ? kPink : kTextDim,
              app.currentIsLater() ? "□ 已稍后" : "□ 稍后", 90);
@@ -530,7 +563,8 @@ void drawMine(const pspapp::App& app) {
     drawText(39, 31, 0.7f, selected ? kPink : kText,
              signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
              428);
-    drawText(39, 52, 0.5f, kTextDim, pspapp::authStateMessage(auth.state), 428);
+    drawText(39, 52, 0.5f, kTextDim,
+             pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 428);
     fillRect(39, 77, 428, 1, kLine);
     drawText(39, 83, 0.5f, kTextDim, "观看历史 / 稍后观看 · 本地记录", 428);
     const size_t total = app.history().size() + app.later().size();
@@ -569,9 +603,11 @@ void drawLogin(const pspapp::App &app) {
     if (signedIn) {
         drawText(28, 68, 0.83f, kText, auth.name.empty() ? "Bilibili 账号" : auth.name, 424);
         drawText(28, 102, 0.7f, kTextDim, "UID " + auth.mid, 424);
-        drawText(28, 136, 0.7f, kPink, pspapp::authStateMessage(auth.state), 424);
+        drawText(28, 136, 0.7f, kPink,
+                 pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 424);
         drawText(28, 198, 0.5f, kTextDim, "观看历史与稍后观看仍保存在本机", 424);
-        drawText(28, 224, 0.5f, kTextDim, "□ 退出本机账号    △ 检查登录状态    ○ 返回", 424);
+        drawText(28, 224, 0.5f, kTextDim,
+                 "□ 退出本机账号    △ 检查登录状态    " + std::string(app.preferences().backButton()) + " 返回", 424);
     } else {
         if (auth.qrSize > 0 && !auth.qr.empty() && auth.state != AuthState::QrExpired) {
             const int scale = std::min(3, 176 / (auth.qrSize + 8));
@@ -587,10 +623,12 @@ void drawLogin(const pspapp::App &app) {
             drawWrapped(36, 112, 0.7f, kTextDim,
                         app.busy() ? "正在获取二维码…" : "△ 获取新的二维码", 168, 3, 22);
         }
-        drawWrapped(234, 64, 0.7f, kText, pspapp::authStateMessage(auth.state), 218, 3, 23);
+        drawWrapped(234, 64, 0.7f, kText,
+                    pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 218, 3, 23);
         if (!app.authError())
             drawWrapped(234, 158, 0.5f, kTextDim, "手机扫码并确认后，将保存登录状态。", 218, 3, 18);
-        drawText(234, 224, 0.5f, kPink, "△ 刷新    ○ 返回", 218);
+        drawText(234, 224, 0.5f, kPink,
+                 "△ 刷新    " + std::string(app.preferences().backButton()) + " 返回", 218);
     }
     if (app.authError())
         drawWrapped(signedIn ? 28 : 234, signedIn ? 158 : 141, 0.5f, kPink,
@@ -610,7 +648,8 @@ void drawSearch(const pspapp::App& app) {
         const auto& history = app.searchHistory();
         if (history.empty()) {
             drawText(39, 80, 0.7f, kText, "还没有搜索历史", 428);
-            drawText(39, 105, 0.5f, kTextDim, "□ 输入关键词，或 ○ 返回查看热搜", 428);
+            drawText(39, 105, 0.5f, kTextDim,
+                     "□ 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 428);
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i) {
             const int y = 54 + static_cast<int>(i) * 24;
@@ -619,7 +658,8 @@ void drawSearch(const pspapp::App& app) {
         return;
     }
     if (app.searchView() == SearchView::Landing) {
-        drawText(39, 34, 0.7f, mark(0, 34, 15), "搜索视频 · 按 × 输入关键词", 428);
+        drawText(39, 34, 0.7f, mark(0, 34, 15),
+                 "搜索视频 · 按 " + std::string(app.preferences().confirmButton()) + " 输入关键词", 428);
         fillRect(39, 56, 428, 1, kLine);
         drawText(39, 64, 0.5f, kTextDim, "历史", 48);
         std::string preview;
@@ -627,7 +667,8 @@ void drawSearch(const pspapp::App& app) {
             if (!preview.empty()) preview += "  ·  ";
             preview += app.searchHistory()[i];
         }
-        drawText(95, 63, 0.7f, mark(1, 63, 15), preview.empty() ? "暂无记录 · × 查看" : preview, 372);
+        drawText(95, 63, 0.7f, mark(1, 63, 15),
+                 preview.empty() ? "暂无记录 · " + std::string(app.preferences().confirmButton()) + " 查看" : preview, 372);
         drawText(39, 95, 0.5f, kPink, "热搜", 80);
         const auto& topics = app.searchTopics();
         if (topics.empty()) {
@@ -655,7 +696,9 @@ void drawSearch(const pspapp::App& app) {
     if (cards.empty()) {
         drawText(39, 91, 0.7f, kText, app.busy() ? "正在搜索…" :
                  app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 428);
-        drawWrapped(39, 117, 0.5f, kTextDim, app.searchError().empty() ? "□ 修改关键词，○ 返回搜索" : app.searchError(), 428, 3, 16);
+        drawWrapped(39, 117, 0.5f, kTextDim,
+                    app.searchError().empty() ? "□ 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索" : app.searchError(),
+                    428, 3, 16);
         return;
     }
     const size_t first = app.selection() > 2 ? app.selection() - 2 : 0;
@@ -674,16 +717,17 @@ void drawUtility(const pspapp::App& app) {
     using pspapp::Screen;
     if (app.screen() == Screen::Settings) {
         drawText(39, 31, 0.5f, kTextDim, "界面与操作 · 修改后自动保存", 428);
-        const char* labels[] = {"主题", "正文字号", "封面加载", "按键连发", "播放缓冲", "Wi-Fi", "封面缓存", "按键帮助", "关于与开源许可"};
+        const char* labels[] = {"主题", "正文字号", "封面加载", "按键连发", "播放缓冲", "确认键", "Wi-Fi", "封面缓存", "按键帮助", "关于与开源许可"};
         const auto& preferences = app.preferences();
         const std::string values[] = {preferences.darkTheme ? "深色" : "浅色",
             std::to_string(preferences.bodySize) + " px", preferences.showCovers ? "按需加载" : "关闭",
             preferences.slowRepeat ? "慢速" : "标准",
             std::to_string(preferences.playbackBufferFrames) + " 帧 / " +
                 std::to_string(preferences.playbackBufferFrames * 544) + "K",
+            preferences.confirmWithCircle ? "○ 确认" : "× 确认",
             "系统连接 ›", "管理 ›", "查看 ›", "查看 ›"};
-        for (size_t i = 0; i < 9; ++i) {
-            const int y = 51 + static_cast<int>(i) * 21;
+        for (size_t i = 0; i < static_cast<size_t>(pspapp::SettingItem::Count); ++i) {
+            const int y = 49 + static_cast<int>(i) * 20;
             if (app.settingSelection() == i) fillRect(33, y + 3, 2, 16, kPink);
             drawText(39, y, 0.7f, kText, labels[i], 280);
             drawText(330, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 138);
@@ -700,25 +744,31 @@ void drawUtility(const pspapp::App& app) {
         drawWrapped(39, 135, 0.7f, kText, "清理封面后，联网浏览视频时会按需重新下载。", 428, 2, 18);
         drawText(39, 185, 0.5f, kTextDim, "登录、观看历史、稍后观看与列表数据会保留。", 428);
         if (app.clearingCovers())
-            drawText(39, 215, 0.7f, kPink, "再次按 × 确认清理，○ 取消", 428);
+            drawText(39, 215, 0.7f, kPink,
+                     "再次按 " + std::string(app.preferences().confirmButton()) + " 确认清理，" +
+                         app.preferences().backButton() + " 取消", 428);
     } else if (app.screen() == Screen::Help) {
         const char* labels[] = {"通用", "侧栏", "首页", "搜索", "我的", "详情", "评论"};
-        const char* text[] = {"× 确认，○ 逐层返回", "内容最左侧按 ←，↑↓ 选入口", "2×2 网格，↓ 滚动，L/R 分类", "□ 输入，△ 刷新或删除历史", "× 打开账号或本地记录", "↑↓ 分P，□ 稍后观看，R 评论", "↑↓ 滚动全文，R 继续加载"};
+        const std::string text[] = {std::string(app.preferences().confirmButton()) + " 确认，" +
+                app.preferences().backButton() + " 逐层返回", "内容最左侧按 ←，↑↓ 选入口",
+            "2×2 网格，↓ 滚动，L/R 分类", "□ 输入，△ 刷新或删除历史",
+            std::string(app.preferences().confirmButton()) + " 打开账号或本地记录",
+            "↑↓ 分P，□ 稍后观看，R 评论", "↑↓ 滚动全文，R 继续加载"};
         for (int i = 0; i < 7; ++i) {
             const int y = 39 + i * 29;
             drawText(39, y + 2, 0.5f, kTextDim, labels[i], 68);
             drawText(112, y, 0.7f, kText, text[i], 356);
         }
     } else if (app.screen() == Screen::About) {
-        static const std::string version = app.buildVersion();
         drawText(39, 39, 0.9f, kText, "WiliMini", 428);
-        drawText(39, 66, 0.5f, kTextDim, version, 428);
+        drawText(39, 66, 0.5f, kTextDim, app.buildVersion(), 428);
         drawText(39, 99, 0.7f, kText, "为 PSP 的 480×272 屏幕设计", 428);
         drawText(39, 127, 0.7f, kText, "界面与素材参考 Wiliwili", 428);
         drawText(39, 155, 0.5f, kTextDim, "中文：文泉驿微米黑 · 原生 12 / 14 / 16 px 位图", 428);
         fillRect(39, 188, 428, 1, kLine);
         fillRect(33, 209, 2, 16, kPink);
-        drawText(39, 206, 0.7f, kPink, "开源许可 · × 阅读随包全文", 428);
+        drawText(39, 206, 0.7f, kPink,
+                 "开源许可 · " + std::string(app.preferences().confirmButton()) + " 阅读随包全文", 428);
     } else if (app.screen() == Screen::Licenses) {
         drawText(39, 31, 0.5f, kTextDim, "依赖、字体和素材的许可证", 428);
         for (size_t i = 0; i < pspapp::settingsLicenseCount; ++i) {
@@ -774,7 +824,8 @@ void drawPgcPosters(const pspapp::App& app) {
         std::to_string(std::min(first + 1, page.items.size())) + "–" +
         std::to_string(std::min(first + 4, page.items.size())) + " / " + std::to_string(page.items.size()), 104);
     if (first >= page.items.size()) {
-        drawText(12, 105, 0.7f, kPink, "× 加载下一页", 456);
+        drawText(12, 105, 0.7f, kPink,
+                 std::string(app.preferences().confirmButton()) + " 加载下一页", 456);
         return;
     }
     for (size_t i = first; i < std::min(first + 4, page.items.size()); ++i) {
@@ -857,7 +908,8 @@ void drawBrowse(const pspapp::App& app) {
             imageKey=page.description;imagePixels.clear();
             loadJpeg(std::string(CLIENT_ROOT)+"/cache/"+imageKey+".jpg",imagePixels,&width,&height);
         }
-        if(imagePixels.empty())drawText(12,90,0.7f,kTextDim,"图片加载失败 · ○ 返回动态",456);
+        if(imagePixels.empty())drawText(12,90,0.7f,kTextDim,
+            "图片加载失败 · " + std::string(app.preferences().backButton()) + " 返回动态",456);
         else {
             const int x=(480-width)/2,y=32+(215-height)/2;
             for(int row=0;row<height;++row)std::copy(imagePixels.begin()+row*width,imagePixels.begin()+(row+1)*width,framebuffer()+(y+row)*512+x);
@@ -884,7 +936,7 @@ void drawBrowse(const pspapp::App& app) {
     }
     if (page.items.empty()) {
         drawText(12, top + 27, 0.7f, kTextDim, app.busy() ? "正在载入…" :
-            app.browseError() ? "× 登录 / △ 重试" : "暂无内容", 456);
+            app.browseError() ? std::string(app.preferences().confirmButton()) + " 登录 / △ 重试" : "暂无内容", 456);
         return;
     }
     const size_t total = page.items.size() + (page.hasMore ? 1 : 0);
@@ -914,7 +966,7 @@ void drawComments(const pspapp::App& app) {
     drawText(75, 30, 0.5f, kTextDim, app.detail().card.title, 390);
     const auto& comments = app.comments();
     if (comments.empty()) {
-        drawEmpty("评论区为空", "○ 返回视频详情");
+        drawEmpty("评论区为空", std::string(app.preferences().backButton()) + " 返回视频详情");
         return;
     }
     int y = 52 - app.commentScroll();

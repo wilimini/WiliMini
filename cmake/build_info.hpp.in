@@ -1,0 +1,5 @@
+#pragma once
+
+namespace pspapp {
+inline constexpr char buildVersion[] = "@BILI_BUILD_VERSION@";
+} // namespace pspapp

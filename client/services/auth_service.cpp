@@ -8,7 +8,7 @@ using namespace bilibili;
 static AppError invalid(ErrorOperation op) {
     return {ErrorDomain::Auth, ErrorKind::InvalidResponse, op};
 }
-const char *authStateMessage(AuthState state) {
+const char *authStateMessage(AuthState state, bool confirmWithCircle) {
     switch (state) {
     case AuthState::Restored:
         return "已恢复账号 · 等待联网验证";
@@ -21,9 +21,9 @@ const char *authStateMessage(AuthState state) {
     case AuthState::SignedIn:
         return "已登录";
     case AuthState::SessionExpired:
-        return "登录已失效 · × 重新扫码";
+        return confirmWithCircle ? "登录已失效 · ○ 重新扫码" : "登录已失效 · × 重新扫码";
     default:
-        return "未登录 · × 扫码登录";
+        return confirmWithCircle ? "未登录 · ○ 扫码登录" : "未登录 · × 扫码登录";
     }
 }
 Result<AuthView> AuthService::restore() {

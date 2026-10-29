@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
         pspapp::logError(CLIENT_PATH("/last-error.txt"), initError);
     }
     if (net >= 0 && !network_ready() && !network_has_profile()) {
-        app.setStatus("请选择 Wi-Fi 连接 · ○ 返回离线首页");
+        app.setStatus("请选择 Wi-Fi 连接 · " + std::string(app.preferences().backButton()) + " 返回离线首页");
         ui_render(app);
         networkDialog();
     }
@@ -179,6 +179,8 @@ int main(int argc, char** argv) {
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
             options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
+            options.cancel_button = app.preferences().confirmWithCircle
+                ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
             options.backend = BILI_PPSSPP_SCE_MPEG &&
                               psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
@@ -202,17 +204,21 @@ int main(int argc, char** argv) {
             repeatAt = now + (app.preferences().slowRepeat ? 500000 : 350000);
         } else if (direction && now >= repeatAt) {
             // Repeat navigation only; held confirm/back must never activate twice.
-            const bool adjustingSetting = app.screen() == pspapp::Screen::Settings && app.settingSelection() < 5;
+            const bool adjustingSetting = app.screen() == pspapp::Screen::Settings &&
+                app.settingSelection() < static_cast<size_t>(pspapp::SettingItem::Wifi);
             pressed |= adjustingSetting ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
             repeatAt = now + (app.preferences().slowRepeat ? 180000 : 90000);
         }
         previous = pad.Buttons;
+        const unsigned confirmButton = app.preferences().confirmWithCircle ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
+        const unsigned backButton = app.preferences().confirmWithCircle ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
 
         if (app.utilityPage() && !app.busy()) {
             if (pressed & PSP_CTRL_START) break;
-            if (pressed & PSP_CTRL_CIRCLE) app.back();
-            else if (pressed & PSP_CTRL_CROSS) {
-                if (app.screen() == pspapp::Screen::Settings && app.settingSelection() == 5) {
+            if (pressed & backButton) app.back();
+            else if (pressed & confirmButton) {
+                if (app.screen() == pspapp::Screen::Settings &&
+                    app.settingSelection() == static_cast<size_t>(pspapp::SettingItem::Wifi)) {
                     networkDialog();
                     app.setStatus(network_ready() ? "Wi-Fi 已连接" : "已返回 · 未连接 Wi-Fi");
                     previous = ~0u;
@@ -230,12 +236,12 @@ int main(int argc, char** argv) {
         } else if (app.screen() == pspapp::Screen::Login) {
             if (pressed & PSP_CTRL_START)
                 break;
-            if (pressed & PSP_CTRL_CIRCLE)
+            if (pressed & backButton)
                 app.back();
             else if (pressed & PSP_CTRL_TRIANGLE)
                 app.refreshLogin();
             else if (!app.busy()) {
-                if (pressed & PSP_CTRL_CROSS)
+                if (pressed & confirmButton)
                     app.refreshLogin();
                 else if ((pressed & PSP_CTRL_SQUARE) &&
                          (app.auth().state == pspapp::AuthState::SignedIn ||
@@ -248,7 +254,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (app.busy()) {
-            if (pressed & PSP_CTRL_CIRCLE) app.back();
+            if (pressed & backButton) app.back();
             else if (pressed & PSP_CTRL_RTRIGGER) {
                 app.shoulder(1);
             }
@@ -258,8 +264,8 @@ int main(int argc, char** argv) {
             if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
             else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);
             else if (app.screen() == pspapp::Screen::Browse) {
-                if (pressed & PSP_CTRL_CIRCLE) app.back();
-                else if (pressed & PSP_CTRL_CROSS) app.activate();
+                if (pressed & backButton) app.back();
+                else if (pressed & confirmButton) app.activate();
                 else if (pressed & PSP_CTRL_TRIANGLE) app.browseRefresh();
                 else if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
                 else if (pressed & PSP_CTRL_LEFT) app.browseMove(-1, 0);
@@ -267,8 +273,8 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_UP) ui_scroll_browse(app, -1);
                 else if (pressed & PSP_CTRL_DOWN) ui_scroll_browse(app, 1);
             } else if (app.screen() == pspapp::Screen::Detail) {
-                if (pressed & PSP_CTRL_CIRCLE) app.back();
-                else if (pressed & PSP_CTRL_CROSS) app.requestPlayback();
+                if (pressed & backButton) app.back();
+                else if (pressed & confirmButton) app.requestPlayback();
                 else if (pressed & PSP_CTRL_SQUARE) app.toggleLater();
                 else if (pressed & PSP_CTRL_TRIANGLE) {
                     if (!app.detailReady()) app.retry();
@@ -278,8 +284,8 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
             } else if (app.screen() == pspapp::Screen::Comments) {
-                if (pressed & PSP_CTRL_CIRCLE) app.back();
-                else if (pressed & PSP_CTRL_CROSS) app.commentActions();
+                if (pressed & backButton) app.back();
+                else if (pressed & confirmButton) app.commentActions();
                 else if (pressed & PSP_CTRL_SQUARE) app.beginComment();
                 else if (pressed & PSP_CTRL_LEFT) ui_select_comment(app, -1);
                 else if (pressed & PSP_CTRL_RIGHT) ui_select_comment(app, 1);
@@ -287,14 +293,14 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_DOWN) ui_scroll_comments(app, 1);
             } else if (app.screen() == pspapp::Screen::Mine) {
                 if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
-                else if (pressed & PSP_CTRL_CIRCLE) app.back();
-                else if (pressed & PSP_CTRL_CROSS) app.activate();
+                else if (pressed & backButton) app.back();
+                else if (pressed & confirmButton) app.activate();
                 else if (pressed & PSP_CTRL_UP) app.moveSelection(0, -1);
                 else if (pressed & PSP_CTRL_DOWN) app.moveSelection(0, 1);
                 else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
             } else {
-                if (pressed & PSP_CTRL_CROSS) {
+                if (pressed & confirmButton) {
                     if (app.searchInputSelected()) {
                         const std::string keyword = ui_input_text("搜索 Bilibili", app.query());
                         if (!keyword.empty()) app.search(keyword);
@@ -302,7 +308,7 @@ int main(int argc, char** argv) {
                     } else {
                         app.activate();
                     }
-                } else if (pressed & PSP_CTRL_CIRCLE) {
+                } else if (pressed & backButton) {
                     app.back();
                 } else if (pressed & PSP_CTRL_SQUARE) {
                     const std::string keyword = ui_input_text("搜索 Bilibili", app.query());

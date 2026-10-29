@@ -40,6 +40,20 @@ set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
 
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY "${ROOT}"
+    OUTPUT_VARIABLE BILI_BUILD_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE BILI_GIT_DESCRIBE_RESULT)
+if(NOT BILI_GIT_DESCRIBE_RESULT EQUAL 0 OR NOT BILI_BUILD_VERSION)
+    set(BILI_BUILD_VERSION "local")
+endif()
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+configure_file("${ROOT}/cmake/build_info.hpp.in"
+    "${CMAKE_BINARY_DIR}/generated/build_info.hpp" @ONLY)
+
 include("${ROOT}/cmake/BuildDependencies.cmake")
 
 if(BILI_BUILD_CLIENT)
@@ -200,6 +214,7 @@ add_library(wili_client_objects OBJECT
     client/psp_dns.c
     client/dns_packet.c)
 set(CLIENT_INCLUDE_DIRS
+    "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/decoder/include"
     "${ROOT}/platform/include"
     "${ROOT}/third_party/nlohmann"

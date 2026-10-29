@@ -30,7 +30,8 @@ int error = psp_video_play(&options, &result);
 也可以设置 `PspVideoOptions.source`，由宿主提供随机读取、取消和大小回调，
 播放器会等待尚未到达的区间。路径或 source 二者必须提供其一。
 根目录必须存在。真机播放器独占 ME、音频 SRC 和视频帧缓冲。同一时刻仅允许一个实例。
-圆圈取消；HOME 退出由宿主注册回调并调用 `psp_video_stop()`。返回前会等待音频、
+`PspVideoOptions.cancel_button` 控制取消键，零值默认为圆圈；客户端会传入设置中的返回键。
+HOME 退出由宿主注册回调并调用 `psp_video_stop()`。返回前会等待音频、
 RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后可再次调用。
 播放器不退出游戏、不连接网络、不管理 B 站或下载缓存。
 

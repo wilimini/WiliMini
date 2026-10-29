@@ -43,6 +43,7 @@ static const char *video_log_root = ".";
 static const PspVideoSource *video_io_source;
 static const PspVideoSource *audio_io_source;
 static int client_playback;
+static unsigned cancel_button = PSP_CTRL_CIRCLE;
 static int64_t playback_start_ms, playback_position_us, video_origin_us;
 static int64_t first_video_us;
 static PspVideoStage video_stage;
@@ -66,7 +67,7 @@ static int video_cancel_thread(SceSize size, void *arg) {
     while (poll_controller && !quit_requested) {
         SceCtrlData pad = {0};
         sceCtrlPeekBufferPositive(&pad, 1);
-        if (pad.Buttons & PSP_CTRL_CIRCLE) psp_video_stop();
+        if (pad.Buttons & cancel_button) psp_video_stop();
         sceKernelDelayThreadCB(10000);
     }
     return 0;
@@ -1036,11 +1037,14 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     if (!options || !options->log_root || (!options->source && !options->path) ||
         (options->rgb_buffer_frames != 0 && options->rgb_buffer_frames != 2 &&
          options->rgb_buffer_frames != 4 && options->rgb_buffer_frames != 8) ||
+        (options->cancel_button != PSP_VIDEO_CANCEL_CIRCLE &&
+         options->cancel_button != PSP_VIDEO_CANCEL_CROSS) ||
         (options->path && strlen(options->path)>1017) ||
         (options->source && (!options->source->read_at || (options->source->size==0 || options->source->size < -1))) ||
         (options->audio_source && (!options->audio_source->read_at || (options->audio_source->size==0 || options->audio_source->size < -1)))) return -1;
     video_io_source=options->source;
     audio_io_source=options->audio_source;
+    cancel_button = options->cancel_button == PSP_VIDEO_CANCEL_CROSS ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
     playback_start_ms = options->start_ms > 0 ? options->start_ms : 0;
     playback_position_us = 0;
     first_video_us = -1;

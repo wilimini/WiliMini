@@ -187,7 +187,8 @@ void App::browseActivate() {
     else {
       if (!browseState().confirmingDelete) {
         browseState().confirmingDelete = true;
-        status_ = "再次按 × 删除这条评论，○ 取消";
+        status_ = "再次按 " + std::string(preferences_.confirmButton()) + " 删除这条评论，" +
+                  preferences_.backButton() + " 取消";
         return;
       }
       CommunityWrite w;

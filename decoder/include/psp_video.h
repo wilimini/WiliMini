@@ -9,6 +9,10 @@ typedef enum {
     PSP_VIDEO_BACKEND_NATIVE_ME = 0,
     PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG = 1
 } PspVideoBackend;
+typedef enum {
+    PSP_VIDEO_CANCEL_CIRCLE = 0,
+    PSP_VIDEO_CANCEL_CROSS = 1
+} PspVideoCancelButton;
 typedef struct {
     void *opaque;
     int64_t size; /* -1 denotes a live, non-seekable source. */
@@ -30,6 +34,7 @@ typedef struct {
     int64_t start_ms; /* VOD resume position; live sources must start at zero. */
     int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
     PspVideoBackend backend;
+    PspVideoCancelButton cancel_button; /* 0 keeps Circle as the default. */
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

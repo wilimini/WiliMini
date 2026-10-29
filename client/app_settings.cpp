@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "build_info.hpp"
 #include "settings_pages.hpp"
 #include <algorithm>
 #include <cctype>
@@ -36,26 +37,31 @@ void App::openSettings() {
     if (busy()) return;
     navigation_.push<SettingsRoute>();
     navigation_.current().focus = FocusArea::Content;
-    status_ = "设置 · ←→ 调整 · × 打开";
+    status_ = "设置 · ←→ 调整 · " + std::string(preferences_.confirmButton()) + " 打开";
 }
 
 void App::changeSetting() {
-    if (screen() != Screen::Settings || navigation_.get<SettingsRoute>().selection > 4) return;
+    if (screen() != Screen::Settings || navigation_.get<SettingsRoute>().selection >=
+            static_cast<size_t>(SettingItem::Wifi)) return;
     Preferences next = preferences_;
-    switch (navigation_.get<SettingsRoute>().selection) {
-        case 0: next.darkTheme = !next.darkTheme; break;
-        case 1: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
-        case 2: next.showCovers = !next.showCovers; break;
-        case 3: next.slowRepeat = !next.slowRepeat; break;
-        case 4: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
+    switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
+        case SettingItem::DarkTheme: next.darkTheme = !next.darkTheme; break;
+        case SettingItem::BodySize: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
+        case SettingItem::ShowCovers: next.showCovers = !next.showCovers; break;
+        case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
+        case SettingItem::PlaybackBufferFrames: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
+        case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
+        default: return;
     }
     if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
         status_ = "设置保存失败 · 请检查记忆棒空间";
         return;
     }
     preferences_ = next;
-    status_ = navigation_.get<SettingsRoute>().selection == 4 ? "已保存 · 下次播放生效 · 小缓冲更省内存" : "已保存 · 立即生效";
+    status_ = navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)
+                  ? "已保存 · 下次播放生效 · 小缓冲更省内存"
+                  : "已保存 · 立即生效";
 }
 
 void App::updateStorage() {
@@ -77,21 +83,18 @@ void App::updateStorage() {
 }
 
 std::string App::buildVersion() const {
-    const auto text = readSettingsText(CLIENT_PATH("/build.json"), 1024 * 1024);
-    try {
-        return nlohmann::json::parse(text).value("build", "本地构建");
-    } catch (...) { return "本地构建 · 无版本记录"; }
+    return pspapp::buildVersion;
 }
 
 // Called by App::activate for the utility pages, without changing list selection.
 void App::activateUtility() {
     if (screen() == Screen::Settings) {
-        if (navigation_.get<SettingsRoute>().selection < 5) changeSetting();
-        else if (navigation_.get<SettingsRoute>().selection == 6) {
+        if (navigation_.get<SettingsRoute>().selection < static_cast<size_t>(SettingItem::Wifi)) changeSetting();
+        else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::CoverCache)) {
             navigation_.push<StorageRoute>();
             updateStorage();
-        } else if (navigation_.get<SettingsRoute>().selection == 7) navigation_.push<HelpRoute>();
-        else if (navigation_.get<SettingsRoute>().selection == 8) navigation_.push<AboutRoute>();
+        } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::Help)) navigation_.push<HelpRoute>();
+        else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::About)) navigation_.push<AboutRoute>();
     } else if (screen() == Screen::About) {
         navigation_.push<LicensesRoute>();
     } else if (screen() == Screen::Licenses) {

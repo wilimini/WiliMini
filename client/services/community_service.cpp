@@ -769,8 +769,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       for (const auto &j : array(d, "list")) {
         auto item = link(BrowseKind::ChooseCollection, str(j, "title"),
                          str(j, "id"), r.id);
-        item.subtitle =
-            number(j, "fav_state") ? "已收藏 · × 移除" : "未收藏 · × 加入";
+        item.subtitle = number(j, "fav_state") ? "已收藏" : "未收藏";
         item.duration = number(j, "fav_state");
         out.items.push_back(std::move(item));
       }

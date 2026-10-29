@@ -30,6 +30,7 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
+        loaded.confirmWithCircle = root.value("confirm_with_circle", false);
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
         if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
             loaded.playbackBufferFrames != 8) return false;
@@ -47,7 +48,8 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
-        {"playback_buffer_frames", preferences.playbackBufferFrames}}).dump();
+        {"playback_buffer_frames", preferences.playbackBufferFrames},
+        {"confirm_with_circle", preferences.confirmWithCircle}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
     if (!file) return false;
