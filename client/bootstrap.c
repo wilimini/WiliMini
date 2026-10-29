@@ -7,8 +7,9 @@
 #include <kubridge.h>
 #include <stdio.h>
 #include <string.h>
-#include "loader_profile.h"
 #include "storage_paths.h"
+#include <psp_device.h>
+#include <psp_runtime.h>
 PSP_MODULE_INFO("WiliMini loader",PSP_MODULE_USER,0,1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_HEAP_SIZE_KB(128);
@@ -22,20 +23,30 @@ static int file_exists(const char *path){
 }
 int main(int argc,char **argv){
     (void)argc;(void)argv;
-    const char *root=wili_select_storage(file_exists);
+    const int sce_mpeg=BILI_PPSSPP_SCE_MPEG &&
+                      psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
+    const char *root=wili_select_storage(file_exists,!sce_mpeg);
     char path[128];
     int r=-1;
     if(!root)goto failed;
     r=sceUtilityLoadModule(PSP_MODULE_NET_COMMON);
     if(r>=0 || (unsigned)r==SCE_ERROR_MODULE_ALREADY_LOADED)r=sceUtilityLoadModule(PSP_MODULE_NET_INET);
     if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-    snprintf(path,sizeof(path),"%s/me_bridge.prx",root);
-    r=start(path);if(r<0)goto failed;
-    const int model=kuKernelGetModel();
-    const unsigned max_free=sceKernelMaxFreeMemSize();
-    const int extended=loader_use_extended_client(model,max_free);
+    if(sce_mpeg){
+        r=sceUtilityLoadModule(PSP_MODULE_AV_AVCODEC);
+        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+        r=sceUtilityLoadModule(PSP_MODULE_AV_MPEGBASE);
+        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    }else{
+        snprintf(path,sizeof(path),"%s/me_bridge.prx",root);
+        r=start(path);if(r<0)goto failed;
+    }
+    printf("LOADER player=%s\n",sce_mpeg?"ppsspp-sceMpeg":"psp-me");
+    const PspDeviceInfo device=psp_device_query();
+    const int extended=psp_device_use_extended_client(device);
     snprintf(path,sizeof(path),"%s/%s",root,extended?"wili_mini.prx":"wili_mini_1000.prx");
-    printf("LOADER model=%d max_free=%u profile=%s root=%s\n",model,max_free,extended?"extended":"psp1000",root);
+    printf("LOADER model=%d max_free=%u profile=%s root=%s\n",
+           device.model,device.max_free_memory,extended?"extended":"psp1000",root);
     r=start(path);if(r<0)goto failed;
     sceKernelExitDeleteThread(0);return 0;
 failed:

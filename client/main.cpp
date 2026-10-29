@@ -16,6 +16,7 @@
 #include "app.hpp"
 #include "ui.hpp"
 #include "storage_paths.h"
+#include <psp_runtime.h>
 #ifdef BILI_DEVICE_PLAYBACK_TEST
 #include "../tests/psp_playback_test.hpp"
 #endif
@@ -178,6 +179,10 @@ int main(int argc, char** argv) {
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
             options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
+            options.backend = BILI_PPSSPP_SCE_MPEG &&
+                              psp_runtime_detect() == PSP_RUNTIME_PPSSPP
+                                  ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
+                                  : PSP_VIDEO_BACKEND_NATIVE_ME;
             PspVideoResult result{};
             const int error = psp_video_play(&options, &result);
             logMemory("after_playback");
