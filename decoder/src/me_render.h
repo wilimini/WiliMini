@@ -8,6 +8,7 @@
 #if PSP_ME_RENDER_QUEUE
 _Static_assert(PSP_ME_RENDER_QUEUE >= 2 && PSP_ME_RENDER_QUEUE <= 16, "presentation queue depth 2..16");
 static uint64_t queue_worker_deadline;
+static int64_t queue_worker_pts;
 static uint64_t me_warmup_presented_us, me_last_presented_us;
 #define me_render_start me_render_start_one
 #define me_render_submit me_render_submit_one
@@ -41,8 +42,12 @@ static int me_render_finish(void)
     sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint32_t));
 #endif
 #if PSP_ME_CHECK
-    full_render_planes((const uint8_t *const *)me_frame->data, me_frame->linesize,
-                       me_expected, &me_tables);
+    if (me_frame->width == 640 && me_frame->height == 360)
+        full_render_planes((const uint8_t *const *)me_frame->data, me_frame->linesize,
+                           me_expected, &me_tables);
+    else
+        full_render_scaled((const uint8_t *const *)me_frame->data, me_frame->linesize,
+                           me_frame->width, me_frame->height, me_expected, &me_tables);
     ++me_checked;
     for (int y = 1; y <= 270; ++y) {
         if (memcmp(me_expected + y * 512, me_output + y * 512, 480 * 4)) {
@@ -119,7 +124,11 @@ static int me_render_submit(const AVFrame *frame)
     int slot = rgb_acquire();
     if (slot < 0) return slot;
     me_output = rgb_pixels[slot];
+#if PSP_ME_RENDER_QUEUE
+    me_rgb_pts = queue_worker_pts;
+#else
     me_rgb_pts = presentation_pts_us;
+#endif
 #endif
 #if PSP_ME_RENDER_QUEUE
     me_frame = (AVFrame *)frame;

@@ -19,6 +19,23 @@ static qpel_mc_func scalar_put16;
 
 static void vfpu_avg16(uint8_t *dst, const uint8_t *src, ptrdiff_t stride)
 {
+#if PSP_UNROLLED_AVG
+    /* Keep the exact byte-wise rounding while removing the four-iteration
+     * inner loop and its per-word address calculations. */
+#define AVG_WORD(OFFSET) do { \
+    uint32_t a, b; \
+    __asm__ volatile("ulw %0, " #OFFSET "(%2)\n\tlw %1, " #OFFSET "(%3)" \
+        : "=&r"(a), "=&r"(b) : "r"(src), "r"(dst) : "memory"); \
+    uint32_t result = (a | b) - (((a ^ b) & 0xfefefefeu) >> 1); \
+    __asm__ volatile("sw %0, " #OFFSET "(%1)" :: "r"(result), "r"(dst) : "memory"); \
+} while (0)
+    for (int row = 0; row < 16; ++row) {
+        AVG_WORD(0); AVG_WORD(4); AVG_WORD(8); AVG_WORD(12);
+        src += stride;
+        dst += stride;
+    }
+#undef AVG_WORD
+#else
 #if PSP_VFPU_DSP != 4 && PSP_VFPU_DSP != 5
     __asm__ volatile("viim.s S710, 257" ::: "memory");
 #endif
@@ -44,6 +61,7 @@ static void vfpu_avg16(uint8_t *dst, const uint8_t *src, ptrdiff_t stride)
         src += stride;
         dst += stride;
     }
+#endif
 }
 
 static void vfpu_put16(uint8_t *dst, const uint8_t *src, ptrdiff_t stride)
@@ -72,8 +90,12 @@ static void vfpu_put16(uint8_t *dst, const uint8_t *src, ptrdiff_t stride)
             __asm__ volatile(
                 "ulw %0, 0(%4)\n\tulw %1, 4(%4)\n\t"
                 "ulw %2, 8(%4)\n\tulw %3, 12(%4)\n\t"
+#if PSP_INTEGER_UNALIGNED_COPY
+                "sw %0, 0(%5)\n\tsw %1, 4(%5)\n\tsw %2, 8(%5)\n\tsw %3, 12(%5)"
+#else
                 "mtv %0, S000\n\tmtv %1, S001\n\tmtv %2, S002\n\tmtv %3, S003\n\t"
                 "sv.q C000, 0(%5)"
+#endif
                 : "=&r"(a), "=&r"(b), "=&r"(c), "=&r"(d)
                 : "r"(src), "r"(dst) : "memory");
             src += stride;
@@ -160,6 +182,59 @@ static void vfpu_chroma_put8(uint8_t *d, const uint8_t *s, ptrdiff_t stride, int
 static void vfpu_chroma_avg8(uint8_t *d, const uint8_t *s, ptrdiff_t stride, int h, int x, int y)
 { vfpu_chroma8(d, s, stride, h, x, y, 1); }
 
+/* Round eighth-pixel chroma positions to the nearest source pixel. Keep the
+ * existing zero-phase kernels, including their stride/height handling. */
+static h264_chroma_mc_func nearest_chroma_integer[2][4];
+unsigned nearest_chroma_test_failures;
+#define NEAREST_CHROMA(N) \
+static void nearest_chroma_put_##N(uint8_t *d, const uint8_t *s, ptrdiff_t st, int h, int x, int y) \
+{ nearest_chroma_integer[0][N](d, s + (x >= 4) + (y >= 4) * st, st, h, 0, 0); } \
+static void nearest_chroma_avg_##N(uint8_t *d, const uint8_t *s, ptrdiff_t st, int h, int x, int y) \
+{ nearest_chroma_integer[1][N](d, s + (x >= 4) + (y >= 4) * st, st, h, 0, 0); }
+NEAREST_CHROMA(0)
+NEAREST_CHROMA(1)
+NEAREST_CHROMA(2)
+NEAREST_CHROMA(3)
+#undef NEAREST_CHROMA
+static void nearest_chroma_init(H264ChromaContext *c)
+{
+    static const h264_chroma_mc_func put[4] = {
+        nearest_chroma_put_0, nearest_chroma_put_1, nearest_chroma_put_2, nearest_chroma_put_3 };
+    static const h264_chroma_mc_func avg[4] = {
+        nearest_chroma_avg_0, nearest_chroma_avg_1, nearest_chroma_avg_2, nearest_chroma_avg_3 };
+    for (unsigned i = 0; i < 4; ++i) {
+        nearest_chroma_integer[0][i] = c->put_h264_chroma_pixels_tab[i];
+        nearest_chroma_integer[1][i] = c->avg_h264_chroma_pixels_tab[i];
+        c->put_h264_chroma_pixels_tab[i] = put[i];
+        c->avg_h264_chroma_pixels_tab[i] = avg[i];
+    }
+    /* Exercise real PSP kernels against scalar nearest-neighbour sampling,
+     * including source alignment, rounding thresholds and destination guards. */
+    uint8_t source[48 * 20] __attribute__((aligned(16)));
+    uint8_t target[48 * 20] __attribute__((aligned(16)));
+    nearest_chroma_test_failures = 0;
+    for (unsigned i = 0; i < sizeof(source); ++i)
+        source[i] = (i * 73 + (i >> 3) * 19) & 255;
+    for (unsigned st = 32; st <= 48; st += 16)
+        for (unsigned offset = 0; offset < 4; ++offset)
+            for (unsigned size = 0; size < 4; ++size)
+                for (unsigned phase = 0; phase < 64; ++phase)
+                    for (unsigned average = 0; average < 2; ++average) {
+                        unsigned width = 8 >> size, height = width * 2;
+                        unsigned x = phase & 7, y = phase >> 3;
+                        memset(target, 91, sizeof(target));
+                        (average ? avg[size] : put[size])(target, source + offset, st, height, x, y);
+                        for (unsigned i = 0; i < sizeof(target); ++i) {
+                            unsigned row = i / st, col = i % st, value = 91;
+                            if (row < height && col < width) {
+                                value = source[offset + (row + (y >= 4)) * st + col + (x >= 4)];
+                                if (average) value = (91 + value + 1) >> 1;
+                            }
+                            if (target[i] != value) ++nearest_chroma_test_failures;
+                        }
+                    }
+}
+
 void __real_ff_h264chroma_init(H264ChromaContext *, int);
 void __wrap_ff_h264chroma_init(H264ChromaContext *c, int bit_depth)
 {
@@ -176,4 +251,5 @@ void __wrap_ff_h264chroma_init(H264ChromaContext *c, int bit_depth)
 #if PSP_PACKED_CHROMA
     if (bit_depth == 8) packed_chroma_init(c);
 #endif
+    if (bit_depth == 8) nearest_chroma_init(c);
 }

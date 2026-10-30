@@ -42,7 +42,11 @@ struct PlaybackTestSource {
     }
 };
 
+#include "../benchmarks/bilibili/device_runner.hpp"
+
 int controlledPlaybackTest() {
+    if (FILE* benchmark = std::fopen(CLIENT_PATH("/benchmark.json"), "rb"))
+        return bilibiliBenchmark(benchmark);
     using nlohmann::json;
     json output;
     int code = -1;

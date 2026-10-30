@@ -35,6 +35,7 @@ typedef struct {
     int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
     PspVideoBackend backend;
     PspVideoCancelButton cancel_button; /* 0 keeps Circle as the default. */
+    int diagnostic_profile; /* Nonzero enables sampled H.264 timings; adds overhead. */
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

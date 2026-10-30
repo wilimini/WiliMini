@@ -13,7 +13,7 @@ static unsigned test_random(void)
     test_rng ^= test_rng << 5;
     return test_rng;
 }
-static void vfpu_dsp_selftest(void)
+static unsigned vfpu_dsp_selftest(void)
 {
     static uint8_t src[2048] __attribute__((aligned(16)));
     static uint8_t a[2048] __attribute__((aligned(16)));
@@ -49,6 +49,8 @@ static void vfpu_dsp_selftest(void)
         fprintf(out, "{\"build\":\"%s\",\"tests\":%u,\"failures\":%u}\n", PSP_BUILD_ID, tests, failures);
         fclose(out);
     }
+    printf("QPEL integer oracle tests=%u failures=%u\n", tests, failures);
+    return failures;
 }
 #endif
 #endif

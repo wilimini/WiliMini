@@ -1,0 +1,33 @@
+--- a/libavcodec/h264_mc_template.c
++++ b/libavcodec/h264_mc_template.c
+@@ -48,6 +48,16 @@
+                     const h264_biweight_func *weight_avg,
+                     int list0, int list1)
+ {
++#if defined(__PSP__) && CHROMA_IDC == 1
++    /* Use list 0 alone for bidirectional 8-bit 4:2:0 partitions. Preserve
++     * both lists' syntax/MV state for subsequent direct prediction. */
++    if (PIXEL_SHIFT == 0 && list0 && list1) {
++        mc_part_std(h, sl, n, square, height, delta, dest_y, dest_cb, dest_cr,
++                    x_offset, y_offset, qpix_put, chroma_put, qpix_avg,
++                    chroma_avg, 1, 0, PIXEL_SHIFT, CHROMA_IDC);
++        return;
++    }
++#endif
+     if ((sl->pwt.use_weight == 2 && list0 && list1 &&
+          (sl->pwt.implicit_weight[sl->ref_cache[0][scan8[n]]][sl->ref_cache[1][scan8[n]]][sl->mb_y & 1] != 32)) ||
+         sl->pwt.use_weight == 1)
+--- a/libavcodec/h264_mb.c
++++ b/libavcodec/h264_mb.c
+@@ -32,6 +32,11 @@
+ #include "libavutil/intreadwrite.h"
+ #include "avcodec.h"
+ #include "h264dec.h"
++
++#ifdef __PSP__
++/* Required by the PSP player to reject stale, unpatched decoder libraries. */
++const unsigned avpriv_psp_approx_reconstruction_v2 = 2;
++#endif
+ #include "h264_ps.h"
+ #include "qpeldsp.h"
+ #include "rectangle.h"

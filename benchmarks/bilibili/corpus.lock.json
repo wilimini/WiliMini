@@ -1,0 +1,1236 @@
+{
+  "schema": 1,
+  "captured_at": "2026-10-29T16:34:48.480564+00:00",
+  "extraction": "H.264 360p + lowest-bandwidth AAC DASH; stream copy, keyframe near midpoint",
+  "ffmpeg": "ffmpeg version 9.0.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "complete": true,
+  "items": [
+    {
+      "id": "01-BV1Aan96CE6b",
+      "rank": 1,
+      "bvid": "BV1Aan96CE6b",
+      "aid": 117505691553797,
+      "cid": 43060168025,
+      "title": "做个八鲜捞饭！海鲜一锅端，黏糊糊太上头了！配葱油海肠，嘎吱脆啊",
+      "list_duration": 798,
+      "page_cid": 43060168025,
+      "page_duration": 798,
+      "requested_start_s": 394.0,
+      "source_start_s": 395.033313,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 1.033313000000021,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.64001E",
+        "video_bandwidth": 486387,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65565
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 1055111,
+        "sha256": "1527d6127d5e1b4635c4ca5bd9bab6fbe10e8678b32b923e79f1f351ac918b1c",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 4
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82869,
+        "sha256": "40f1c3e3251851d9baa66f79832a705ad89f73013072b7fc28042acdf02dd2f2",
+        "duration": 10.015578,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "432",
+          "start_time": "0.000000",
+          "duration": "10.015578",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "02-BV1JYsd6sE4k",
+      "rank": 2,
+      "bvid": "BV1JYsd6sE4k",
+      "aid": 117521814391394,
+      "cid": 43140187661,
+      "title": "《崩坏：星穹铁道》千星纪游PV：「有关星空的寓言集•其三」",
+      "list_duration": 874,
+      "page_cid": 43140187661,
+      "page_duration": 217,
+      "requested_start_s": 103.5,
+      "source_start_s": 105.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 1.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.64001E",
+        "video_bandwidth": 508020,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65706
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 644873,
+        "sha256": "84824b16dd07fadd26d2f3443c28c3ddbd2a4491f75d639228f7f2e4b1f85685",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 4
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82916,
+        "sha256": "994623b5d8293053f673f5eb33618fcdb3c8c2921b0d94a70fad437167e54e80",
+        "duration": 10.008,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "470",
+          "start_time": "0.000000",
+          "duration": "10.008000",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "03-BV1ySsf6gE2C",
+      "rank": 3,
+      "bvid": "BV1ySsf6gE2C",
+      "aid": 117523961874115,
+      "cid": 43153229785,
+      "title": "城市大富翁（番外篇）",
+      "list_duration": 2165,
+      "page_cid": 43153229785,
+      "page_duration": 2165,
+      "requested_start_s": 1077.5,
+      "source_start_s": 1079.98,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 2.480000000000018,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 434241,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65678
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 537651,
+        "sha256": "1423a06bba332e1a9385bba2d866b54d60486299bd574f2c82f94c78185c70f2",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "25/1",
+          "avg_frame_rate": "25/1",
+          "nb_read_packets": "250",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82586,
+        "sha256": "a42b61b24af4e80ef527380ccd2d59302280e461849925da18980dd1d9746750",
+        "duration": 10.004,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.004000",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "04-BV1uGxj68EKt",
+      "rank": 4,
+      "bvid": "BV1uGxj68EKt",
+      "aid": 117517435600920,
+      "cid": 43120593469,
+      "title": "忙着跟生活对线的你，有多久没上号了？谨以此片，致和游戏一起长大的我们。【AI全民制作人】",
+      "list_duration": 234,
+      "page_cid": 43120593469,
+      "page_duration": 234,
+      "requested_start_s": 112.0,
+      "source_start_s": 110.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -2.0,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.64001E",
+        "video_bandwidth": 510931,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 66197
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 896070,
+        "sha256": "bf470666106f6c19c39d01e0009c205463b3deb5fec5db1c67d4513ed4ad2c30",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 4
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82710,
+        "sha256": "ce472788c4f30f1446210fd29285e127d54668a25d57df2abc3f356a7adbbdd2",
+        "duration": 10.000952,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "431",
+          "start_time": "0.000000",
+          "duration": "10.000952",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "05-BV1ibxg6WEKW",
+      "rank": 5,
+      "bvid": "BV1ibxg6WEKW",
+      "aid": 117512603703404,
+      "cid": 43099490373,
+      "title": "《三鞭抽散厌学魂》",
+      "list_duration": 103,
+      "page_cid": 43099490373,
+      "page_duration": 103,
+      "requested_start_s": 46.5,
+      "source_start_s": 45.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -1.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 150560,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 66255
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 187407,
+        "sha256": "4b5f46a28cc9bdfd55e1b77bbdf70b815c6565bc2622f7433832533ebe073d05",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 480,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82781,
+        "sha256": "2023ec1f46d42c542bc1fe8d5e9516881189b4d8c2523ea3658a171258c93067",
+        "duration": 10.008186,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "432",
+          "start_time": "0.000000",
+          "duration": "10.008186",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "06-BV1Eas967EY9",
+      "rank": 6,
+      "bvid": "BV1Eas967EY9",
+      "aid": 117520925198159,
+      "cid": 43136977953,
+      "title": "【2026全球总决赛】10月29日 LYON vs IG",
+      "list_duration": 9180,
+      "page_cid": 43136977953,
+      "page_duration": 2847,
+      "requested_start_s": 1418.5,
+      "source_start_s": 1416.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -2.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.64001E",
+        "video_bandwidth": 503217,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 129677
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 831026,
+        "sha256": "e5e855e82f4191126bb735ff00b43310abf5442909842e638c05a3d159711879",
+        "duration": 9.966667,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "299",
+          "start_time": "0.000000",
+          "duration": "9.966667",
+          "time_base": "1/90000",
+          "has_b_frames": 2
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 162566,
+        "sha256": "ce7dea64bea55a0d4866451b5cad154eef79d15026557178d7bdfb1b538ff7b4",
+        "duration": 10.005333,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.005333",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "07-BV1dEsX6TEGx",
+      "rank": 7,
+      "bvid": "BV1dEsX6TEGx",
+      "aid": 117519583025114,
+      "cid": 43133634672,
+      "title": "吴站长&梅姐《Trouble Maker》【AI MV大赛】",
+      "list_duration": 160,
+      "page_cid": 43133634672,
+      "page_duration": 160,
+      "requested_start_s": 75.0,
+      "source_start_s": 75.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 0.0,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 471980,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65763
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 798574,
+        "sha256": "0c4082ae0b1cf01cfd842af455d825d84f0282166af85387f0c08352fbdc1f31",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82979,
+        "sha256": "883071a095956de4dc7fc2211a339b18dd56a9654c2ea8b4b7a3977cb7b3f456",
+        "duration": 10.013333,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "470",
+          "start_time": "0.000000",
+          "duration": "10.013333",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "08-BV1Y3sZ67Eat",
+      "rank": 8,
+      "bvid": "BV1Y3sZ67Eat",
+      "aid": 117522888136866,
+      "cid": 43146348789,
+      "title": "重庆悬崖火锅自助 现实版饥饿站台？",
+      "list_duration": 220,
+      "page_cid": 43146348789,
+      "page_duration": 220,
+      "requested_start_s": 105.0,
+      "source_start_s": 105.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 0.0,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 418559,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65614
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 552768,
+        "sha256": "d9cc428b886c3b44f752af4b4011fd6164d48a0435066801c4e9366df7041707",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82928,
+        "sha256": "d48e0a7df4b59577f0ad87885927835ec0e9662d8e9bc9012704c46a277bccc7",
+        "duration": 10.008435,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "432",
+          "start_time": "0.000000",
+          "duration": "10.008435",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "09-BV12Lxj64Ejt",
+      "rank": 9,
+      "bvid": "BV12Lxj64Ejt",
+      "aid": 117517469092884,
+      "cid": 43120987760,
+      "title": "星爷版《Trouble Maker》喜剧之王&功夫【AI MV大赛】",
+      "list_duration": 133,
+      "page_cid": 43120987760,
+      "page_duration": 133,
+      "requested_start_s": 61.5,
+      "source_start_s": 60.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -1.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 674674,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 66225
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 988935,
+        "sha256": "aa9e480a252bc4b684c213c11255342b8de0e8990204bf6cc99bef0cca5a951c",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82831,
+        "sha256": "64b9c9dff3d920ac7a053e9bd9378b6cca7486bfe6c121aad9a7a6919a1ff615",
+        "duration": 10.008299,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "432",
+          "start_time": "0.000000",
+          "duration": "10.008299",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "11-BV1iXxV6vEmP",
+      "rank": 11,
+      "bvid": "BV1iXxV6vEmP",
+      "aid": 117516546475623,
+      "cid": 43115940634,
+      "title": "⚡《新 三 国 FUNK》⚡",
+      "list_duration": 95,
+      "page_cid": 43115940634,
+      "page_duration": 95,
+      "requested_start_s": 42.5,
+      "source_start_s": 40.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -2.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 698528,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65820
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 854539,
+        "sha256": "fdf84833b891673226452cb8bed74ea3e989ff59fa463b3f6f5ea90fafaadd98",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82732,
+        "sha256": "6a6aca6851026a5920418bf6a126cbf374df58035dd5183a9d353f5605d534e8",
+        "duration": 10.005333,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.005333",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "12-BV1w7sf6AEVy",
+      "rank": 12,
+      "bvid": "BV1w7sf6AEVy",
+      "aid": 117524045762774,
+      "cid": 43153754244,
+      "title": "王老菊教你影之刃01：破伤风刀法",
+      "list_duration": 4718,
+      "page_cid": 43153754244,
+      "page_duration": 4718,
+      "requested_start_s": 2354.0,
+      "source_start_s": 2356.047375,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 2.047375000000102,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 632517,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65675
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 605084,
+        "sha256": "9ecb90ae40917aedb4b44a92aa845f9cf5705f862b48b2a6e11e650358442e81",
+        "duration": 10.01,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30000/1001",
+          "avg_frame_rate": "30000/1001",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.010000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82989,
+        "sha256": "6dcd4e8d4696a26c08d00ec9741970674641e61d46f73e6a724fa3280d4aa799",
+        "duration": 10.011292,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "470",
+          "start_time": "0.000000",
+          "duration": "10.011292",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "13-BV16fsf6PEBH",
+      "rank": 13,
+      "bvid": "BV16fsf6PEBH",
+      "aid": 117523525664920,
+      "cid": 43150213385,
+      "title": "《明日方舟》EP - A Necessary Message",
+      "list_duration": 233,
+      "page_cid": 43150213385,
+      "page_duration": 233,
+      "requested_start_s": 111.5,
+      "source_start_s": 109.98,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -1.519999999999996,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 421422,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65703
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 359782,
+        "sha256": "e5ee153bc5411cb7c9ed833414eafac5c698e94325d0afe4328c23aac5f1d8d9",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "25/1",
+          "avg_frame_rate": "25/1",
+          "nb_read_packets": "250",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82897,
+        "sha256": "d95a3333d1f20cbe219b50c9819c5fba6de7c7f25f569a9a69ddecab6988c2ef",
+        "duration": 10.02,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "470",
+          "start_time": "0.000000",
+          "duration": "10.020000",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "14-BV1FGso6ZE7x",
+      "rank": 14,
+      "bvid": "BV1FGso6ZE7x",
+      "aid": 117521042640008,
+      "cid": 43137042797,
+      "title": "环大露认领，刘冲斗娜娜，众星躲娜扎……【近期红毯爆笑盘点】",
+      "list_duration": 915,
+      "page_cid": 43137042797,
+      "page_duration": 915,
+      "requested_start_s": 452.5,
+      "source_start_s": 450.96875,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -1.53125,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 207713,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65689
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 194087,
+        "sha256": "3891db48aa29622b2bf83ad83b6e1b2fe5c43bdfdbe4d3bb3f6c396bcfd4541e",
+        "duration": 10.01,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "24000/1001",
+          "avg_frame_rate": "24000/1001",
+          "nb_read_packets": "240",
+          "start_time": "0.000000",
+          "duration": "10.010000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82732,
+        "sha256": "e445fe1013c7e5f187a5cf60cf4a561e58801e57514d6ba58072d90d4096a145",
+        "duration": 10.001917,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.001917",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "15-BV13uxE6gEkN",
+      "rank": 15,
+      "bvid": "BV13uxE6gEkN",
+      "aid": 117518308019488,
+      "cid": 43126229936,
+      "title": "我是艺术家，我陪你拍这个",
+      "list_duration": 97,
+      "page_cid": 43126229936,
+      "page_duration": 97,
+      "requested_start_s": 43.5,
+      "source_start_s": 45.002375,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 1.5023750000000007,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 506772,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65699
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 706940,
+        "sha256": "bc24fd79269c1f48220f6ecc5fdde531b3d54c0e19de4c2d4834ef91c83a3f78",
+        "duration": 10.00175,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 360,
+          "height": 640,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "1200000/40007",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.001750",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82670,
+        "sha256": "2b7cc9c5864ccc7cc14c25ea269b1529cb4c1e40a94a3a1e5e6b9111f4c0c6fb",
+        "duration": 10.005692,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "431",
+          "start_time": "0.000000",
+          "duration": "10.005692",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "16-BV1SVsd6MEGZ",
+      "rank": 16,
+      "bvid": "BV1SVsd6MEGZ",
+      "aid": 117522032560859,
+      "cid": 43141828207,
+      "title": "HONG KONG",
+      "list_duration": 221,
+      "page_cid": 43141828207,
+      "page_duration": 221,
+      "requested_start_s": 105.5,
+      "source_start_s": 105.094938,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -0.4050620000000009,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 310099,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65740
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 685069,
+        "sha256": "373ebc5b41a2ea2cbf509b99931b372a068085d0ba5b381abf7289e58da521a6",
+        "duration": 10.01,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "24000/1001",
+          "avg_frame_rate": "24000/1001",
+          "nb_read_packets": "240",
+          "start_time": "0.000000",
+          "duration": "10.010000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 83091,
+        "sha256": "8782eeaa5b4f36a3c37f938ac0a7f05731e0d8e6969ae7ad135e0e7b460272f6",
+        "duration": 10.019729,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "470",
+          "start_time": "0.000000",
+          "duration": "10.019729",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "17-BV1dAxE6VErW",
+      "rank": 17,
+      "bvid": "BV1dAxE6VErW",
+      "aid": 117518106630700,
+      "cid": 43125246260,
+      "title": "《原神》米提亚角色PV——「小小伎俩」",
+      "list_duration": 677,
+      "page_cid": 43125246260,
+      "page_duration": 167,
+      "requested_start_s": 78.5,
+      "source_start_s": 80.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 1.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 478780,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65716
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 481350,
+        "sha256": "e5ea0edac7200efe94b1a3b7afe7729c55090c9e48ab187689e5717cdf7bc08a",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82709,
+        "sha256": "1fcbdddad919188ba657397c5efac14c125ced66ce96feb61c579fe4266f1d85",
+        "duration": 10.005333,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.005333",
+          "time_base": "1/48000"
+        }
+      }
+    },
+    {
+      "id": "18-BV16nxg6fE3s",
+      "rank": 18,
+      "bvid": "BV16nxg6fE3s",
+      "aid": 117512486262753,
+      "cid": 43098637493,
+      "title": "贴脸特写，是每个野生动物摄影师的必备技能！",
+      "list_duration": 1014,
+      "page_cid": 43098637493,
+      "page_duration": 1014,
+      "requested_start_s": 502.0,
+      "source_start_s": 500.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -2.0,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 522167,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 66157
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 513592,
+        "sha256": "cb1cb5997eba4080df0436de738a1a594a8c18b66fdf43bda87655907bf51af7",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82715,
+        "sha256": "47dfda6a432866eea6b38a45d0c9c1a52de58f0f66c935678f83ec2798e6799a",
+        "duration": 10.004082,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "431",
+          "start_time": "0.000000",
+          "duration": "10.004082",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "19-BV1LcxE61Euj",
+      "rank": 19,
+      "bvid": "BV1LcxE61Euj",
+      "aid": 117518190578941,
+      "cid": 43125835865,
+      "title": "强子刚来啊，等你二十年了【AI MV大赛】",
+      "list_duration": 331,
+      "page_cid": 43125835865,
+      "page_duration": 331,
+      "requested_start_s": 160.5,
+      "source_start_s": 160.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -0.5,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 242874,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 66169
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 288632,
+        "sha256": "3ca55e38189842d2d29bdfad115edbd1d101ec965b7874705a7a45ae0ce0bc36",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82858,
+        "sha256": "5d28e813b389a2ce0d19a0d97f2410cc9dc5526896ad13220605c8c783827d5a",
+        "duration": 10.016848,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "432",
+          "start_time": "0.000000",
+          "duration": "10.016848",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "20-BV1D5sd6qE3M",
+      "rank": 20,
+      "bvid": "BV1D5sd6qE3M",
+      "aid": 117522015785201,
+      "cid": 43148707722,
+      "title": "乱作一团：美国古巴当场互呛，会议被迫中止场面混乱",
+      "list_duration": 1072,
+      "page_cid": 43148707722,
+      "page_duration": 1072,
+      "requested_start_s": 531.0,
+      "source_start_s": 530.0,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": -1.0,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.640033",
+        "video_bandwidth": 180407,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65560
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 139500,
+        "sha256": "282a32a714490bd2c53dd1da786d77275126e1c82683a7dc177c6f76abd94198",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "nb_read_packets": "300",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 3
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82601,
+        "sha256": "c68db5aaa9af57d5f4a4e407d248c7cc16a7b1728d8334ff9dd8e6cc5f50dde2",
+        "duration": 10.003265,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "44100",
+          "channels": 2,
+          "nb_read_packets": "431",
+          "start_time": "0.000000",
+          "duration": "10.003265",
+          "time_base": "1/44100"
+        }
+      }
+    },
+    {
+      "id": "21-BV1GxsX6YEuP",
+      "rank": 21,
+      "bvid": "BV1GxsX6YEuP",
+      "aid": 117519230769013,
+      "cid": 43131798058,
+      "title": "不 看 尾 巴 挑 战 💃",
+      "list_duration": 85,
+      "page_cid": 43131798058,
+      "page_duration": 85,
+      "requested_start_s": 37.5,
+      "source_start_s": 39.980000000000004,
+      "requested_duration_s": 10,
+      "midpoint_offset_s": 2.480000000000004,
+      "selection": {
+        "video_id": 16,
+        "video_codec": "avc1.64001E",
+        "video_bandwidth": 323985,
+        "audio_id": 30216,
+        "audio_codec": "mp4a.40.2",
+        "audio_bandwidth": 65753
+      },
+      "video": {
+        "file": "video.mp4",
+        "bytes": 439966,
+        "sha256": "65b50d32cd9a68968bb1c1cef0e0ba62b29bca4c233cc0912510df9617f26576",
+        "duration": 10.0,
+        "stream": {
+          "codec_name": "h264",
+          "profile": "High",
+          "width": 640,
+          "height": 360,
+          "pix_fmt": "yuv420p",
+          "r_frame_rate": "25/1",
+          "avg_frame_rate": "25/1",
+          "nb_read_packets": "250",
+          "start_time": "0.000000",
+          "duration": "10.000000",
+          "time_base": "1/16000",
+          "has_b_frames": 4
+        }
+      },
+      "audio": {
+        "file": "audio.m4a",
+        "bytes": 82747,
+        "sha256": "2e0fe8899fc3287ec37c0b60a8926c0f716dca0c090425990c98f117bc7ac23d",
+        "duration": 10.004,
+        "stream": {
+          "codec_name": "aac",
+          "profile": "LC",
+          "r_frame_rate": "0/0",
+          "avg_frame_rate": "0/0",
+          "sample_rate": "48000",
+          "channels": 2,
+          "nb_read_packets": "469",
+          "start_time": "0.000000",
+          "duration": "10.004000",
+          "time_base": "1/48000"
+        }
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "id": "10-BV1Nrx76bEZ5",
+      "reason": "Original DASH audio is not stereo AAC at 44.1/48 kHz; no transcoding"
+    }
+  ],
+  "failures": []
+}

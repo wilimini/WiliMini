@@ -1,0 +1,175 @@
+{
+  "captured_at": "2026-10-29T16:34:48.480564+00:00",
+  "endpoint": "https://api.bilibili.com/x/web-interface/popular?ps=20&pn=1",
+  "selection": "First 20 compatible videos; candidate 21 appended after mono AAC exclusion; first page of each video",
+  "videos": [
+    {
+      "rank": 1,
+      "bvid": "BV1Aan96CE6b",
+      "aid": 117505691553797,
+      "cid": 43060168025,
+      "title": "做个八鲜捞饭！海鲜一锅端，黏糊糊太上头了！配葱油海肠，嘎吱脆啊",
+      "list_duration": 798
+    },
+    {
+      "rank": 2,
+      "bvid": "BV1JYsd6sE4k",
+      "aid": 117521814391394,
+      "cid": 43140187661,
+      "title": "《崩坏：星穹铁道》千星纪游PV：「有关星空的寓言集•其三」",
+      "list_duration": 874
+    },
+    {
+      "rank": 3,
+      "bvid": "BV1ySsf6gE2C",
+      "aid": 117523961874115,
+      "cid": 43153229785,
+      "title": "城市大富翁（番外篇）",
+      "list_duration": 2165
+    },
+    {
+      "rank": 4,
+      "bvid": "BV1uGxj68EKt",
+      "aid": 117517435600920,
+      "cid": 43120593469,
+      "title": "忙着跟生活对线的你，有多久没上号了？谨以此片，致和游戏一起长大的我们。【AI全民制作人】",
+      "list_duration": 234
+    },
+    {
+      "rank": 5,
+      "bvid": "BV1ibxg6WEKW",
+      "aid": 117512603703404,
+      "cid": 43099490373,
+      "title": "《三鞭抽散厌学魂》",
+      "list_duration": 103
+    },
+    {
+      "rank": 6,
+      "bvid": "BV1Eas967EY9",
+      "aid": 117520925198159,
+      "cid": 43136977953,
+      "title": "【2026全球总决赛】10月29日 LYON vs IG",
+      "list_duration": 9180
+    },
+    {
+      "rank": 7,
+      "bvid": "BV1dEsX6TEGx",
+      "aid": 117519583025114,
+      "cid": 43133634672,
+      "title": "吴站长&梅姐《Trouble Maker》【AI MV大赛】",
+      "list_duration": 160
+    },
+    {
+      "rank": 8,
+      "bvid": "BV1Y3sZ67Eat",
+      "aid": 117522888136866,
+      "cid": 43146348789,
+      "title": "重庆悬崖火锅自助 现实版饥饿站台？",
+      "list_duration": 220
+    },
+    {
+      "rank": 9,
+      "bvid": "BV12Lxj64Ejt",
+      "aid": 117517469092884,
+      "cid": 43120987760,
+      "title": "星爷版《Trouble Maker》喜剧之王&功夫【AI MV大赛】",
+      "list_duration": 133
+    },
+    {
+      "rank": 10,
+      "bvid": "BV1Nrx76bEZ5",
+      "aid": 117518408613993,
+      "cid": 43147725803,
+      "title": "五年不见！人生一串4重磅回归",
+      "list_duration": 186
+    },
+    {
+      "rank": 11,
+      "bvid": "BV1iXxV6vEmP",
+      "aid": 117516546475623,
+      "cid": 43115940634,
+      "title": "⚡《新 三 国 FUNK》⚡",
+      "list_duration": 95
+    },
+    {
+      "rank": 12,
+      "bvid": "BV1w7sf6AEVy",
+      "aid": 117524045762774,
+      "cid": 43153754244,
+      "title": "王老菊教你影之刃01：破伤风刀法",
+      "list_duration": 4718
+    },
+    {
+      "rank": 13,
+      "bvid": "BV16fsf6PEBH",
+      "aid": 117523525664920,
+      "cid": 43150213385,
+      "title": "《明日方舟》EP - A Necessary Message",
+      "list_duration": 233
+    },
+    {
+      "rank": 14,
+      "bvid": "BV1FGso6ZE7x",
+      "aid": 117521042640008,
+      "cid": 43137042797,
+      "title": "环大露认领，刘冲斗娜娜，众星躲娜扎……【近期红毯爆笑盘点】",
+      "list_duration": 915
+    },
+    {
+      "rank": 15,
+      "bvid": "BV13uxE6gEkN",
+      "aid": 117518308019488,
+      "cid": 43126229936,
+      "title": "我是艺术家，我陪你拍这个",
+      "list_duration": 97
+    },
+    {
+      "rank": 16,
+      "bvid": "BV1SVsd6MEGZ",
+      "aid": 117522032560859,
+      "cid": 43141828207,
+      "title": "HONG KONG",
+      "list_duration": 221
+    },
+    {
+      "rank": 17,
+      "bvid": "BV1dAxE6VErW",
+      "aid": 117518106630700,
+      "cid": 43125246260,
+      "title": "《原神》米提亚角色PV——「小小伎俩」",
+      "list_duration": 677
+    },
+    {
+      "rank": 18,
+      "bvid": "BV16nxg6fE3s",
+      "aid": 117512486262753,
+      "cid": 43098637493,
+      "title": "贴脸特写，是每个野生动物摄影师的必备技能！",
+      "list_duration": 1014
+    },
+    {
+      "rank": 19,
+      "bvid": "BV1LcxE61Euj",
+      "aid": 117518190578941,
+      "cid": 43125835865,
+      "title": "强子刚来啊，等你二十年了【AI MV大赛】",
+      "list_duration": 331
+    },
+    {
+      "rank": 20,
+      "bvid": "BV1D5sd6qE3M",
+      "aid": 117522015785201,
+      "cid": 43148707722,
+      "title": "乱作一团：美国古巴当场互呛，会议被迫中止场面混乱",
+      "list_duration": 1072
+    },
+    {
+      "rank": 21,
+      "bvid": "BV1GxsX6YEuP",
+      "aid": 117519230769013,
+      "cid": 43131798058,
+      "title": "不 看 尾 巴 挑 战 💃",
+      "list_duration": 85
+    }
+  ]
+}

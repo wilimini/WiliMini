@@ -32,7 +32,26 @@ static inline __attribute__((always_inline)) void packed_chroma_predict(
     uint8_t *d, const uint8_t *s, ptrdiff_t st, int h, int x, int y, unsigned index, unsigned avg)
 {
     if (!x && !y) {
-        packed_chroma_original[avg][index](d,s,st,h,x,y);
+        /* H.264 partitions have word-aligned destinations and strides. Avoid
+         * memcpy's conservative unaligned destination operations and spills;
+         * keep the original implementation for callers outside that contract. */
+        if (((uintptr_t)d | (uintptr_t)st) & 3) {
+            packed_chroma_original[avg][index](d,s,st,h,x,y);
+            return;
+        }
+        const unsigned width = 8 >> index;
+        for (int row = 0; row < h; ++row) {
+            for (unsigned col = 0; col < width; col += 4) {
+                uint32_t value = chroma_load4(s + col);
+                if (avg) {
+                    uint32_t old;
+                    __asm__ volatile("lw %0, 0(%1)" : "=r"(old) : "r"(d + col) : "memory");
+                    value = (old | value) - (((old ^ value) & 0xfefefefeu) >> 1);
+                }
+                __asm__ volatile("sw %0, 0(%1)" :: "r"(value), "r"(d + col) : "memory");
+            }
+            d += st; s += st;
+        }
         return;
     }
     unsigned width = 8 >> index;

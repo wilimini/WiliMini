@@ -19,6 +19,12 @@ set(BILI_FFMPEG_SOURCE_DIR "${CMAKE_SOURCE_DIR}/build/ffmpeg-source" CACHE PATH
     "Extracted FFmpeg source directory")
 set(BILI_FFMPEG_BUILD_DIR "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio" CACHE PATH
     "FFmpeg build directory")
+option(BILI_FFMPEG_CABAC_MOVN "Use exact Allegrex CABAC conditional moves" ON)
+if(BILI_FFMPEG_CABAC_MOVN)
+    set(_psp_cabac_movn 1)
+else()
+    set(_psp_cabac_movn 0)
+endif()
 
 set(_curl_archive "${CMAKE_SOURCE_DIR}/build/downloads/curl-${BILI_CURL_VERSION}.tar.xz")
 set(_curl_url "https://curl.se/download/curl-${BILI_CURL_VERSION}.tar.xz")
@@ -80,6 +86,14 @@ ExternalProject_Add(psp_ffmpeg
             "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
             "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg-psp-tx-tables.patch"
             -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
+            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0002-psp-cabac-movn.patch"
+            -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
+            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0003-psp-approximate-reconstruction.patch"
+            -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             --prefix=${PSP_FFMPEG_PREFIX}
             --enable-cross-compile --target-os=none --arch=mips --cpu=allegrex
@@ -89,7 +103,7 @@ ExternalProject_Add(psp_ffmpeg
             --disable-swscale --disable-swresample --disable-pthreads
             --disable-everything --enable-decoder=h264,aac,aac_fixed --enable-parser=h264
             --enable-demuxer=mov,flv --enable-protocol=file
-            "--extra-cflags=-O3 -G0 -Wno-error=incompatible-pointer-types"
+            "--extra-cflags=-O3 -G0 -Wno-error=incompatible-pointer-types -DPSP_CABAC_MOVN=${_psp_cabac_movn}"
             --extra-ldflags=-G0 --pkg-config=/usr/bin/false
         BUILD_COMMAND "${CMAKE_MAKE_PROGRAM}" -j4
         INSTALL_COMMAND "${CMAKE_MAKE_PROGRAM}" install
