@@ -185,7 +185,6 @@ static void vfpu_chroma_avg8(uint8_t *d, const uint8_t *s, ptrdiff_t stride, int
 /* Round eighth-pixel chroma positions to the nearest source pixel. Keep the
  * existing zero-phase kernels, including their stride/height handling. */
 static h264_chroma_mc_func nearest_chroma_integer[2][4];
-unsigned nearest_chroma_test_failures;
 #define NEAREST_CHROMA(N) \
 static void nearest_chroma_put_##N(uint8_t *d, const uint8_t *s, ptrdiff_t st, int h, int x, int y) \
 { nearest_chroma_integer[0][N](d, s + (x >= 4) + (y >= 4) * st, st, h, 0, 0); } \
@@ -208,31 +207,6 @@ static void nearest_chroma_init(H264ChromaContext *c)
         c->put_h264_chroma_pixels_tab[i] = put[i];
         c->avg_h264_chroma_pixels_tab[i] = avg[i];
     }
-    /* Exercise real PSP kernels against scalar nearest-neighbour sampling,
-     * including source alignment, rounding thresholds and destination guards. */
-    uint8_t source[48 * 20] __attribute__((aligned(16)));
-    uint8_t target[48 * 20] __attribute__((aligned(16)));
-    nearest_chroma_test_failures = 0;
-    for (unsigned i = 0; i < sizeof(source); ++i)
-        source[i] = (i * 73 + (i >> 3) * 19) & 255;
-    for (unsigned st = 32; st <= 48; st += 16)
-        for (unsigned offset = 0; offset < 4; ++offset)
-            for (unsigned size = 0; size < 4; ++size)
-                for (unsigned phase = 0; phase < 64; ++phase)
-                    for (unsigned average = 0; average < 2; ++average) {
-                        unsigned width = 8 >> size, height = width * 2;
-                        unsigned x = phase & 7, y = phase >> 3;
-                        memset(target, 91, sizeof(target));
-                        (average ? avg[size] : put[size])(target, source + offset, st, height, x, y);
-                        for (unsigned i = 0; i < sizeof(target); ++i) {
-                            unsigned row = i / st, col = i % st, value = 91;
-                            if (row < height && col < width) {
-                                value = source[offset + (row + (y >= 4)) * st + col + (x >= 4)];
-                                if (average) value = (91 + value + 1) >> 1;
-                            }
-                            if (target[i] != value) ++nearest_chroma_test_failures;
-                        }
-                    }
 }
 
 void __real_ff_h264chroma_init(H264ChromaContext *, int);

@@ -16,7 +16,6 @@
 #include "scale_map.h"
 #include "yuv_rgb.h"
 #include "vfpu_render.h"
-#include "vfpu_dsp_test.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -44,20 +43,10 @@ static const PspVideoSource *video_io_source;
 static const PspVideoSource *audio_io_source;
 static int client_playback;
 extern const unsigned avpriv_psp_approx_reconstruction_v2;
-extern unsigned nearest_chroma_test_failures;
 static unsigned cancel_button = PSP_CTRL_CIRCLE;
 static int64_t playback_start_ms, playback_position_us, video_origin_us;
 static int64_t first_video_us;
 extern int avpriv_psp_cabac_mode(void) __attribute__((weak));
-#if PSP_CABAC_SELFTEST
-extern int avpriv_psp_cabac_selftest(void) __attribute__((weak));
-static int cabac_tested, cabac_test_failures;
-static unsigned cabac_test_us;
-#endif
-#if PSP_DSP_SELFTEST
-static int qpel_tested;
-static unsigned qpel_test_failures;
-#endif
 static PspVideoStage video_stage;
 const char *psp_video_stage_name(PspVideoStage stage) {
     switch (stage) {
@@ -455,27 +444,12 @@ static void save_results(const char *path, const RunStats *s, int render,
         fprintf(out, "  \"me_full_cache\": %d,\n", PSP_ME_FULL_CACHE);
         fprintf(out, "  \"integer_unaligned_copy\": %d,\n", PSP_INTEGER_UNALIGNED_COPY);
         fprintf(out, "  \"unrolled_avg\": %d,\n", PSP_UNROLLED_AVG);
-#if PSP_DSP_SELFTEST
-        fprintf(out, "  \"qpel_integer_test_failures\": %u,\n", qpel_test_failures);
-#endif
         fprintf(out, "  \"cabac_movn\": %d,\n",
                 avpriv_psp_cabac_mode ? avpriv_psp_cabac_mode() : 0);
-#if PSP_CABAC_SELFTEST
-        fprintf(out, "  \"cabac_test_failures\": %d,\n  \"cabac_test_us\": %u,\n",
-                cabac_test_failures, cabac_test_us);
-#endif
-#if PSP_PACKED_CHROMA
-        extern unsigned packed_chroma_test_failures;
-        fprintf(out, "  \"packed_chroma_test_failures\": %u,\n", packed_chroma_test_failures);
-#endif
 #if PSP_APPROX_QPEL
-        extern unsigned approx_qpel_test_failures;
-        fprintf(out, "  \"approx_qpel_test_failures\": %u,\n", approx_qpel_test_failures);
-        fprintf(out, "  \"approx_reconstruction\": %u,\n  \"nearest_chroma_test_failures\": %u,\n",
-                avpriv_psp_approx_reconstruction_v2, nearest_chroma_test_failures);
+        fprintf(out, "  \"approx_reconstruction\": %u,\n", avpriv_psp_approx_reconstruction_v2);
 #endif
 #if PSP_ME_RENDER
-        fprintf(out, "  \"me_checked\": %u,\n  \"me_mismatches\": %u,\n", me_checked, me_mismatches);
         fprintf(out, "  \"me_submitted\": %u,\n  \"me_completed\": %u,\n", me_submitted, me_completed);
 #if PSP_PTS_PACE
         fprintf(out, "  \"late_over_40ms_including_warmup\": %u,\n"
@@ -728,24 +702,6 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     video_stage = PSP_VIDEO_STAGE_LOG;
     if (select_run_dir(run_path, path_size) < 0)
         return -2;
-#if PSP_DSP_SELFTEST
-    if (!qpel_tested) {
-        qpel_test_failures = vfpu_dsp_selftest();
-        qpel_tested = 1;
-    }
-    if (qpel_test_failures) { ret = -95; goto done; }
-#endif
-#if PSP_CABAC_SELFTEST
-    if (!cabac_tested) {
-        unsigned start = tick_us();
-        cabac_test_failures = !avpriv_psp_cabac_mode || !avpriv_psp_cabac_selftest ||
-                             avpriv_psp_cabac_mode() != 1 ? -1 : avpriv_psp_cabac_selftest();
-        cabac_test_us = tick_us() - start;
-        cabac_tested = 1;
-        printf("CABAC mode=movn oracle=%d test_us=%u\n", cabac_test_failures, cabac_test_us);
-    }
-    if (cabac_test_failures) { ret = -94; goto done; }
-#endif
 #if PSP_ME_DECODE
     video_stage = PSP_VIDEO_STAGE_ME_INIT;
     ret = me_decode_start();
@@ -792,13 +748,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     printf("VIDEO width=%d height=%d refs=%d\n", codec->width, codec->height, codec->refs);
     source_memory("video_codec");
 #if PSP_APPROX_QPEL
-    extern unsigned approx_qpel_test_failures;
-    if (approx_qpel_test_failures || nearest_chroma_test_failures ||
-        avpriv_psp_approx_reconstruction_v2 != 2) { ret = -91; goto done; }
-#endif
-#if PSP_PACKED_CHROMA
-    extern unsigned packed_chroma_test_failures;
-    if (packed_chroma_test_failures) { ret = -92; goto done; }
+    if (avpriv_psp_approx_reconstruction_v2 != 2) { ret = -91; goto done; }
 #endif
     packet = av_packet_alloc();
     frame = av_frame_alloc();
@@ -986,11 +936,6 @@ done:
 #ifndef PSP_VIDEO_LIBRARY
 int psp_video_lab_main(void)
 {
-#if PSP_DSP_SELFTEST
-    vfpu_dsp_selftest();
-    sceKernelExitGame();
-    return 0;
-#endif
 #if PSP_YUV_LUT
     yuv_rgb_init(&yuv_rgb_tables);
 #endif

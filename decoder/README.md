@@ -40,6 +40,8 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 默认关闭；采样有额外开销。独立数据集及批量诊断入口见
 [`benchmarks/bilibili/`](../benchmarks/bilibili/README.md)。
 
+播放器初始化只安装解码内核，不运行亮度、色度、音频或 CABAC 自检。
+
 `PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
 客户端传入用户设置，新设置默认值由启动器选中的客户端决定。
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。

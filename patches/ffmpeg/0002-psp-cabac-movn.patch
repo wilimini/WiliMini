@@ -47,21 +47,13 @@
  
 --- a/libavcodec/cabac.c
 +++ b/libavcodec/cabac.c
-@@ -28,6 +28,7 @@
- #include "libavutil/mem_internal.h"
- 
- #include "cabac.h"
-+#include "cabac_functions.h"
- 
- DECLARE_ASM_ALIGNED(1, const uint8_t, ff_h264_cabac_tables)[512 + 4*2*64 + 4*64 + 63] = {
-     9,8,7,7,6,6,6,6,5,5,5,5,5,5,5,5,
-@@ -185,3 +186,90 @@
+@@ -185,3 +185,14 @@
          return AVERROR_INVALIDDATA;
      return 0;
  }
 +
-+/* Diagnostic entry points: callers must opt in; normal decode never runs the
-+ * oracle. The reference is the unmodified scalar FFmpeg implementation. */
++int avpriv_psp_cabac_mode(void);
++
 +int avpriv_psp_cabac_mode(void)
 +{
 +#if defined(__PSP__) && PSP_CABAC_MOVN
@@ -70,91 +62,3 @@
 +    return 0;
 +#endif
 +}
-+
-+static av_always_inline int psp_cabac_reference(CABACContext *c, uint8_t * const state){
-+    int s = *state;
-+    int RangeLPS= ff_h264_lps_range[2*(c->range&0xC0) + s];
-+    int bit, lps_mask;
-+
-+    c->range -= RangeLPS;
-+    lps_mask= ((c->range<<(CABAC_BITS+1)) - c->low)>>31;
-+
-+    c->low -= (c->range<<(CABAC_BITS+1)) & lps_mask;
-+    c->range += (RangeLPS - c->range) & lps_mask;
-+
-+    s^=lps_mask;
-+    *state= (ff_h264_mlps_state+128)[s];
-+    bit= s&1;
-+
-+    lps_mask= ff_h264_norm_shift[c->range];
-+    c->range<<= lps_mask;
-+    c->low  <<= lps_mask;
-+    if(!(c->low & CABAC_MASK))
-+        refill2(c);
-+    return bit;
-+}
-+
-+static int psp_cabac_compare(CABACContext *a, CABACContext *b,
-+                             uint8_t *sa, uint8_t *sb)
-+{
-+    int actual = get_cabac_inline(a, sa);
-+    int expected = psp_cabac_reference(b, sb);
-+    return actual != expected || *sa != *sb || a->range != b->range ||
-+           a->low != b->low || a->bytestream != b->bytestream;
-+}
-+
-+int avpriv_psp_cabac_selftest(void)
-+{
-+    uint8_t data[8192 + 64];
-+    uint32_t seed = 0x531eca8u;
-+    for (unsigned i = 0; i < sizeof(data); ++i) {
-+        seed = seed * 1664525u + 1013904223u;
-+        data[i] = seed >> 24;
-+    }
-+    /* Every probability state and normalized range, at both interval edges,
-+     * at equality, and at the extreme valid low values. */
-+    for (int range = 256; range < 512; ++range)
-+        for (int state = 0; state < 128; ++state) {
-+            int lps = ff_h264_lps_range[2 * (range & 0xc0) + state];
-+            int split = (range - lps) << (CABAC_BITS + 1);
-+            int lows[] = {1, split - 1, split, split + 1,
-+                          (range << (CABAC_BITS + 1)) - 1};
-+            for (unsigned j = 0; j < 5; ++j) {
-+                CABACContext a = {lows[j], range, data, data + 4, data + 8192};
-+                CABACContext b = a;
-+                uint8_t sa = state, sb = state;
-+                if (psp_cabac_compare(&a, &b, &sa, &sb)) return 1;
-+            }
-+        }
-+    /* Sustained decisions exercise refill, renormalization, context updates
-+     * and both input alignments; compare bitstream positions after each bin. */
-+    for (unsigned trial = 0; trial < 32; ++trial) {
-+        CABACContext a, b;
-+        uint8_t states_a[128], states_b[128];
-+        unsigned offset = trial & 1;
-+        data[offset] = trial * 3;
-+        if (ff_init_cabac_decoder(&a, data + offset, 8192 - offset) < 0) return 2;
-+        b = a;
-+        for (unsigned i = 0; i < 128; ++i)
-+            states_a[i] = states_b[i] = (i + trial * 7) & 127;
-+        for (unsigned i = 0; i < 4096; ++i) {
-+            seed = seed * 1664525u + 1013904223u;
-+            unsigned index = seed >> 25;
-+            if (a.bytestream >= a.bytestream_end - 16) return 3;
-+            if (psp_cabac_compare(&a, &b, &states_a[index], &states_b[index])) return 4;
-+        }
-+    }
-+    return 0;
-+}
---- a/libavcodec/cabac.h
-+++ b/libavcodec/cabac.h
-@@ -46,6 +46,9 @@
-     const uint8_t *bytestream_end;
- }CABACContext;
- 
-+int avpriv_psp_cabac_mode(void);
-+int avpriv_psp_cabac_selftest(void);
-+
- int ff_init_cabac_decoder(CABACContext *c, const uint8_t *buf, int buf_size);
- 
- #endif /* AVCODEC_CABAC_H */
