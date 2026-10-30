@@ -75,29 +75,31 @@ void fillMediaUrl(BiliMediaUrl& target, const bilibili::DashMedia& source) {
 
 }  // namespace
 
-int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality) {
+int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
     liveLog("prepare bvid=%s cid=%lld", video.bvid, video.cid);
     if (transfer_cancel) {
         error = "Cancelled";
         return -1;
     }
-    bool completed = false;
+    auto response = BilibiliApi{}.get(bilibili::Api::PlayUrl2,
+        {{"bvid", video.bvid}, {"cid", std::to_string(video.cid)}, {"qn", std::to_string(quality)},
+         {"fnval", bilibili::BilibiliClient::FNVAL}, {"fnver", "0"}, {"fourk", "1"},
+         {"from_client", "BROWSER"}, {"web_location", "1315873"},
+         {"gaia_source", "view-card"}, {"is_main_page", "false"}, {"need_fragment", "false"},
+         {"isGaiaAvoided", "true"}, {"voice_balance", "1"}},
+        true, ErrorOperation::PreparePlayback, false);
+    if (!response) {
+        if (typedError) *typedError = response.error;
+        error = errorMessage(response.error);
+        return -1;
+    }
     bilibili::VideoUrlResult result;
-    std::string apiError;
-    int apiCode = 0;
-    bilibili::BilibiliClient::get_video_url(
-        video.bvid, static_cast<uint64_t>(video.cid), quality,
-        [&](bilibili::VideoUrlResult value) {
-            result = std::move(value);
-            completed = true;
-        },
-        [&](const std::string& message, int code) {
-            apiError = message;
-            apiCode = code;
-            liveLog("api error=%s code=%d", message.c_str(), code);
-        });
-
-    if (completed) {
+    try { result = response.value.data.get<bilibili::VideoUrlResult>(); }
+    catch (...) {
+        if (typedError) *typedError = {ErrorDomain::Api, ErrorKind::InvalidResponse, ErrorOperation::PreparePlayback};
+        error = "播放地址响应无法识别"; return -1;
+    }
+    {
         const bilibili::DashMedia* videoMedia = selectVideo(result, quality);
         const bilibili::DashMedia* audioMedia = selectAudio(result);
         liveLog("dash videos=%zu audios=%zu selected_video=%d selected_audio=%d",
@@ -126,31 +128,21 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
         error = "Cancelled";
         return -1;
     }
-    network_error[0] = 0;
-    liveLog("fallback progressive");
-    const int fallbackResult = bili_prepare_playback(&video, &playback);
-    liveLog("fallback result=%d error=%s", fallbackResult, network_error);
-    if (fallbackResult == 0) {
-        playback.quality = playback.qualities[0] = 16; playback.quality_count = 1;
-        return 0;
-    }
-    if (network_error[0]) {
-        error = network_error;
-    } else if (!apiError.empty()) {
-        error = apiError + " (" + std::to_string(apiCode) + ")";
-    } else {
-        error = "DASH and progressive MP4 are unavailable";
-    }
+    if (network_error[0]) error = network_error;
+    else error = "没有可播放的 H.264 / AAC DASH 视频流";
+    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown, ErrorOperation::PreparePlayback, -1, 0, network_error[0] ? "video_source" : "dash_unavailable"};
+
     return -1;
 }
 
-int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality) {
+int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
+    (void)episode;
     auto response = BilibiliApi{}.get(bilibili::Api::SeasonUrl2,
         {{"cid",std::to_string(video.cid)},{"qn",std::to_string(quality)},{"gaia_source",""},{"from_client","PC_APP"},
          {"is_main_page","false"},{"need_fragment","false"},{"isGaiaAvoided","false"},
          {"voice_balance","1"},{"drm_tech_type","3"},{"fourk","1"},{"fnval",bilibili::BilibiliClient::FNVAL},{"fnver","0"}},
-        false, ErrorOperation::PreparePlayback);
-    if (!response) { error = errorMessage(response.error); return -1; }
+        false, ErrorOperation::PreparePlayback, false);
+    if (!response) { if (typedError) *typedError = response.error; error = errorMessage(response.error); return -1; }
     try {
         const auto& info = response.value.data.at("video_info");
         auto result = info.get<bilibili::VideoUrlResult>();
@@ -161,21 +153,9 @@ int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlaybac
             const int code = bili_prepare_range_playback(&video,&videoUrl,&audioUrl,&playback);
             if (code == 0) { fillQuality(playback, result, videoMedia->id); return 0; }
         }
-        if (!result.durl.empty() && !transfer_cancel) {
-            BiliStream stream{};
-            const auto document = nlohmann::json{{"code",0},{"data",info}}.dump();
-            if (bili_parse_stream(document.c_str(),&stream) == 0) {
-                const std::string key = "ep" + std::to_string(episode);
-                const int code = bili_prepare_stream_playback(&stream,key.c_str(),&playback);
-                if (code == 0) {
-                    playback.quality = playback.qualities[0] = result.quality;
-                    playback.quality_count = 1;
-                }
-                return code;
-            }
-        }
         error = network_error[0] ? network_error : "没有可播放的 H.264 / AAC 视频流";
     } catch (const std::exception&) { error = "服务器响应无法识别"; }
+    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown, ErrorOperation::PreparePlayback, -1, 0, network_error[0] ? "video_source" : "dash_unavailable"};
     return -1;
 }
 

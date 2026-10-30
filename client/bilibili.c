@@ -1,3 +1,4 @@
+#include "services/playback_request_policy.h"
 #include "bilibili.h"
 #include "json.h"
 #include <stdio.h>
@@ -93,7 +94,7 @@ int bili_parse_stream(const char *text,BiliStream *out) {
 #ifndef HOST_TEST
 static int initialized;
 enum { NET_IDLE, NET_CONNECTING, NET_AUTHENTICATING, NET_GETTING_IP,
-       NET_SIGNING, NET_RECOMMEND, NET_FALLBACK, NET_REQUEST };
+       NET_SIGNING, NET_RECOMMEND, NET_FALLBACK, NET_REQUEST, NET_PLAYURL, NET_VIDEO_SOURCE, NET_DETAIL, NET_PARTS, NET_COMMENTS, NET_RELATION, NET_PROGRESS };
 static volatile int network_phase;
 void network_progress_reset(void) { network_phase=NET_IDLE; }
 const char *network_progress_message(void) {
@@ -101,9 +102,16 @@ const char *network_progress_message(void) {
     case NET_CONNECTING:return "正在连接 Wi-Fi…";
     case NET_AUTHENTICATING:return "正在验证 Wi-Fi 连接…";
     case NET_GETTING_IP:return "正在获取 IP 地址…";
-    case NET_SIGNING:return "正在准备首页请求…";
+    case NET_SIGNING:return "正在准备请求签名…";
     case NET_RECOMMEND:return "正在获取推荐列表…";
     case NET_FALLBACK:return "正在获取热门列表…";
+    case NET_PLAYURL:return "正在获取播放地址…";
+    case NET_VIDEO_SOURCE:return "正在连接视频源…";
+    case NET_PROGRESS:return "正在同步观看进度…";
+    case NET_DETAIL:return "正在获取视频详情…";
+    case NET_PARTS:return "正在获取分集信息…";
+    case NET_COMMENTS:return "正在获取视频评论…";
+    case NET_RELATION:return "正在获取收藏与互动状态…";
     case NET_REQUEST:return "正在请求数据…";
     default:return "";
     }
@@ -268,9 +276,14 @@ static int progress(void *ctx,curl_off_t total,curl_off_t now,curl_off_t up,curl
 }
 
 static int request(const char *url,Sink *sink) {
-    network_phase=strstr(url,"/x/web-interface/nav")?NET_SIGNING:
+    if (!sink->cancel) network_phase=playback_address_request(url)?NET_PLAYURL:strstr(url,"/x/web-interface/nav")?NET_SIGNING:
         strstr(url,"/wbi/index/top/feed/rcmd")?NET_RECOMMEND:
-        strstr(url,"/x/web-interface/popular")?NET_FALLBACK:NET_REQUEST;
+        strstr(url,"/x/web-interface/popular")?NET_FALLBACK:
+        strstr(url,"/x/web-interface/view")?NET_DETAIL:
+        strstr(url,"/x/player/wbi/v2") || strstr(url,"/x/player/v2")?NET_PROGRESS:
+        strstr(url,"/pgc/view/pc/season") || strstr(url,"/x/player/pagelist")?NET_PARTS:
+        strstr(url,"/reply/")?NET_COMMENTS:
+        strstr(url,"/x/web-interface/archive/relation") || strstr(url,"/pgc/season/episode/web/info") || strstr(url,"/pgc/view/web/season/user/status")?NET_RELATION:NET_REQUEST;
     CURL *c=sink->response?curl_easy_init():transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
@@ -318,7 +331,7 @@ static int request(const char *url,Sink *sink) {
     curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"http,https");
     curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT,12L);
     curl_easy_setopt(c,CURLOPT_LOW_SPEED_LIMIT,512L);
-    curl_easy_setopt(c,CURLOPT_LOW_SPEED_TIME,15L);
+    curl_easy_setopt(c,CURLOPT_LOW_SPEED_TIME,playback_address_request(url)?45L:15L);
     curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,write_data);curl_easy_setopt(c,CURLOPT_WRITEDATA,sink);
     curl_easy_setopt(c,CURLOPT_XFERINFOFUNCTION,progress);curl_easy_setopt(c,CURLOPT_XFERINFODATA,sink);
     curl_easy_setopt(c,CURLOPT_NOPROGRESS,0L);
@@ -332,7 +345,7 @@ static int request(const char *url,Sink *sink) {
         curl_easy_setopt(c,CURLOPT_TCP_NODELAY,1L);
     }
 #endif
-    curl_easy_setopt(c,CURLOPT_TIMEOUT,(sink->file || sink->stream)?0L:25L);
+    curl_easy_setopt(c,CURLOPT_TIMEOUT,(sink->file || sink->stream)?0L:playback_address_request(url)?45L:25L);
     CURLcode r=curl_easy_perform(c);
     long status=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&status);
     if(headers)curl_slist_free_all(headers);
@@ -348,6 +361,7 @@ static int request(const char *url,Sink *sink) {
     if(sink->stream)stream_profile_http(c,sink->stream);
 #endif
     if(r!=CURLE_OK || status!=200){
+        if (sink->cancel) return -1; /* Overlay failures stay local to their request. */
         if((sink->cancel&&*sink->cancel) || transfer_cancel)snprintf(network_error,sizeof(network_error),"Cancelled");
         else snprintf(network_error,sizeof(network_error),"HTTP %ld: %s",status,detail[0]?detail:curl_easy_strerror(r));
         return -1;
@@ -367,18 +381,22 @@ static int get_file(const char *url,const char *path,size_t max,unsigned long lo
     if(r<0)remove(tmp);
     return r;
 }
-int bili_http_get_response(const char *url,BiliHttpResponse *out,size_t max_bytes) {
+int bili_http_get_response_cancel(const char *url,BiliHttpResponse *out,size_t max_bytes,volatile int *cancel) {
     if(!out)return -1;
     memset(out,0,sizeof(*out));
     if(!url || max_bytes<2 || max_bytes>1024*1024){out->failure=BILI_HTTP_MEMORY;return -1;}
-    if(network_connect()<0){out->failure=transfer_cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
+    if(cancel && (*cancel || !network_ready())) {out->failure=*cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
+    if(!cancel && network_connect()<0){out->failure=transfer_cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
     char *text=calloc(1,max_bytes+1);
     if(!text){out->failure=BILI_HTTP_MEMORY;return -1;}
-    Sink sink={.text=text,.limit=max_bytes,.response=out};
+    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel};
     int result=request(url,&sink);
     if(result<0){free(text);return -1;}
     out->text=text;
     return 0;
+}
+int bili_http_get_response(const char *url,BiliHttpResponse *out,size_t max_bytes) {
+    return bili_http_get_response_cancel(url,out,max_bytes,NULL);
 }
 int bili_http_post_response(const char *url,const char *form,BiliHttpResponse *out,size_t max_bytes) {
     if(!out)return -1;
@@ -1385,6 +1403,7 @@ int bili_prepare_range_playback(const BiliVideo *v, const BiliMediaUrl *video_ur
     memset(out, 0, sizeof(*out));
     snprintf(out->path, sizeof(out->path), "dash");
     if (network_connect() < 0) return -1;
+    network_phase = NET_VIDEO_SOURCE;
     char error[160] = {0};
     int64_t video_size = 0, audio_size = 0;
     BiliRangeStream *video = NULL, *audio = NULL;

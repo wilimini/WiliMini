@@ -29,9 +29,12 @@ cases = {
     'paused-seek': ({}, '4:0x8:0.2,5:0x200:0.2,8:0x2000:0.2,11:0x8:0.2', [6.5, 7.5], 13),
     'hold-preview': ({}, '4:0x20:1.2,11:0x8:0.2', [4.2, 4.8, 6.5], 13),
     'split-seek': ({'mode': 'split', 'audio': 'controls.mp4'}, '4:0x200:0.2,11:0x8:0.2', [6], 13),
-    'menu': ({'danmaku': True}, '3.3:0x1000:0.15,3.6:0x20:0.15,3.9:0x4000:0.15,4.2:0x20:0.15,4.5:0x40:0.15,4.8:0x20:0.15,5.1:0x40:0.15,5.4:0x80:0.15,5.7:0x10:0.15,7.2:0x1000:0.15,9:0x2000:0.2,11:0x8:0.2', [3.5, 4.4, 4.8, 6.9, 8], 13),
-    'quality-menu': ({}, '3.5:0x1000:0.15,3.8:0x4000:0.15,4.2:0x20:0.15,4.6:0x4000:0.15,10:0x8:0.2', [4.4], 12),
-    'subtitles': ({'subtitles': True, 'start_paused': True}, '4:0x1000:0.15,4.3:0x80:0.15,4.6:0x4000:0.15,5:0x40:0.15,6:0x40:0.15,7.2:0x1000:0.15,8:0x8:0.15,10:0x20:0.15,12:0x2000:0.15,14:0x8:0.15', [5.5, 6.5, 9, 11.8], 16),
+    'menu': ({'danmaku': True, 'start_paused': True}, '3.3:0x1000:0.1,3.6:0x20:0.1,3.9:0x4000:0.1,4.2:0x4000:0.1,4.5:0x40:0.1,4.8:0x4000:0.1,5.1:0x40:0.1,5.4:0x4000:0.1,5.7:0x40:0.1,6:0x4000:0.1,6.3:0x10:0.1,6.6:0x4000:0.1,7.2:0x1000:0.1,9:0x2000:0.2,11:0x8:0.2', [4.4, 5.2, 6.4, 6.9], 13),
+    'quality-menu': ({}, '3.5:0x1000:0.15,3.8:0x4000:0.15,4.2:0x10:0.15,4.6:0x4000:0.15,10:0x8:0.2', [4.4], 12),
+    'subtitles': ({'subtitles': True, 'start_paused': True}, '4:0x1000:0.15,4.3:0x80:0.15,4.6:0x4000:0.15,5:0x40:0.15,5.3:0x4000:0.15,5.7:0x4000:0.15,6:0x40:0.15,6.3:0x4000:0.15,7.2:0x1000:0.15,8:0x8:0.15,10:0x20:0.15,12:0x2000:0.15,14:0x8:0.15', [5.5, 6.5, 9, 11.8], 16),
+    'async-overlays': ({'async_overlays': True, 'start_paused': True}, '9:0x2000:0.2,11:0x8:0.2', [3, 6, 8], 13),
+    'overlay-cancel': ({'async_overlays': True, 'start_paused': True}, '2.3:0x2000:0.2,6:0x8:0.2', [2], 8),
+    'overlay-failure': ({'async_overlays': True, 'overlay_failure': True}, '12:0x8:0.2', [4, 7], 14),
     'seek-cancel': ({}, '4:0x20:0.15,4.2:0x2000:0.15,7:0x2000:0.2,11:0x8:0.2', [4.1, 5], 13),
 }
 checks = {}
@@ -70,6 +73,12 @@ for name in sys.argv[1:] or cases:
         checks['menu_visible'] = any(x['menu'] for x in samples)
         checks['danmaku_toggle'] = any(not x['danmaku'] for x in samples)
         checks['density_and_opacity'] = any(x['density'] == 2 and x['opacity'] == 50 for x in samples)
+    elif name in ('async-overlays', 'overlay-failure', 'overlay-cancel'):
+        requests = result['overlay_requests']
+        checks[name+'_first_frame_before_network'] = all(x['time_us'] >= result['first_frame_us'] > 0 for x in requests)
+        checks[name+'_only_selected_track'] = sum(x['kind'] == 'selected_subtitle' for x in requests) == (1 if name == 'async-overlays' else 0)
+        if name == 'overlay-cancel': checks['overlay_cancel_joins'] = result['cancelled'] == 1 and len(requests) == 1
+        if name == 'overlay-failure': checks['overlay_failure_does_not_stop_video'] = result['eof'] == 1
     elif name == 'subtitles':
         checks['subtitle_tracks_selectable'] = {1, 2}.issubset({x['subtitle'] for x in samples})
         checks['subtitle_seek_retained'] = result['seek_count'] == 1 and len(result['plays']) == 1

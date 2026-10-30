@@ -187,12 +187,11 @@ int main(int argc, char** argv) {
                               psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
                                   : PSP_VIDEO_BACKEND_NATIVE_ME;
-            auto osd = std::make_unique<pspapp::PlaybackOsd>(app.playbackTitle(), app.preferences(), app.playbackDanmaku(), app.playbackSubtitles());
+            auto osd = std::make_unique<pspapp::PlaybackOsd>(app.playbackTitle(), app.preferences());
+            osd->enableNetwork(app.playbackCard().bvid, app.playbackCard().cid, app.playbackCard().aid);
             options.presenter = osd->presenter();
             options.start_paused = app.playbackPaused();
             auto settings = app.playerSettings();
-            settings.subtitle_count = osd->subtitleCount();
-            if (settings.subtitle_track > settings.subtitle_count) settings.subtitle_track = 0;
             settings.quality = app.playback().quality;
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
@@ -279,7 +278,8 @@ int main(int argc, char** argv) {
             if (pressed & PSP_CTRL_START) break;
         } else {
             if (pressed & PSP_CTRL_START) break;
-            if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
+            if (app.playbackFailed() && (pressed & (confirmButton | PSP_CTRL_TRIANGLE))) app.retry();
+            else if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
             else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);
             else if (app.screen() == pspapp::Screen::Browse) {
                 if (pressed & backButton) app.back();

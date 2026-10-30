@@ -4,6 +4,8 @@
 #include "services/danmaku.hpp"
 #include "services/subtitles.hpp"
 #include "bitmap_font.hpp"
+#include "services/network.hpp"
+#include <pspkernel.h>
 #include <memory>
 #include <cstdlib>
 #include <string>
@@ -12,15 +14,34 @@
 namespace pspapp {
 class PlaybackOsd {
 public:
-    PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments = {}, const std::vector<SubtitleTrack>& subtitles = {});
+    PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments = {}, const std::vector<SubtitleTrack>& subtitles = {}, bool initializeDisplay = true);
+    ~PlaybackOsd();
+    void enableNetwork(const std::string& bvid, uint64_t cid, uint64_t aid, HttpClient::Transport transport = {});
     int subtitleCount() const { return static_cast<int>(subtitles_.size()); }
     const PspVideoPresenter* presenter() const { return &presenter_; }
 private:
+    Preferences preferences_;
+    HttpClient::Transport overlayTransport_;
+    std::string bvid_;
+    uint64_t cid_ = 0, aid_ = 0;
+    SceUID overlayThread_ = -1, overlayLock_ = -1;
+    volatile int overlayStop_ = 0;
+    bool overlayStarted_ = false, pendingComments_ = false;
+    PlaybackOsd* pending_ = nullptr;
+    int metadataCount_ = -1, requestedTrack_ = 0, overlayMessage_ = 0;
+    int shownMessage_ = 0;
+    uint64_t messageUntil_ = 0;
+    std::string overlayMessages_[5], startupLabels_[3];
+    static int overlayEntry(SceSize size, void* arg);
+    void loadOverlays();
+    bool publish(PlaybackOsd* prepared, bool comments);
+    void receiveOverlays();
+    void updateSettings(PspVideoSettings& settings);
     struct Glyph { uint32_t cp; unsigned short u, v; unsigned char width, height, advance; };
-    alignas(16) unsigned char atlas_[256 * 256]{};
+    alignas(16) unsigned char atlas_[512 * 256]{};
     alignas(16) unsigned int palette_[256]{};
     alignas(16) unsigned int commands_[16384]{};
-    Glyph glyphs_[144]{};
+    Glyph glyphs_[300]{};
     struct Comment {
         int64_t timeMs = 0;
         unsigned color = 0xffffff;
@@ -43,7 +64,7 @@ private:
     uint64_t lastDraw_ = 0;
     bool haveFrame_ = false;
     std::string title_, seeking_, buffering_, qualityNames_[3];
-    std::string menuLabels_[5], density_[3], on_, off_, noSubtitles_;
+    std::string menuLabels_[5], density_[3], on_, off_, noSubtitles_, display_;
     void icon(int x, int y, unsigned id);
     PspVideoPresenter presenter_{};
     void cache(const std::string& text);

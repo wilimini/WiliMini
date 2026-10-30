@@ -90,6 +90,7 @@ typedef struct {
 int bili_http_credential_host(const char *url);
 int bili_http_login_host(const char *url);
 size_t bili_http_capture_cookie(char *data, size_t size, size_t count, void *response);
+int bili_http_get_response_cancel(const char *url, BiliHttpResponse *out, size_t max_bytes, volatile int *cancel);
 int bili_http_get_response(const char *url, BiliHttpResponse *out, size_t max_bytes);
 int bili_http_post_response(const char *url, const char *form, BiliHttpResponse *out, size_t max_bytes);
 /* Called only between joined jobs; credentials are scoped to API/passport HTTPS. */

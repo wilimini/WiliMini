@@ -84,7 +84,11 @@ std::string errorMessage(const AppError &e) {
     default:
         if (e.domain == ErrorDomain::Playback) {
             if (e.operation == ErrorOperation::PreparePlayback) {
-                if (e.detail == "audio_init")
+                if (e.detail == "dash_unavailable")
+                    text = "没有可播放的 H.264 / AAC DASH 视频流";
+                else if (e.detail == "video_source")
+                    text = "连接视频源失败，请重试";
+                else if (e.detail == "audio_init")
                     text = "音频初始化失败";
                 else if (e.detail == "video_init")
                     text = "视频解码器初始化失败";

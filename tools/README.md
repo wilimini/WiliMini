@@ -107,3 +107,8 @@ JIT 热点输出；真机 PSPLink、硬件计数器及 gprof 的能力与限制�
 `BILI_HEADLESS_REALTIME=1` 让启动器以实时速度运行，适用于网络下载测试。
 `tools/serve-playback-fixture.py --video <mp4> --audio <m4a>` 提供限定文件的 HTTP Range
 测试服务，运行结束后关闭。它不验证 Bilibili CDN 或真实画质切换。
+
+`test-playback-controls.py` 的 `async-overlays`、`overlay-cancel`、`overlay-failure`
+使用延迟传输替身验证首帧后加载、只请求选中字幕、取消与错误隔离；不是实际 CDN 测试。
+主机请求策略和错误提示检查分别为 `tests/playback_request_policy_test.c`、
+`tests/playback_error_test.cpp`。

@@ -120,6 +120,7 @@ static int video_cancel_thread(SceSize size, void *arg) {
             if (playback_seeking || video_stage != PSP_VIDEO_STAGE_PLAY)
                 keys &= ~(PC_LEFT | PC_RIGHT | PC_REWIND | PC_FORWARD);
             sceKernelWaitSema(controls_lock, 1, NULL);
+            if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
             if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
             if (action == PC_SEEK) {
@@ -223,7 +224,7 @@ static int present_video(const uint32_t *pixels) {
         controls.paused, controls.visible, controls.seeking, controls.seekable, playback_seeking,
         controls.menu_open, controls.menu_row,
         controls.settings.quality_count > 0 ? controls.settings.qualities[controls.quality_index] : 0,
-        controls.settings};
+        controls.settings, video_stage, controls.menu_value};
     sceKernelSignalSema(controls_lock, 1);
     return presenter->present(presenter->opaque, pixels, &status);
 }

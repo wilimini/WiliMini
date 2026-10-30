@@ -1,4 +1,5 @@
 #include "network.hpp"
+#include "playback_request_policy.h"
 #include "../bilibili.h"
 
 namespace pspapp {
@@ -80,7 +81,7 @@ Result<HttpResponse> HttpClient::get(const std::string &url, ErrorOperation op,
         if (!response.error)
             return {std::move(response), {}};
         response.error.operation = op;
-        if (attempt == 0 && retrySafe && mayRetry(response.error) && !transfer_cancel)
+        if (attempt == 0 && retrySafe && !playback_address_request(url.c_str()) && mayRetry(response.error) && !transfer_cancel)
             continue;
         return Result<HttpResponse>::failure(std::move(response.error));
     }

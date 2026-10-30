@@ -459,7 +459,7 @@ void drawFooter(const pspapp::App& app) {
     }
     if (app.screen() != pspapp::Screen::Login && !app.clearingCovers() && !app.busy() &&
         (nowTicks < statusUntil ||
-         (app.playbackFailed() && app.screen() == pspapp::Screen::Detail)) &&
+         app.playbackFailed()) &&
         !lastStatus.empty())
         hint = lastStatus;
     drawText(12, 254, 0.46f, kTextDim, hint, 456);

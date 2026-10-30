@@ -36,6 +36,8 @@ typedef struct {
     int paused, controls_visible, seeking, seekable, buffering;
     int menu_open, menu_row, quality_preview;
     PspVideoSettings settings;
+    int startup_stage;
+    int menu_value; /* Preview only; settings retain applied values until confirmation. */
 } PspVideoStatus;
 typedef struct {
     void *opaque;
@@ -44,6 +46,7 @@ typedef struct {
      * Copy pixels before returning; never retain a queue slot. This callback
      * owns DMA, GE completion and scanout switching. No network or disk I/O. */
     int (*present)(void *opaque, const uint32_t *pixels, const PspVideoStatus *status);
+    void (*update_settings)(void *opaque, PspVideoSettings *settings);
 } PspVideoPresenter;
 typedef struct {
     const char *path;     /* seekable local MP4, unused when source is set */

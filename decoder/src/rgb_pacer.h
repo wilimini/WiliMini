@@ -34,7 +34,7 @@ static int rgb_worker(SceSize size, void *arg)
         int ready = sceKernelWaitSema(rgb_ready, 1, presenter ? &refresh_timeout : NULL);
         if (ready < 0) {
             if (rgb_stop) return 0;
-            if (presenter && rgb_startup_ready && !quit_requested && present_video(NULL) < 0) rgb_error = -113;
+            if (presenter && !quit_requested && present_video(NULL) < 0) rgb_error = -113;
             continue;
         }
         if (rgb_stop && rgb_consumed == rgb_produced) return 0;

@@ -413,6 +413,11 @@ void App::refresh() {
 }
 
 void App::retry() {
+    if (navigation_.current().playbackFailed) {
+        if (screen() == Screen::Detail) startPlay(jobCard_, jobCid_, jobDuration_);
+        else startJob(Job::CommunityPlay);
+        return;
+    }
     if (screen() == Screen::Detail && !detailState().loaded) {
         jobCard_ = detailState().detail.card;
         startJob(Job::Detail);
@@ -1094,8 +1099,6 @@ void App::startJob(Job job) {
     stagedHasMore_ = false;
     stagedDetail_ = VideoDetailView{};
     stagedPlayback_ = BiliPlayback{};
-    stagedDanmaku_.clear();
-    stagedSubtitles_.clear();
     busy_ = true;
     if (job != Job::HistoryReport)
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
@@ -1177,6 +1180,12 @@ void App::poll() {
         if (job_ == Job::Play || job_ == Job::CommunityPlay) {
             bili_finish_playback(&stagedPlayback_);
             stagedPlayback_ = BiliPlayback{};
+            if (!transfer_cancel) {
+                navigation_.current().playbackFailed = true;
+                if (!jobTypedError_) jobTypedError_ = {ErrorDomain::Playback, ErrorKind::Unknown,
+                    ErrorOperation::PreparePlayback, jobResult_, 0,
+                    jobError_.empty() ? (network_error[0] ? network_error : "无法准备视频流") : jobError_};
+            }
         }
         navigation_.current().error = jobTypedError_;
         if ((job_ == Job::Browse || job_ == Job::CommunityWrite || job_ == Job::CommunityPlay) && hasBrowse()) browseState().error = navigation_.current().error;
@@ -1186,6 +1195,7 @@ void App::poll() {
                                 : (jobError_.empty()
                                        ? (network_error[0] ? network_error : "载入失败，△ 重试")
                                        : jobError_));
+        if (navigation_.current().playbackFailed && !transfer_cancel) status_ += " · △ 重试";
         if (navigation_.current().error)
             logError(CLIENT_PATH("/last-error.txt"), navigation_.current().error);
         if (job_ == Job::Search)
@@ -1350,10 +1360,8 @@ void App::commitJob() {
             playbackEpisode_ = jobMedia_.epId;
             playbackSeason_ = jobMedia_.seasonId;
         }
-        if (playbackDanmakuCid_ != playbackCard_.cid) playerSettings_.subtitle_track = 0;
-        playbackSubtitles_ = std::move(stagedSubtitles_);
-        playbackDanmaku_ = std::move(stagedDanmaku_);
-        playbackDanmakuCid_ = playbackCard_.cid;
+        if (playbackOverlayCid_ != playbackCard_.cid) playerSettings_.subtitle_track = 0;
+        playbackOverlayCid_ = playbackCard_.cid;
         playback_ = stagedPlayback_;
         stagedPlayback_ = BiliPlayback{};
         playbackReady_ = true;
@@ -1363,15 +1371,6 @@ void App::commitJob() {
 }
 
 void App::runJob() {
-    if (job_ == Job::Play || job_ == Job::CommunityPlay) {
-        const uint64_t cid = job_ == Job::Play ? (jobCid_ ? jobCid_ : jobCard_.cid) : jobMedia_.cid;
-        stagedDanmaku_ = cid == playbackDanmakuCid_ ? playbackDanmaku_ : loadDanmaku(cid);
-        if (transfer_cancel) { jobResult_ = -1; return; }
-        stagedSubtitles_ = cid == playbackDanmakuCid_ ? playbackSubtitles_ : loadSubtitles(
-            job_ == Job::Play ? jobCard_.bvid : jobMedia_.bvid, cid,
-            job_ == Job::Play ? jobCard_.aid : jobMedia_.aid);
-        if (transfer_cancel) { jobResult_ = -1; return; }
-    }
     if (job_ == Job::CommunityPlay) {
         if (jobMedia_.next.kind == BrowseKind::LiveStream) {
             jobResult_ = bili_prepare_live_playback(jobMedia_.text.c_str(), &stagedPlayback_);
@@ -1380,7 +1379,7 @@ void App::runJob() {
             std::snprintf(video.bvid, sizeof(video.bvid), "%s", jobMedia_.bvid.c_str());
             std::snprintf(video.title, sizeof(video.title), "%s", jobMedia_.title.c_str());
             video.cid = static_cast<long long>(jobMedia_.cid); video.duration = jobMedia_.duration;
-            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_);
+            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_);
         }
     } else if (job_ == Job::Browse) {
         auto result = communityService_.load(jobBrowse_, sessions_.current());
@@ -1646,7 +1645,7 @@ void App::runJob() {
         video.cid = static_cast<long long>(jobCid_ ? jobCid_ : jobCard_.cid);
         video.duration = jobDuration_;
         std::string playbackError;
-        const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_);
+        const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_);
         if (result < 0) {
             jobError_ = playbackError.empty() ? "无法准备视频流" : playbackError;
             jobResult_ = result;
@@ -1675,8 +1674,7 @@ void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
 
 void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, PspVideoStage stage, int64_t positionMs) {
     playbackPaused_ = false;
-    playbackDanmaku_.clear(); playbackDanmakuCid_ = 0;
-    playbackSubtitles_.clear();
+    playbackOverlayCid_ = 0;
     const int cacheResult = bili_finish_playback(&playback_);
     playbackReady_ = false;
     playback_ = BiliPlayback{};

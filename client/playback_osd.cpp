@@ -1,5 +1,7 @@
 #include "playback_osd.hpp"
 #include "bitmap_font.hpp"
+#include "services/network.hpp"
+#include "bilibili.h"
 #include "assets/player_icons.generated.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -22,7 +24,7 @@ void timestamp(char* value, size_t size, int64_t ms) {
     else std::snprintf(value, size, "%02lld:%02lld", seconds / 60, seconds % 60);
 }
 }
-PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments, const std::vector<SubtitleTrack>& subtitles) : title_(title) {
+PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments, const std::vector<SubtitleTrack>& subtitles, bool initializeDisplay) : preferences_(preferences), title_(title) {
     const bool en = preferences.locale == Locale::EnUs;
     seeking_ = en ? "Seek preview" : "跳转预览";
     buffering_ = en ? "Seeking..." : "正在定位…";
@@ -31,6 +33,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     menuLabels_[2] = en ? "Density" : "密度";
     menuLabels_[3] = en ? "Opacity" : "不透明度";
     menuLabels_[4] = en ? "Subtitles" : "字幕";
+    display_ = en ? "Show" : "显示";
     noSubtitles_ = en ? "Unavailable" : "暂无可用字幕";
     density_[0] = en ? "Low" : "稀疏";
     density_[1] = en ? "Medium" : "适中";
@@ -40,18 +43,27 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
         unsigned u = i * 20;
         glyphs_[count_++] = {0xf000 + i, static_cast<unsigned short>(u), 0, 20, 20, 20};
         for (unsigned y = 0; y < 20; ++y)
-            std::memcpy(atlas_ + y * 256 + u, player_icons::alpha[i] + y * 20, 20);
+            std::memcpy(atlas_ + y * 512 + u, player_icons::alpha[i] + y * 20, 20);
     }
     qualityNames_[0] = en ? "360P" : "360P 流畅";
     qualityNames_[1] = en ? "480P" : "480P 清晰";
     qualityNames_[2] = en ? "720P" : "720P 高清";
     for (const auto& label : qualityNames_) cache(label);
     cache("P");
-    cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
+    cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
     for (const auto& label : menuLabels_) cache(label);
     for (const auto& label : density_) cache(label);
     cache(seeking_);
     cache("0123456789:/- ?p%..."); cache(title_);
+    overlayMessages_[1] = en ? "Danmaku unavailable" : "弹幕加载失败";
+    overlayMessages_[2] = en ? "Subtitles unavailable" : "字幕加载失败";
+    overlayMessages_[3] = en ? "Loading subtitles..." : "正在加载字幕…";
+    overlayMessages_[4] = en ? "Subtitles loaded" : "字幕已加载";
+    startupLabels_[0] = en ? "Connecting video..." : "正在连接视频源…";
+    startupLabels_[1] = en ? "Preparing audio..." : "正在准备音频…";
+    startupLabels_[2] = en ? "Buffering first frame..." : "正在缓冲首帧…";
+    for (const auto& label : overlayMessages_) cache(label);
+    for (const auto& label : startupLabels_) cache(label);
     for (unsigned i = 0; i < 256; ++i) palette_[i] = (i << 24) | 0x00ffffff;
     cacheComments(comments);
     cacheSubtitles(subtitles);
@@ -61,11 +73,148 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     sceKernelDcacheWritebackRange(palette_, sizeof(palette_));
     // Third VRAM page holds only video, so hiding controls or redrawing a
     // paused frame never leaves stale text. No extra RGB allocation in RAM.
-    std::memset(vram(2 * frameBytes), 0, frameBytes);
+    if (initializeDisplay) std::memset(vram(2 * frameBytes), 0, frameBytes);
     presenter_ = {this, [](void* opaque, const uint32_t* pixels, const PspVideoStatus* status) {
         return static_cast<PlaybackOsd*>(opaque)->draw(pixels, *status);
+    }, [](void* opaque, PspVideoSettings* settings) {
+        static_cast<PlaybackOsd*>(opaque)->updateSettings(*settings);
     }};
 }
+PlaybackOsd::~PlaybackOsd() {
+    overlayStop_ = 1;
+    if (overlayThread_ >= 0) {
+        if (overlayStarted_) sceKernelWaitThreadEnd(overlayThread_, nullptr);
+        sceKernelDeleteThread(overlayThread_);
+    }
+    delete pending_;
+    if (overlayLock_ >= 0) sceKernelDeleteSema(overlayLock_);
+}
+void PlaybackOsd::enableNetwork(const std::string& bvid, uint64_t cid, uint64_t aid, HttpClient::Transport transport) {
+    if (!cid || overlayThread_ >= 0) return;
+    bvid_ = bvid; cid_ = cid; aid_ = aid; overlayTransport_ = std::move(transport);
+    overlayLock_ = sceKernelCreateSema("overlay_state", 0, 1, 1, nullptr);
+    if (overlayLock_ < 0) return;
+    overlayThread_ = sceKernelCreateThread("playback_overlays", overlayEntry, 0x28,
+                                         224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
+}
+int PlaybackOsd::overlayEntry(SceSize, void* arg) {
+    auto* self = *static_cast<PlaybackOsd**>(arg);
+    try { self->loadOverlays(); }
+    catch (...) {
+        sceKernelWaitSema(self->overlayLock_, 1, nullptr);
+        self->overlayMessage_ = 2;
+        self->metadataCount_ = 0;
+        sceKernelSignalSema(self->overlayLock_, 1);
+    }
+    return 0;
+}
+bool PlaybackOsd::publish(PlaybackOsd* prepared, bool comments) {
+    while (!overlayStop_) {
+        sceKernelWaitSema(overlayLock_, 1, nullptr);
+        if (!pending_) {
+            pending_ = prepared; pendingComments_ = comments;
+            sceKernelSignalSema(overlayLock_, 1);
+            return true;
+        }
+        sceKernelSignalSema(overlayLock_, 1);
+        sceKernelDelayThread(10000);
+    }
+    delete prepared;
+    return false;
+}
+void PlaybackOsd::receiveOverlays() {
+    if (overlayLock_ < 0 || sceKernelPollSema(overlayLock_, 1) < 0) return;
+    auto* prepared = pending_;
+    const bool comments = pendingComments_;
+    pending_ = nullptr;
+    if (overlayMessage_) {
+        shownMessage_ = overlayMessage_;
+        messageUntil_ = sceKernelGetSystemTimeWide() + 5000000;
+        overlayMessage_ = 0;
+    }
+    sceKernelSignalSema(overlayLock_, 1);
+    if (!prepared) return;
+    // Previous GU list is synchronized before this function can run again.
+    // All allocation, rasterization and font reads happened on the worker.
+    if (comments) comments_.swap(prepared->comments_);
+    else {
+        subtitles_.swap(prepared->subtitles_);
+        subtitleGlyphs_.swap(prepared->subtitleGlyphs_);
+        std::memcpy(atlas_, prepared->atlas_, sizeof(atlas_));
+        std::memcpy(glyphs_, prepared->glyphs_, sizeof(glyphs_));
+        count_ = prepared->count_;
+        subtitleTrack_ = subtitleCue_ = -1;
+        sceKernelDcacheWritebackRange(atlas_, sizeof(atlas_));
+        sceKernelWaitSema(overlayLock_, 1, nullptr);
+        metadataCount_ = static_cast<int>(subtitles_.size());
+        sceKernelSignalSema(overlayLock_, 1);
+    }
+    delete prepared;
+}
+void PlaybackOsd::updateSettings(PspVideoSettings& settings) {
+    if (overlayLock_ < 0) return;
+    sceKernelWaitSema(overlayLock_, 1, nullptr);
+    if (metadataCount_ >= 0) {
+        settings.subtitle_count = metadataCount_;
+        if (settings.subtitle_track > metadataCount_) settings.subtitle_track = 0;
+    }
+    requestedTrack_ = settings.subtitle_track;
+    sceKernelSignalSema(overlayLock_, 1);
+}
+void PlaybackOsd::loadOverlays() {
+    HttpClient::Transport deviceTransport = [this](const std::string& url, ErrorOperation op) {
+        BiliHttpResponse response{};
+        HttpResponse out;
+        bili_http_get_response_cancel(url.c_str(), &response, 512 * 1024, &overlayStop_);
+        if (response.text) { out.body = response.text; bili_http_free(response.text); }
+        if (response.failure) out.error = {ErrorDomain::Network,
+            overlayStop_ ? ErrorKind::Cancelled : ErrorKind::HttpFailure, op, response.transport_code, response.status};
+        return out;
+    };
+    HttpClient http(overlayTransport_ ? overlayTransport_ : deviceTransport);
+    auto message = [this](int code) {
+        sceKernelWaitSema(overlayLock_, 1, nullptr);
+        overlayMessage_ = code;
+        sceKernelSignalSema(overlayLock_, 1);
+    };
+    // This thread starts only after the first frame has reached the presenter.
+    bool failed = false;
+    auto tracks = subtitleTracks(bvid_, cid_, aid_, http, failed);
+    if (overlayStop_) return;
+    if (failed) message(2);
+    auto* metadata = new PlaybackOsd(title_, preferences_, {}, tracks, false);
+    if (!publish(metadata, false)) return;
+    auto response = http.get("https://api.bilibili.com/x/v1/dm/list.so?oid=" + std::to_string(cid_), ErrorOperation::Request, false);
+    if (overlayStop_) return;
+    if (response) {
+        auto comments = parseDanmaku(response.value.body);
+        auto* prepared = new PlaybackOsd(title_, preferences_, comments, {}, false);
+        if (!publish(prepared, true)) return;
+    } else message(1);
+    int loaded = 0;
+    while (!overlayStop_) {
+        sceKernelWaitSema(overlayLock_, 1, nullptr);
+        const int selected = requestedTrack_;
+        sceKernelSignalSema(overlayLock_, 1);
+        if (selected > 0 && selected <= static_cast<int>(tracks.size()) && selected != loaded) {
+            message(3);
+            auto result = http.get(tracks[selected - 1].url, ErrorOperation::Request, false);
+            if (overlayStop_) return;
+            for (auto& track : tracks) track.cues.clear();
+            if (result) tracks[selected - 1].cues = parseSubtitles(result.value.body);
+            failed = !result || tracks[selected - 1].cues.empty();
+            loaded = selected;
+            auto* prepared = new PlaybackOsd(title_, preferences_, {}, tracks, false);
+            failed = failed || prepared->subtitles_[selected - 1].cues.empty();
+            if (!publish(prepared, false)) return;
+            message(failed ? 2 : 4);
+        } else {
+            if (selected == 0) loaded = 0; // Off/on permits retry of a failed track.
+            sceKernelDelayThread(50000);
+        }
+    }
+}
+
 void PlaybackOsd::cacheSubtitles(const std::vector<SubtitleTrack>& tracks) {
     std::set<uint32_t> points{'?'};
     for (const auto& track : tracks) {
@@ -75,7 +224,12 @@ void PlaybackOsd::cacheSubtitles(const std::vector<SubtitleTrack>& tracks) {
                 next.insert(bitmapNext(cue.text, p));
             if (next.size() > 4096) break;
         }
-        if (next.size() > 4096 || subtitles_.size() == 3) continue;
+        if (subtitles_.size() == 3) break;
+        if (next.size() > 4096) {
+            subtitles_.push_back({track.label, {}, track.url});
+            cache(track.label);
+            continue;
+        }
         points = std::move(next);
         subtitles_.push_back(track);
         cache(track.label);
@@ -91,7 +245,7 @@ void PlaybackOsd::drawSubtitles(const PspVideoStatus& status) {
     const auto& cues = subtitles_[track].cues;
     const int cue = subtitleAt(cues, status.position_ms);
     if (cue < 0) return;
-    const bool narrow = status.menu_open == 2;
+    const bool narrow = status.menu_open >= 2;
     if (track != subtitleTrack_ || cue != subtitleCue_ || narrow != subtitleNarrow_) {
         subtitleNarrow_ = narrow;
         subtitleTrack_ = track; subtitleCue_ = cue;
@@ -149,7 +303,7 @@ void PlaybackOsd::drawSubtitles(const PspVideoStatus& status) {
     sceGuClutMode(GU_PSM_8888, 0, 255, 0);
     sceGuClutLoad(32, palette_);
     sceGuTexMode(GU_PSM_T8, 0, 0, 0);
-    sceGuTexImage(0, 256, 256, 256, atlas_);
+    sceGuTexImage(0, 512, 256, 512, atlas_);
     sceGuTexFilter(GU_LINEAR, GU_LINEAR);
 }
 
@@ -243,16 +397,16 @@ void PlaybackOsd::cache(const std::string& value) {
         uint32_t cp = bitmapNext(value, pos);
         bool exists = false;
         for (unsigned i = 0; i < count_; ++i) if (glyphs_[i].cp == cp) exists = true;
-        if (exists || count_ == 144) continue;
+        if (exists || count_ == 300) continue;
         const auto* glyph = bitmapGlyph(cp, 16);
         if (!glyph || glyph->width > 20 || glyph->height > 20) continue;
-        unsigned u = count_ % 12 * 20, v = count_ / 12 * 20;
+        unsigned u = count_ % 25 * 20, v = count_ / 25 * 20;
         glyphs_[count_++] = {cp, static_cast<unsigned short>(u), static_cast<unsigned short>(v),
                             glyph->width, glyph->height, glyph->advance};
         for (unsigned y = 0; y < glyph->height; ++y)
             for (unsigned x = 0; x < glyph->width; ++x) {
                 unsigned pixel = y * glyph->width + x;
-                atlas_[(v + y) * 256 + u + x] = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
+                atlas_[(v + y) * 512 + u + x] = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
             }
     }
 }
@@ -301,12 +455,18 @@ void PlaybackOsd::gradient(int y, int height, unsigned topAlpha, unsigned bottom
 }
 int PlaybackOsd::draw(const uint32_t* pixels, const PspVideoStatus& status) {
     const uint64_t now = sceKernelGetSystemTimeWide();
+    receiveOverlays();
     if (!pixels && now - lastDraw_ < 33333) return 0;
     if (pixels) {
         // The previous GU list has completed before this clean page is reused.
         int result = pixels == vram(2 * frameBytes) ? 0 : sceDmacMemcpy(vram(2 * frameBytes), pixels, frameBytes);
         if (result < 0) return result;
         haveFrame_ = true;
+        if (overlayThread_ >= 0 && !overlayStarted_) {
+            PlaybackOsd* self = this;
+            overlayStarted_ = sceKernelStartThread(overlayThread_, sizeof(self), &self) >= 0;
+            if (!overlayStarted_) { sceKernelDeleteThread(overlayThread_); overlayThread_ = -1; }
+        }
     }
     lastDraw_ = now;
     sceGuStart(GU_DIRECT, commands_);
@@ -327,7 +487,7 @@ int PlaybackOsd::draw(const uint32_t* pixels, const PspVideoStatus& status) {
     sceGuClutMode(GU_PSM_8888, 0, 255, 0);
     sceGuClutLoad(32, palette_);
     sceGuTexMode(GU_PSM_T8, 0, 0, 0);
-    sceGuTexImage(0, 256, 256, 256, atlas_);
+    sceGuTexImage(0, 512, 256, 512, atlas_);
     sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
     sceGuTexFilter(GU_LINEAR, GU_LINEAR);
     sceGuTexWrap(GU_CLAMP, GU_CLAMP);
@@ -366,19 +526,33 @@ int PlaybackOsd::draw(const uint32_t* pixels, const PspVideoStatus& status) {
             text(174, 137, times, white, 314, 12);
         }
     }
+    if (!haveFrame_) text(16, 191, startupLabels_[status.startup_stage == PSP_VIDEO_STAGE_AUDIO_INIT ? 1 :
+        status.startup_stage == PSP_VIDEO_STAGE_PLAY ? 2 : 0], white, 464, 14);
+    if (shownMessage_ && now < messageUntil_) text(16, 39, overlayMessages_[shownMessage_], muted, 464, 12);
     drawSubtitles(status);
-    if (status.menu_open == 2) {
+    if (status.menu_open >= 2) {
         // Flat translucent list, with no rounded card or opaque selection tile.
         rectangle(274, 58, 190, 154, 0xc0000000);
-        text(286, 66, menuLabels_[status.menu_row], white, 448, 14);
+        const bool danmakuMenu = status.menu_open == 2 && status.menu_row >= 1 && status.menu_row <= 3;
+        text(286, 66, menuLabels_[danmakuMenu ? 1 : status.menu_row], white, 448, 14);
         rectangle(286, 91, 166, 1, 0x55ffffff);
         const int row = status.menu_row;
-        const int count = row == 0 ? status.settings.quality_count : row == 1 ? 2 : row == 4 ? static_cast<int>(subtitles_.size()) + 1 : 3;
+        const int count = danmakuMenu ? 3 : row == 0 ? status.settings.quality_count : row == 1 ? 2 : row == 4 ? static_cast<int>(subtitles_.size()) + 1 : 3;
         for (int i = 0; i < count; ++i) {
             bool selected;
             std::string_view label;
             char opacity[12];
-            if (row == 0) {
+            if (danmakuMenu) {
+                selected = row == i + 1;
+                label = i == 0 ? std::string_view(display_) : std::string_view(menuLabels_[i + 1]);
+                const auto value = i == 0 ? std::string_view(status.settings.danmaku_enabled ? on_ : off_) :
+                    i == 1 ? std::string_view(density_[status.settings.danmaku_density]) : std::string_view();
+                if (i < 2) text(388, 100 + i * 25, value, muted, 439, 12);
+                else {
+                    std::snprintf(opacity, sizeof(opacity), "%d%%", status.settings.danmaku_opacity);
+                    text(388, 100 + i * 25, opacity, muted, 439, 12);
+                }
+            } else if (row == 0) {
                 // Display highest quality first; input still cycles through available streams.
                 const int quality = status.settings.qualities[count - i - 1];
                 selected = quality == status.quality_preview;
@@ -387,21 +561,21 @@ int PlaybackOsd::draw(const uint32_t* pixels, const PspVideoStatus& status) {
                 selected = status.settings.danmaku_enabled == (i == 0);
                 label = i == 0 ? on_ : off_;
             } else if (row == 2) {
-                selected = status.settings.danmaku_density == i;
+                selected = status.menu_value == i;
                 label = density_[i];
             } else if (row == 4) {
-                selected = status.settings.subtitle_track == i;
+                selected = status.menu_value == i;
                 label = i == 0 ? std::string_view(off_) : std::string_view(subtitles_[i - 1].label);
             } else {
                 const int value = 50 + 25 * i;
-                selected = status.settings.danmaku_opacity == value;
+                selected = status.menu_value == i;
                 std::snprintf(opacity, sizeof(opacity), "%d%%", value);
                 label = opacity;
             }
-            text(286, 100 + i * 25, label, selected ? pink : muted, 436, 13);
+            text(286, 100 + i * 25, label, selected ? pink : muted, danmakuMenu ? 382 : 436, 13);
             if (selected) rectangle(446, 107 + i * 25, 4, 4, pink);
         }
-        if (row == 4 && subtitles_.empty()) text(286, 132, noSubtitles_, muted, 448, 12);
+        if (row == 4 && subtitles_.empty()) text(286, 132, overlayThread_ >= 0 && metadataCount_ < 0 ? overlayMessages_[3] : noSubtitles_, muted, 448, 12);
     }
     sceGuFinish();
     sceGuSync(0, 0);

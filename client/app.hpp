@@ -7,8 +7,6 @@
 
 #include <pspkernel.h>
 
-#include "services/danmaku.hpp"
-#include "services/subtitles.hpp"
 #include "bilibili.h"
 #include "navigation.hpp"
 #include "preferences.hpp"
@@ -119,8 +117,7 @@ public:
     void finishPlayback(int error, unsigned frames, int eof, int cancelled,
                         PspVideoStage stage = PSP_VIDEO_STAGE_NONE, int64_t positionMs = 0);
     void seekPlayback(int64_t positionMs, bool paused, int quality = 0);
-    const std::vector<DanmakuComment>& playbackDanmaku() const { return playbackDanmaku_; }
-    const std::vector<SubtitleTrack>& playbackSubtitles() const { return playbackSubtitles_; }
+    const VideoCard& playbackCard() const { return playbackCard_; }
     PspVideoSettings playerSettings() const { return playerSettings_; }
     void setPlayerSettings(const PspVideoSettings& settings) { playerSettings_ = settings; }
     const std::string& playbackTitle() const { return playbackCard_.title; }
@@ -276,9 +273,7 @@ private:
     bool playbackReady_ = false;
     bool playbackPaused_ = false;
     int playbackQuality_ = 16;
-    std::vector<DanmakuComment> playbackDanmaku_, stagedDanmaku_;
-    std::vector<SubtitleTrack> playbackSubtitles_, stagedSubtitles_;
-    uint64_t playbackDanmakuCid_ = 0;
+    uint64_t playbackOverlayCid_ = 0;
     PspVideoSettings playerSettings_{16, 1, {16, 0, 0}, 1, 1, 75, 0, 0};
 
     Job job_ = Job::None;

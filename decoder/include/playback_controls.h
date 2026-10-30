@@ -7,10 +7,11 @@
 /* Platform-independent input and virtual clock. Caller serializes access. */
 enum { PC_CONFIRM=1, PC_BACK=2, PC_PAUSE=4, PC_PANEL=8, PC_LEFT=16, PC_RIGHT=32, PC_REWIND=64, PC_FORWARD=128, PC_UP=256, PC_DOWN=512, PC_DANMAKU=1024 };
 enum { PC_NONE, PC_EXIT, PC_SEEK, PC_QUALITY };
+enum { PC_PLAYING, PC_FOOTER, PC_MENU, PC_VALUES };
 typedef struct {
     unsigned previous, direction;
     int paused, visible, seeking, seekable, armed;
-    int menu_open, menu_row, quality_index;
+    int menu_open, menu_row, quality_index, menu_value;
     PspVideoSettings settings;
     int64_t position_ms, duration_ms, preview_ms;
     int64_t paused_at, paused_total, hide_at, repeat_at, commit_at;
@@ -45,7 +46,7 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
     s->previous = buttons;
     unsigned direction = buttons & (PC_LEFT | PC_RIGHT);
     if (pressed & PC_BACK) {
-        if (s->menu_open) { s->menu_open = s->menu_open == 2 ? 1 : 0; s->hide_at = now + 3000000; return PC_NONE; }
+        if (s->menu_open) { s->menu_open--; s->visible = s->menu_open != PC_PLAYING; s->hide_at = now + 3000000; return PC_NONE; }
         if (!s->seeking) return PC_EXIT;
         s->seeking = 0; s->commit_at = 0; s->direction = direction;
         s->hide_at = now + 3000000;
@@ -54,8 +55,9 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
     if (pressed & PC_PANEL) {
         s->menu_open = !s->menu_open;
         if (s->menu_open) { s->seeking = 0; s->commit_at = 0; s->direction = 0; }
-        s->visible = 1;
+        s->visible = s->menu_open != PC_PLAYING;
         s->hide_at = now + 3000000;
+        return PC_NONE;
     }
     if (pressed & PC_DANMAKU) {
         s->settings.danmaku_enabled = !s->settings.danmaku_enabled;
@@ -67,39 +69,48 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
         if (pressed & PC_LEFT) index = (index + 2) % 3;
         if (pressed & PC_RIGHT) index = (index + 1) % 3;
         s->menu_row = index == 2 ? 0 : index == 1 ? 4 : 1;
-        if (pressed & PC_CONFIRM) s->menu_open = 2;
+        if (pressed & PC_CONFIRM) {
+            s->menu_open = PC_MENU;
+            s->menu_value = s->settings.subtitle_track;
+            for (int i = 0; i < s->settings.quality_count; ++i)
+                if (s->settings.qualities[i] == s->settings.quality) s->quality_index = i;
+        }
         if (pressed & PC_PAUSE) pc_pause(s, now);
         s->direction = 0;
         return PC_NONE;
     }
-    if (s->menu_open == 2) {
-        if (s->menu_row >= 1 && s->menu_row <= 3) {
-            if (pressed & PC_UP) s->menu_row = 1 + (s->menu_row + 1) % 3;
-            if (pressed & PC_DOWN) s->menu_row = 1 + s->menu_row % 3;
-        }
-        int change = (pressed & PC_LEFT) ? -1 : (pressed & PC_RIGHT) ? 1 : 0;
-        if (s->menu_row == 0) {
-            if (pressed & PC_UP) change = 1;
-            if (pressed & PC_DOWN) change = -1;
-            if (change && s->settings.quality_count > 0)
-                s->quality_index = (s->quality_index + change + s->settings.quality_count) % s->settings.quality_count;
+    if (s->menu_open >= PC_MENU) {
+        const int step = (pressed & PC_UP) ? -1 : (pressed & PC_DOWN) ? 1 : 0;
+        if (s->menu_open == PC_VALUES) {
+            s->menu_value = (s->menu_value + step + 3) % 3;
             if (pressed & PC_CONFIRM) {
-                if (s->settings.quality_count > 0 && s->settings.qualities[s->quality_index] != s->settings.quality)
-                    return PC_QUALITY;
-                s->menu_open = 1;
+                if (s->menu_row == 2) s->settings.danmaku_density = s->menu_value;
+                else s->settings.danmaku_opacity = 50 + s->menu_value * 25;
+                s->menu_open = PC_MENU;
+            }
+        } else if (s->menu_row == 0) {
+            const int count = s->settings.quality_count;
+            if (count > 0) s->quality_index = (s->quality_index - step + count) % count;
+            if (pressed & PC_CONFIRM) {
+                if (count > 0 && s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
+                s->menu_open = PC_FOOTER;
             }
         } else if (s->menu_row == 4) {
-            if (pressed & PC_UP) change = -1;
-            if (pressed & PC_DOWN) change = 1;
             const int count = s->settings.subtitle_count + 1;
-            if (change) s->settings.subtitle_track = (s->settings.subtitle_track + change + count) % count;
-            if (pressed & PC_CONFIRM) s->menu_open = 1;
+            if (s->menu_value >= count) s->menu_value = s->settings.subtitle_track;
+            s->menu_value = (s->menu_value + step + count) % count;
+            if (pressed & PC_CONFIRM) {
+                s->settings.subtitle_track = s->menu_value;
+                s->menu_open = PC_FOOTER;
+            }
         } else {
-            if (pressed & PC_CONFIRM) change = 1;
-            if (change) {
+            s->menu_row = 1 + (s->menu_row - 1 + step + 3) % 3;
+            if (pressed & PC_CONFIRM) {
                 if (s->menu_row == 1) s->settings.danmaku_enabled = !s->settings.danmaku_enabled;
-                else if (s->menu_row == 2) s->settings.danmaku_density = (s->settings.danmaku_density + change + 3) % 3;
-                else s->settings.danmaku_opacity = 50 + ((s->settings.danmaku_opacity / 25 - 2 + change + 3) % 3) * 25;
+                else {
+                    s->menu_value = s->menu_row == 2 ? s->settings.danmaku_density : s->settings.danmaku_opacity / 25 - 2;
+                    s->menu_open = PC_VALUES;
+                }
             }
         }
         if (pressed & PC_PAUSE) pc_pause(s, now);
