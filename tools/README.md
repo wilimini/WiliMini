@@ -71,6 +71,8 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 - `BILI_HEADLESS_LOG=1`：保存完整 PPSSPP 日志。
 - `BILI_HEADLESS_DUMP_AUDIO=/absolute/path/output.wav`：导出混音音频。
 - `BILI_HEADLESS_FIRMWARE_DIR`：native ME 使用的解出 `flash0` 目录。
+- `BILI_HEADLESS_CPU`：可选 CPU 核心，例如 `jit-ir`。
+- `BILI_HEADLESS_JIT_PROFILE`：可选 JIT 热点报告路径；需 runner 支持 `--jit-profile`。
 - `BILI_HEADLESS_MEMSTICK`：指定 memstick；默认使用 `build/headless/memstick`。
 
 自定义 runner 默认从相邻的 `assets/flash0/font` 查找字体。
@@ -86,3 +88,11 @@ sh tools/test-memory-profiles.sh
 检查加载器的机型/内存选择边界、两个客户端的设置默认值和保存迁移，
 并用 ASan/UBSan 检查 RGB 队列复用、清理和启动失败路径。
 这些检查不代表 PSP-1000 真机兼容性或播放性能。
+
+## 热门视频性能数据集
+
+[`benchmarks/bilibili/`](../benchmarks/bilibili/README.md) 提供冻结的 20 个热门视频
+中部约 10 秒的原始 H.264/AAC DASH 双轨采集、校验、独立诊断包准备、
+PPSSPP 批量播放及 CSV 报告。支持现有 H.264 内部阶段采样和可选的 PPSSPP
+JIT 热点输出；真机 PSPLink、硬件计数器及 gprof 的能力与限制见该目录的
+`profiling.md`。媒体和每轮结果仅保存在本地。

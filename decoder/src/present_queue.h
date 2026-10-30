@@ -2,7 +2,7 @@
  * All FFmpeg reference/pool operations stay on the decoder thread. */
 #ifndef PSP_LAB_PRESENT_QUEUE_H
 #define PSP_LAB_PRESENT_QUEUE_H
-typedef struct { AVFrame *frame; uint64_t deadline; } PresentFrame;
+typedef struct { AVFrame *frame; uint64_t deadline; int64_t pts; } PresentFrame;
 static PresentFrame present_frames[PSP_ME_RENDER_QUEUE];
 static SceUID present_slots = -1, present_work = -1, present_lock = -1, present_drained = -1;
 static SceUID present_thread = -1;
@@ -25,6 +25,7 @@ static int present_worker(SceSize args, void *param)
         sceKernelSignalSema(present_lock,1);
         if (!error) {
             queue_worker_deadline = item.deadline;
+            queue_worker_pts = item.pts;
             error = me_render_submit_one(item.frame);
             if (!error) error = me_render_finish_one();
         }
@@ -71,7 +72,7 @@ static int me_render_submit(const AVFrame *frame)
     AVFrame *copy = av_frame_clone(frame);
     if (!copy) { sceKernelSignalSema(present_slots,1); return AVERROR(ENOMEM); }
     sceKernelWaitSema(present_lock,1,NULL);
-    present_frames[present_head] = (PresentFrame){copy,presentation_deadline};
+    present_frames[present_head] = (PresentFrame){copy,presentation_deadline,presentation_pts_us};
     present_head = (present_head + 1) % PSP_ME_RENDER_QUEUE;
     ++present_count;
     sceKernelSignalSema(present_lock,1);

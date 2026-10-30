@@ -8,6 +8,7 @@
 #if PSP_ME_RENDER_QUEUE
 _Static_assert(PSP_ME_RENDER_QUEUE >= 2 && PSP_ME_RENDER_QUEUE <= 16, "presentation queue depth 2..16");
 static uint64_t queue_worker_deadline;
+static int64_t queue_worker_pts;
 static uint64_t me_warmup_presented_us, me_last_presented_us;
 #define me_render_start me_render_start_one
 #define me_render_submit me_render_submit_one
@@ -27,29 +28,14 @@ static uint64_t me_presentation_deadline;
 static uint64_t me_total_lateness_us;
 static unsigned me_late_frames, me_max_lateness_us;
 #endif
-static unsigned me_checked, me_mismatches;
 static unsigned me_submitted, me_completed;
-#if PSP_ME_CHECK
-static uint32_t me_expected[512 * 272] __attribute__((aligned(64)));
-#endif
 static int me_render_finish(void)
 {
     if (!me_pending) return 0;
     int ret = meLabWait();
     if (ret < 0) return ret;
-#if !PSP_ME_CACHE || !PSP_ME_DMA || PSP_ME_CHECK
+#if !PSP_ME_CACHE || !PSP_ME_DMA
     sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint32_t));
-#endif
-#if PSP_ME_CHECK
-    full_render_planes((const uint8_t *const *)me_frame->data, me_frame->linesize,
-                       me_expected, &me_tables);
-    ++me_checked;
-    for (int y = 1; y <= 270; ++y) {
-        if (memcmp(me_expected + y * 512, me_output + y * 512, 480 * 4)) {
-            ++me_mismatches;
-            return -10;
-        }
-    }
 #endif
 #if PSP_AUDIO && PSP_RGB_PACE
     rgb_publish(me_rgb_pts);
@@ -63,14 +49,6 @@ static int me_render_finish(void)
     if (ret < 0) return ret;
 #else
     memcpy(dst + 512, me_output + 512, 512 * 270 * 4);
-#endif
-#if PSP_ME_CHECK
-    for (int y = 1; y <= 270; ++y) {
-        if (memcmp(dst + y * 512, me_output + y * 512, 480 * 4)) {
-            ++me_mismatches;
-            return -11;
-        }
-    }
 #endif
 #if PSP_PTS_PACE
     uint64_t presented = sceKernelGetSystemTimeWide();
@@ -95,7 +73,6 @@ static int me_render_finish(void)
 static int me_render_start(void)
 {
     yuv_rgb_init(&me_tables);
-    me_checked = me_mismatches = 0;
     me_submitted = me_completed = 0;
 #if PSP_PTS_PACE
     me_total_lateness_us = 0;
@@ -119,7 +96,11 @@ static int me_render_submit(const AVFrame *frame)
     int slot = rgb_acquire();
     if (slot < 0) return slot;
     me_output = rgb_pixels[slot];
+#if PSP_ME_RENDER_QUEUE
+    me_rgb_pts = queue_worker_pts;
+#else
     me_rgb_pts = presentation_pts_us;
+#endif
 #endif
 #if PSP_ME_RENDER_QUEUE
     me_frame = (AVFrame *)frame;

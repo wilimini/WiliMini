@@ -85,4 +85,10 @@ fi
 if [ -n "${BILI_HEADLESS_DUMP_AUDIO:-}" ]; then
     set -- "$@" "--dump-audio=$BILI_HEADLESS_DUMP_AUDIO"
 fi
+if [ -n "${BILI_HEADLESS_CPU:-}" ]; then
+    set -- "$@" "--cpu=$BILI_HEADLESS_CPU"
+fi
+if [ -n "${BILI_HEADLESS_JIT_PROFILE:-}" ]; then
+    set -- "$@" "--jit-profile=$BILI_HEADLESS_JIT_PROFILE"
+fi
 "$runner" "$@" "$client_dir/loader/bootstrap.prx"

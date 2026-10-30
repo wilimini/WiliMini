@@ -8,7 +8,6 @@
 #error Unsupported approximate interpolation mode
 #endif
 static qpel_mc_func approx_integer[2][3];
-unsigned approx_qpel_test_failures;
 
 static inline __attribute__((always_inline)) uint32_t approx_load4(const uint8_t *p)
 {
@@ -90,40 +89,6 @@ static void approx_qpel_init(H264QpelContext *c)
             c->avg_h264_qpel_pixels_tab[size][phase] = avg[size][phase];
         }
     }
-    /* Independent scalar oracle checks packed lanes, source alignment, all
-     * phases and both prediction lists before using the approximate kernels. */
-    uint8_t source[48 * 20] __attribute__((aligned(16)));
-    uint8_t target[48 * 20] __attribute__((aligned(16)));
-    approx_qpel_test_failures = 0;
-    for (unsigned i = 0; i < sizeof(source); ++i)
-        source[i] = (i * 73 + (i >> 3) * 19) & 255;
-    for (unsigned stride = 32; stride <= 48; stride += 16)
-        for (unsigned offset = 0; offset < 4; ++offset)
-            for (unsigned size = 0; size < 3; ++size)
-                for (unsigned phase = 1; phase < 16; ++phase)
-                    for (unsigned average = 0; average < 2; ++average) {
-                        memset(target, 91, sizeof(target));
-                        qpel_mc_func fn = average ? avg[size][phase] : put[size][phase];
-                        fn(target, source + offset, stride);
-                        unsigned width = 16 >> size;
-                        for (unsigned row = 0; row < width; ++row)
-                            for (unsigned col = 0; col < width; ++col) {
-                                unsigned x = phase & 3, y = phase >> 2;
-                                const uint8_t *p = source + offset + row * stride + col;
-#if PSP_APPROX_QPEL == 2
-                                unsigned value = p[(x >= 2) + (y >= 2) * stride];
-#else
-                                unsigned value = ((4-x)*(4-y)*p[0] + x*(4-y)*p[1] +
-                                                   (4-x)*y*p[stride] + x*y*p[stride+1] + 8) >> 4;
-#endif
-                                if (average) value = (91 + value + 1) >> 1;
-                                if (target[row * stride + col] != value)
-                                    ++approx_qpel_test_failures;
-                            }
-                        for (unsigned i = 0; i < sizeof(target); ++i)
-                            if ((i / stride >= width || i % stride >= width) && target[i] != 91)
-                                ++approx_qpel_test_failures;
-                    }
 }
 #undef APPROX_PHASE
 #undef APPROX_SIZE

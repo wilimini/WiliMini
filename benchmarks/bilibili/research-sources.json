@@ -1,0 +1,53 @@
+{
+  "checked_on": "2026-10-30 Asia/Shanghai",
+  "sources": [
+    {
+      "repository": "pspdev/pspsdk",
+      "path": "src/prof/prof.c",
+      "blob": "8e7574b91aadb5e01014b9621323c9583222aedd",
+      "url": "https://github.com/pspdev/pspsdk/blob/master/src/prof/prof.c"
+    },
+    {
+      "repository": "pspdev/pspsdk",
+      "path": "src/debug/profiler.c",
+      "blob": "ec50fc292e140895e2407475814dd05a76de2dc7",
+      "url": "https://github.com/pspdev/pspsdk/blob/master/src/debug/profiler.c"
+    },
+    {
+      "repository": "pspdev/psplinkusb",
+      "path": "psplink/shell.c",
+      "blob": "0b77e523cfcd8a00ef0b2d99534179abc6c38fd3",
+      "url": "https://github.com/pspdev/psplinkusb/blob/master/psplink/shell.c"
+    },
+    {
+      "repository": "pspdev/psplinkusb",
+      "path": "psplink/shellcmd.h",
+      "blob": "2e6f22096cff8998fe5b8023f2c370653893f371",
+      "url": "https://github.com/pspdev/psplinkusb/blob/master/psplink/shellcmd.h"
+    },
+    {
+      "repository": "hrydgard/ppsspp",
+      "commit": "83e616eaf97bd493f91944e5eced70d914b4bc18",
+      "path": "Core/CmdLine.cpp",
+      "sha256": "e4d622ca6fa1b292688f4285e38dac4c65e96ef4489984058a293790b891e050"
+    },
+    {
+      "repository": "hrydgard/ppsspp",
+      "commit": "83e616eaf97bd493f91944e5eced70d914b4bc18",
+      "path": "Core/MIPS/IR/IRNativeCommon.cpp",
+      "sha256": "978be34165ac0402aa5cfdd67133702c3a38e2361ea1179265738d115f11d31d"
+    },
+    {
+      "repository": "hrydgard/ppsspp",
+      "commit": "83e616eaf97bd493f91944e5eced70d914b4bc18",
+      "path": "Core/MIPS/JitCommon/JitProfiler.cpp",
+      "sha256": "703895e21ec236d1ee75b47b66c1c1c9f04a79e39bfc529c16c27e279fb47cfa"
+    },
+    {
+      "repository": "hrydgard/ppsspp",
+      "commit": "83e616eaf97bd493f91944e5eced70d914b4bc18",
+      "path": "Core/MIPS/IR/IRJit.h",
+      "sha256": "cc57846312439af6adabf72bcd50edafec69bed4b47753ca87848c411fa9d2e7"
+    }
+  ]
+}

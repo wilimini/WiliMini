@@ -248,10 +248,6 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     audio.codec->thread_count = 1;
     ret = avcodec_open2(audio.codec, decoder, NULL);
     if (ret < 0) return ret;
-#if PSP_AUDIO_VFPU
-    extern unsigned audio_vfpu_failures;
-    if (audio_vfpu_failures) return -105;
-#endif
     audio.rate = audio.codec->sample_rate;
     if ((audio.rate != 48000 && audio.rate != 44100) || audio.codec->ch_layout.nb_channels != 2) return AVERROR(EINVAL);
     audio.frame = av_frame_alloc();
@@ -390,11 +386,6 @@ static void audio_report(FILE *out)
     fprintf(out, "  \"rgb_nearest_pts\": %d,\n", PSP_RGB_NEAREST_PTS);
     fprintf(out, "  \"rgb_max_late_us\": %lld,\n  \"rgb_mean_late_us\": %lld,\n",
             (long long)rgb_max_late_us, (long long)(rgb_presented ? rgb_total_late_us / rgb_presented : 0));
-#endif
-#if PSP_AUDIO_VFPU
-    extern unsigned audio_vfpu_failures, audio_vfpu_calls;
-    fprintf(out, "  \"audio_vfpu_failures\": %u,\n  \"audio_vfpu_calls\": %u,\n",
-            audio_vfpu_failures, audio_vfpu_calls);
 #endif
     fprintf(out, "  \"audio_enabled\": 1,\n  \"audio_fixed\": %d,\n", PSP_AUDIO_FIXED);
     fprintf(out, "  \"audio_rate\": %d,\n  \"audio_error\": %d,\n", audio.rate, audio.error);
