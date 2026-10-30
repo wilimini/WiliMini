@@ -73,6 +73,6 @@ manifest = {
     ).strip(),
     "build": "wiliwili-psp-cpp17-cmake-01",
     "files": files,
-    "decoder": "VFPU4 + nearest luma/chroma + list0-only bipred + full residual reconstruction + all frames + ME/DMA + audio clock RGB queue; C++17 Wiliwili API/UI frontend",
+    "decoder": "VFPU4 + nearest luma/chroma + list0-only bipred + full residual reconstruction + nonref skip + ME/DMA + audio clock RGB queue; C++17 Wiliwili API/UI frontend",
 }
 (package / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")

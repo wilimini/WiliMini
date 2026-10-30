@@ -60,7 +60,7 @@ H.264 色度默认使用精确 packed 整数插值和对齐 copy/average 内核�
 2.51%，追赶包减少 6.83%，也存在单样本退化；其他 cache、copy/average、
 队列候选仍默认关闭，见[第二轮实测](../benchmarks/bilibili/optimization-round2.md)。
 
-客户端配置使用 VFPU_DSP=4、整像素亮度与最近邻色度取样、关闭去块滤波、解码全部参考与非参考帧、
+客户端配置使用 VFPU_DSP=4、整像素亮度与最近邻色度取样、关闭去块滤波、跳过非参考帧、
 ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不等同标准 H.264。
 8-bit YUV420P 双向预测分区只计算 list 0。亮度与色度残差均执行完整反变换和
 叠加，恢复帧间宏块的残差修正；近似运动预测仍可能造成误差传播和边缘失真。
@@ -68,8 +68,9 @@ ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不�
 链接要求 v2 补丁标识符，旧的省略残差库会链接失败，避免误用。
 恢复残差后的测试见[残差恢复结果](../benchmarks/bilibili/residual-restored-results.md)。
 此前四项近似的历史结果见[四项近似重建](../benchmarks/bilibili/approximation-results.md)。
-默认 `PSP_SKIP_FRAME=-16`（`AVDISCARD_NONE`），不再主动跳过非参考帧。
-PPSSPP 完整帧测试见[测试与部署结果](../benchmarks/bilibili/allframes-results.md)。
+默认 `PSP_SKIP_FRAME=8`（`AVDISCARD_NONREF`），主动跳过非参考帧以减少真机解码负担。
+此前关闭主动跳帧的 PPSSPP 测试见[测试与部署结果](../benchmarks/bilibili/allframes-results.md)，
+其结果不代表当前跳帧配置的真机播放表现。
 当视频落后音频时，客户端丢弃压缩包，直到后续关键帧再清理并重建参考状态；
 不会沿用实验模式的无条件 B 帧追赶。复杂画面仍可能跳跃或停顿。
 
