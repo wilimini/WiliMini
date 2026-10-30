@@ -1,0 +1,23 @@
+{
+  "upstream": "https://github.com/xfangfang/wiliwili",
+  "commit": "88e5876bea9502d06f46a8656e3530684d3aaf7d",
+  "license": "GPL-3.0; see client/assets/wiliwili/WILIWILI-LICENSE.txt",
+  "sources": [
+    {
+      "path": "resources/svg/bpx-svg-sprite-play.svg",
+      "sha256": "25605c133e80193d6b9736f49a9fd1ad98011f7e5ae061d1fc4717d3f7d4dec1"
+    },
+    {
+      "path": "resources/svg/bpx-svg-sprite-pause.svg",
+      "sha256": "06bd848416a19d30e200bd2c721613d474661d5a0e6663c6b0242e620e40fee4"
+    },
+    {
+      "path": "resources/svg/bpx-svg-sprite-setting.svg",
+      "sha256": "2e9c706ec14a9b8289d8b3a82cc694cc890e211212908c01907b28c6211af170"
+    },
+    {
+      "path": "resources/svg/widget-video-danmaku.svg",
+      "sha256": "fdbada56d90652de13d3a01da13e86a08ca23d47ad560df8db81395234affbd1"
+    }
+  ]
+}

@@ -22,7 +22,29 @@ typedef struct {
     int (*read_at)(void *opaque,int64_t offset,void *buffer,int bytes);
     void (*cancel)(void *opaque); /* interrupt pending reads; must not block */
     void (*first_frame)(void *opaque); /* first decoded frame queued */
+    /* Temporarily interrupt outstanding reads for seek, without stopping the
+     * download. Called with 0 only after all old readers have joined. */
+    void (*interrupt_reads)(void *opaque, int interrupted);
 } PspVideoSource;
+typedef struct {
+    int quality, quality_count, qualities[3];
+    int danmaku_enabled, danmaku_density, danmaku_opacity;
+    int subtitle_track, subtitle_count; /* 0 is off; tracks are 1-based. */
+} PspVideoSettings;
+typedef struct {
+    int64_t position_ms, duration_ms, preview_ms;
+    int paused, controls_visible, seeking, seekable, buffering;
+    int menu_open, menu_row, quality_preview;
+    PspVideoSettings settings;
+} PspVideoStatus;
+typedef struct {
+    void *opaque;
+    /* Called only by the presentation owner, after ME has finished the RGB
+     * frame. NULL pixels means redraw the last clean frame (pause/OSD).
+     * Copy pixels before returning; never retain a queue slot. This callback
+     * owns DMA, GE completion and scanout switching. No network or disk I/O. */
+    int (*present)(void *opaque, const uint32_t *pixels, const PspVideoStatus *status);
+} PspVideoPresenter;
 typedef struct {
     const char *path;     /* seekable local MP4, unused when source is set */
     const char *log_root; /* existing directory for results/run-NNN */
@@ -35,7 +57,9 @@ typedef struct {
     int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
     PspVideoBackend backend;
     PspVideoCancelButton cancel_button; /* 0 keeps Circle as the default. */
-    int diagnostic_profile; /* Nonzero enables sampled H.264 timings; adds overhead. */
+    const PspVideoPresenter *presenter; /* NULL preserves diagnostic display */
+    int start_paused;
+    const PspVideoSettings *settings;
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,
@@ -49,6 +73,12 @@ typedef struct {
     unsigned frames, eof;
     PspVideoStage error_stage;
     int64_t position_ms; /* Last played media position, excluding decoder preroll. */
+    unsigned seeks; /* in-session seeks completed */
+    int seek_requested; /* legacy backend fallback; native seeks in session */
+    int64_t seek_ms;
+    int seek_paused;
+    int quality_requested;
+    PspVideoSettings settings;
 } PspVideoResult;
 int psp_video_play(const PspVideoOptions *options, PspVideoResult *result);
 void psp_video_stop(void);

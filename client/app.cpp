@@ -898,6 +898,7 @@ VideoCard App::selectedDetailCard() const {
 
 void App::requestPlayback(bool fromStart) {
     if (busy() || !detailState().loaded || detailState().detail.card.bvid.empty()) return;
+    playbackPaused_ = false;
     VideoCard card = selectedDetailCard();
     if (fromStart || (card.duration > 0 && card.startMs >= card.duration * 1000LL)) card.startMs = 0;
     startPlay(card, card.cid, card.duration);
@@ -1093,6 +1094,8 @@ void App::startJob(Job job) {
     stagedHasMore_ = false;
     stagedDetail_ = VideoDetailView{};
     stagedPlayback_ = BiliPlayback{};
+    stagedDanmaku_.clear();
+    stagedSubtitles_.clear();
     busy_ = true;
     if (job != Job::HistoryReport)
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
@@ -1334,6 +1337,7 @@ void App::commitJob() {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;
             playbackCard_.cid = jobCid_;
+            playbackCard_.duration = jobDuration_;
             playbackEpisode_ = playbackSeason_ = 0;
         } else {
             playbackCard_ = {};
@@ -1346,6 +1350,10 @@ void App::commitJob() {
             playbackEpisode_ = jobMedia_.epId;
             playbackSeason_ = jobMedia_.seasonId;
         }
+        if (playbackDanmakuCid_ != playbackCard_.cid) playerSettings_.subtitle_track = 0;
+        playbackSubtitles_ = std::move(stagedSubtitles_);
+        playbackDanmaku_ = std::move(stagedDanmaku_);
+        playbackDanmakuCid_ = playbackCard_.cid;
         playback_ = stagedPlayback_;
         stagedPlayback_ = BiliPlayback{};
         playbackReady_ = true;
@@ -1355,6 +1363,15 @@ void App::commitJob() {
 }
 
 void App::runJob() {
+    if (job_ == Job::Play || job_ == Job::CommunityPlay) {
+        const uint64_t cid = job_ == Job::Play ? (jobCid_ ? jobCid_ : jobCard_.cid) : jobMedia_.cid;
+        stagedDanmaku_ = cid == playbackDanmakuCid_ ? playbackDanmaku_ : loadDanmaku(cid);
+        if (transfer_cancel) { jobResult_ = -1; return; }
+        stagedSubtitles_ = cid == playbackDanmakuCid_ ? playbackSubtitles_ : loadSubtitles(
+            job_ == Job::Play ? jobCard_.bvid : jobMedia_.bvid, cid,
+            job_ == Job::Play ? jobCard_.aid : jobMedia_.aid);
+        if (transfer_cancel) { jobResult_ = -1; return; }
+    }
     if (job_ == Job::CommunityPlay) {
         if (jobMedia_.next.kind == BrowseKind::LiveStream) {
             jobResult_ = bili_prepare_live_playback(jobMedia_.text.c_str(), &stagedPlayback_);
@@ -1363,7 +1380,7 @@ void App::runJob() {
             std::snprintf(video.bvid, sizeof(video.bvid), "%s", jobMedia_.bvid.c_str());
             std::snprintf(video.title, sizeof(video.title), "%s", jobMedia_.title.c_str());
             video.cid = static_cast<long long>(jobMedia_.cid); video.duration = jobMedia_.duration;
-            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_);
+            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_);
         }
     } else if (job_ == Job::Browse) {
         auto result = communityService_.load(jobBrowse_, sessions_.current());
@@ -1629,7 +1646,7 @@ void App::runJob() {
         video.cid = static_cast<long long>(jobCid_ ? jobCid_ : jobCard_.cid);
         video.duration = jobDuration_;
         std::string playbackError;
-        const int result = preparePlayback(video, stagedPlayback_, playbackError);
+        const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_);
         if (result < 0) {
             jobError_ = playbackError.empty() ? "无法准备视频流" : playbackError;
             jobResult_ = result;
@@ -1639,7 +1656,27 @@ void App::runJob() {
     }
 }
 
+void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
+    if (quality) playbackQuality_ = quality;
+    // Decoder and all source readers have joined. Cancelled range sources
+    // cannot be reused; prepare fresh ones through the existing worker.
+    bili_finish_playback(&playback_);
+    playback_ = BiliPlayback{};
+    playbackReady_ = false;
+    playbackPaused_ = paused;
+    playbackCard_.startMs = std::max<int64_t>(0, positionMs);
+    if (playbackEpisode_) {
+        jobMedia_.startMs = playbackCard_.startMs;
+        startJob(Job::CommunityPlay);
+    } else {
+        startPlay(playbackCard_, playbackCard_.cid, playbackCard_.duration);
+    }
+}
+
 void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, PspVideoStage stage, int64_t positionMs) {
+    playbackPaused_ = false;
+    playbackDanmaku_.clear(); playbackDanmakuCid_ = 0;
+    playbackSubtitles_.clear();
     const int cacheResult = bili_finish_playback(&playback_);
     playbackReady_ = false;
     playback_ = BiliPlayback{};

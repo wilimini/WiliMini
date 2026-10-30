@@ -31,6 +31,42 @@ static void wait_presentation(uint64_t deadline);
 #endif
 #endif
 static volatile int quit_requested;
+#include "psp_video.h"
+#include "playback_controls.h"
+static PlaybackControls controls;
+static SceUID controls_lock = -1;
+static const PspVideoPresenter *presenter;
+static int seek_requested;
+static volatile int playback_seeking;
+static unsigned playback_seeks;
+static int native_seek_enabled;
+static int quality_requested;
+static void begin_playback_seek(void);
+static int64_t seek_target_ms;
+static int seek_paused;
+static int64_t playback_now_us(void) {
+    int64_t now = sceKernelGetSystemTimeWide();
+    if (controls_lock < 0) return now;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    int64_t value = pc_clock(&controls, now);
+    sceKernelSignalSema(controls_lock, 1);
+    return value;
+}
+static int playback_is_paused(void) {
+    if (controls_lock < 0) return 0;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    int value = controls.paused;
+    sceKernelSignalSema(controls_lock, 1);
+    return value;
+}
+static int present_video(const uint32_t *pixels);
+static void playback_metadata(int64_t duration_ms, int seekable) {
+    if (controls_lock < 0) return;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    controls.duration_ms = duration_ms > 0 ? duration_ms : 0;
+    controls.seekable = seekable && duration_ms > 0;
+    sceKernelSignalSema(controls_lock, 1);
+}
 #include "rgb_pacer.h"
 #include "me_render.h"
 #include "me_decode.h"
@@ -68,7 +104,35 @@ static int video_cancel_thread(SceSize size, void *arg) {
     while (poll_controller && !quit_requested) {
         SceCtrlData pad = {0};
         sceCtrlPeekBufferPositive(&pad, 1);
-        if (pad.Buttons & cancel_button) psp_video_stop();
+        if (controls_lock >= 0) {
+            unsigned keys = 0;
+            if (pad.Buttons & cancel_button) keys |= PC_BACK;
+            if (pad.Buttons & (cancel_button == PSP_CTRL_CIRCLE ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE)) keys |= PC_CONFIRM;
+            if (pad.Buttons & PSP_CTRL_START) keys |= PC_PAUSE;
+            if (pad.Buttons & PSP_CTRL_TRIANGLE) keys |= PC_PANEL;
+            if (pad.Buttons & PSP_CTRL_LEFT) keys |= PC_LEFT;
+            if (pad.Buttons & PSP_CTRL_RIGHT) keys |= PC_RIGHT;
+            if (pad.Buttons & PSP_CTRL_UP) keys |= PC_UP;
+            if (pad.Buttons & PSP_CTRL_DOWN) keys |= PC_DOWN;
+            if (pad.Buttons & PSP_CTRL_SQUARE) keys |= PC_DANMAKU;
+            if (pad.Buttons & PSP_CTRL_LTRIGGER) keys |= PC_REWIND;
+            if (pad.Buttons & PSP_CTRL_RTRIGGER) keys |= PC_FORWARD;
+            if (playback_seeking || video_stage != PSP_VIDEO_STAGE_PLAY)
+                keys &= ~(PC_LEFT | PC_RIGHT | PC_REWIND | PC_FORWARD);
+            sceKernelWaitSema(controls_lock, 1, NULL);
+            int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
+            if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
+            if (action == PC_SEEK) {
+                seek_target_ms = controls.preview_ms;
+                seek_paused = controls.paused;
+                seek_requested = 1;
+            }
+            sceKernelSignalSema(controls_lock, 1);
+            if (action == PC_SEEK) {
+                if (native_seek_enabled) begin_playback_seek(); else psp_video_stop();
+            }
+            else if (action == PC_EXIT || action == PC_QUALITY) psp_video_stop();
+        } else if (pad.Buttons & cancel_button) psp_video_stop();
         sceKernelDelayThreadCB(10000);
     }
     return 0;
@@ -126,6 +190,84 @@ static struct { int64_t pts; uint8_t luma[144]; } visual_records[512];
 static unsigned visual_count;
 #endif
 #include "audio_playback.h"
+static void interrupt_source_reads(int interrupted) {
+    if (video_io_source && video_io_source->interrupt_reads)
+        video_io_source->interrupt_reads(video_io_source->opaque, interrupted);
+    if (audio_io_source && audio_io_source != video_io_source && audio_io_source->interrupt_reads)
+        audio_io_source->interrupt_reads(audio_io_source->opaque, interrupted);
+}
+static void begin_playback_seek(void) {
+    playback_seeking = 1;
+#if PSP_AUDIO
+    audio.stop = 1;
+#endif
+    interrupt_source_reads(1);
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    controls.seeking = 0;
+    controls.position_ms = seek_target_ms;
+    controls.visible = 1;
+    sceKernelSignalSema(controls_lock, 1);
+}
+static int present_video(const uint32_t *pixels) {
+    if (!presenter || !presenter->present) return 0;
+    int64_t position = playback_start_ms;
+#if PSP_AUDIO
+    if (!playback_seeking && audio.rate > 0 && audio.epoch_us && audio.first_pts_us != AV_NOPTS_VALUE) {
+        position = (audio_clock_us() - video_origin_us) / 1000;
+        if (position < playback_start_ms) position = playback_start_ms;
+    }
+#endif
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    if (!controls.paused && !playback_seeking) controls.position_ms = position;
+    PspVideoStatus status = {controls.position_ms, controls.duration_ms, controls.preview_ms,
+        controls.paused, controls.visible, controls.seeking, controls.seekable, playback_seeking,
+        controls.menu_open, controls.menu_row,
+        controls.settings.quality_count > 0 ? controls.settings.qualities[controls.quality_index] : 0,
+        controls.settings};
+    sceKernelSignalSema(controls_lock, 1);
+    return presenter->present(presenter->opaque, pixels, &status);
+}
+static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
+                           AVPacket *packet, AVFrame *frame, const char *run_path) {
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
+    /* Stop producers before retiring ME and consuming every old RGB slot.
+     * The presentation owner keeps the last clean image on screen. */
+    int ret = me_render_finish();
+    if (ret < 0) return ret;
+    ret = rgb_finish();
+    if (ret < 0) return ret;
+    audio_close(0);
+    if (audio.error) return audio.error;
+    if (quit_requested) return AVERROR_EXIT;
+    rgb_startup_ready = 0;
+    interrupt_source_reads(0);
+    playback_start_ms = seek_target_ms;
+    playback_position_us = playback_start_ms * 1000;
+    av_packet_unref(packet);
+    av_frame_unref(frame);
+    if (format->pb) { format->pb->error = 0; format->pb->eof_reached = 0; }
+    ret = av_seek_frame(format, -1, playback_position_us + source_origin_us(format), AVSEEK_FLAG_BACKWARD);
+    if (ret < 0) return ret;
+    avcodec_flush_buffers(codec);
+    ret = audio_open(video_source, audio_io_source ? audio_io_source : video_io_source, run_path);
+    if (ret < 0) return ret;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    controls.position_ms = playback_start_ms;
+    controls.visible = 1;
+    controls.hide_at = sceKernelGetSystemTimeWide() + 3000000;
+    sceKernelSignalSema(controls_lock, 1);
+    ++rgb_generation;
+    rgb_seek_preview = 1;
+    seek_requested = 0;
+    ++playback_seeks;
+    playback_seeking = 0;
+    printf("PLAYER seek=%u target_ms=%lld session=retained\n", playback_seeks, (long long)playback_start_ms);
+    return 0;
+#else
+    (void)format; (void)codec; (void)packet; (void)frame; (void)run_path;
+    return AVERROR(ENOSYS);
+#endif
+}
 #if PSP_PTS_PACE && !PSP_RGB_PACE
 static void wait_presentation(uint64_t deadline)
 {
@@ -514,6 +656,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
 {
     video_stage = PSP_VIDEO_STAGE_PLAY;
     while (!quit_requested) {
+        if (playback_seeking) return AVERROR_EXIT;
         unsigned begin = tick_us();
         int ret = avcodec_receive_frame(codec, frame);
         unsigned elapsed = tick_us() - begin;
@@ -580,7 +723,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
                 video_io_source->first_frame(video_io_source->opaque);
             render_us = tick_us() - begin;
             if (ret < 0) {
-                ++s->errors;
+                if (!playback_seeking) ++s->errors;
                 av_frame_unref(frame);
                 return ret;
             }
@@ -726,6 +869,8 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     video_index = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     if (video_index < 0) { ret = video_index; goto done; }
     video_origin_us = source_origin_us(format);
+    playback_metadata(format->duration == AV_NOPTS_VALUE ? 0 : format->duration / 1000,
+                      !format->pb || (format->pb->seekable & AVIO_SEEKABLE_NORMAL));
     ret = source_start_at(format, video_index, playback_start_ms);
     if (ret < 0) goto done;
     if (format->streams[video_index]->codecpar->codec_id != AV_CODEC_ID_H264) {
@@ -760,7 +905,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     if (ret < 0) goto done;
 #endif
 
-    if (render) {
+    if (render && !presenter) {
         pspDebugScreenInitEx(NULL, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
 #if PSP_HALF_RENDER
         memset((void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u),
@@ -771,9 +916,17 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     }
 
     video_stage = PSP_VIDEO_STAGE_PLAY;
+decode_again:
     while (!quit_requested) {
+        if (playback_seeking) {
+            ret = seek_in_session(format, codec, packet, frame, run_path);
+            if (ret < 0) goto done;
+            catchup_to_key = 0;
+            stats->eof = 0;
+        }
         unsigned begin = tick_us();
         ret = av_read_frame(format, packet);
+        if (playback_seeking) { av_packet_unref(packet); continue; }
         unsigned elapsed = tick_us() - begin;
         if (output_count >= WARMUP_FRAMES)
             stats->read_us += elapsed;
@@ -841,6 +994,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
         if (ret < 0) { ++stats->errors; goto done; }
         ret = receive_frames(codec, frame, stats, render, full,
                              &output_count, &measure_start);
+        if (playback_seeking) continue;
         if (ret == 1) { ret = 0; goto done; }
         if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) goto done;
     }
@@ -858,6 +1012,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     }
 
 done:
+    if (playback_seeking && !quit_requested && ret >= 0) goto decode_again;
 #if PSP_ME_DECODE
     {
         int finish = me_decode_stop();
@@ -896,6 +1051,7 @@ done:
     if (rgb_warmup_us && rgb_last_us >= rgb_warmup_us)
         stats->measured_us = rgb_last_us - rgb_warmup_us;
 #endif
+    if (ret >= 0) video_stage = PSP_VIDEO_STAGE_CLEANUP;
 #if PSP_ME_RENDER
     if (render) {
         int shutdown = me_render_shutdown();
@@ -914,6 +1070,7 @@ done:
         if (output_count && (quit_requested || !stats->eof) &&
             audio.first_pts_us != AV_NOPTS_VALUE && audio.rate > 0) {
             int64_t played = audio_clock_us() - audio_origin;
+            if (played < playback_start_ms * 1000) played = playback_start_ms * 1000;
             if (played >= 0 && played < playback_position_us) playback_position_us = played;
         }
         if (audio.error) {
@@ -1033,6 +1190,22 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         (options->path && strlen(options->path)>1017) ||
         (options->source && (!options->source->read_at || (options->source->size==0 || options->source->size < -1))) ||
         (options->audio_source && (!options->audio_source->read_at || (options->audio_source->size==0 || options->audio_source->size < -1)))) return -1;
+    presenter = options->presenter && options->presenter->present ? options->presenter : NULL;
+    seek_requested = seek_paused = 0;
+    playback_seeking = 0; playback_seeks = 0;
+    quality_requested = 0;
+    native_seek_enabled = options->backend == PSP_VIDEO_BACKEND_NATIVE_ME;
+    seek_target_ms = 0;
+    if (presenter) {
+        controls_lock = sceKernelCreateSema("player_controls", 0, 1, 1, NULL);
+        if (controls_lock < 0) return controls_lock;
+        pc_init(&controls, sceKernelGetSystemTimeWide(), options->start_paused);
+        controls.position_ms = options->start_ms > 0 ? options->start_ms : 0;
+        if (options->settings) controls.settings = *options->settings;
+        if (controls.settings.quality_count < 0 || controls.settings.quality_count > 3) controls.settings.quality_count = 0;
+        for (int i = 0; i < controls.settings.quality_count; ++i)
+            if (controls.settings.qualities[i] == controls.settings.quality) controls.quality_index = i;
+    }
     video_io_source=options->source;
     audio_io_source=options->audio_source;
     cancel_button = options->cancel_button == PSP_VIDEO_CANCEL_CROSS ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
@@ -1062,12 +1235,16 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     if (control < 0) {
         poll_controller = client_playback = 0;
         if (result) result->error = control;
+        if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
+        controls_lock = -1; presenter = NULL;
         return control;
     }
     int started = sceKernelStartThread(control, 0, NULL);
     if (started < 0) {
         sceKernelDeleteThread(control); poll_controller = client_playback = 0;
         if (result) result->error = started;
+        if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
+        controls_lock = -1; presenter = NULL;
         return started;
     }
     RunStats stats = {0};
@@ -1087,7 +1264,18 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         sceKernelWaitThreadEnd(control, NULL);
         sceKernelDeleteThread(control);
     }
-    if (result) *result = (PspVideoResult){quit_requested ? 0 : ret, quit_requested, stats.total_frames, stats.eof && !quit_requested, video_stage, playback_position_us / 1000};
+    if (result) *result = (PspVideoResult){.error = quit_requested ? 0 : ret, .cancelled = quit_requested,
+        .frames = stats.total_frames, .eof = stats.eof && !quit_requested, .error_stage = video_stage,
+        .position_ms = playback_position_us / 1000, .seeks = playback_seeks};
+    if (result) {
+        result->seek_requested = seek_requested;
+        result->seek_ms = seek_target_ms;
+        result->seek_paused = controls_lock >= 0 ? controls.paused : seek_paused;
+        result->quality_requested = quality_requested;
+        if (controls_lock >= 0) result->settings = controls.settings;
+    }
+    if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
+    controls_lock = -1; presenter = NULL;
     client_playback = 0;
     video_io_source = NULL;
     audio_io_source = NULL;

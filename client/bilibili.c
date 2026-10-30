@@ -471,7 +471,7 @@ struct BiliStreamCache {
     SceUID fd;
     int disk;
     volatile unsigned available, base;
-    volatile int cancelled, complete, failed;
+    volatile int cancelled, complete, failed, reads_interrupted;
     char error[160];
     SceUID io_lock, wake, thread;
     StreamReader readers[STREAM_READER_SLOTS];
@@ -509,7 +509,7 @@ struct BiliRangeStream {
     volatile unsigned base, available;
     unsigned restart_offset;
     unsigned generation;
-    volatile int cancelled, failed, complete, restart;
+    volatile int cancelled, failed, complete, restart, reads_interrupted;
     char error[160];
     SceUID lock, wake, space, sized, thread;
     PspVideoSource source;
@@ -706,11 +706,19 @@ static int range_download_thread(SceSize args, void *argp) {
     for (;;) {
         sceKernelWaitSema(stream->lock, 1, NULL);
         if (transfer_cancel) stream->cancelled = 1;
-        if (stream->cancelled || stream->failed || stream->complete) {
+        if (stream->cancelled || stream->failed) {
             sceKernelSignalSema(stream->lock, 1);
             sceKernelSignalSema(stream->wake, 1);
             sceKernelSignalSema(stream->sized, 1);
             break;
+        }
+        if (stream->complete) {
+            // Keep the HTTP owner alive so a later backward seek can refill
+            // bytes that have already fallen out of the bounded ring.
+            sceKernelSignalSema(stream->lock, 1);
+            SceUInt idle = 100000;
+            sceKernelWaitSemaCB(stream->space, 1, &idle);
+            continue;
         }
         unsigned generation = stream->generation;
         unsigned start = stream->available;
@@ -774,7 +782,7 @@ static int range_download_thread(SceSize args, void *argp) {
         sceKernelSignalSema(stream->wake, 1);
         sceKernelSignalSema(stream->sized, 1);
         sceKernelSignalSema(stream->lock, 1);
-        break;
+        if (!successful) break;
     }
     curl_easy_cleanup(curl);
     return 0;
@@ -791,14 +799,17 @@ static int range_read_at(void *opaque, int64_t offset, void *buffer, int bytes) 
     uint64_t last_change = sceKernelGetSystemTimeWide();
     for (;;) {
         sceKernelWaitSema(stream->lock, 1, NULL);
-        if (stream->cancelled || stream->failed) {
+        if (stream->cancelled || stream->failed || stream->reads_interrupted) {
             sceKernelSignalSema(stream->lock, 1);
             return -1;
         }
-        if (start < stream->base || start > stream->available + stream->capacity) {
+        // A forward read must fit in the retained window. Otherwise the
+        // producer fills the ring before reaching target and both sides wait.
+        if (start < stream->base || target - stream->base > stream->capacity) {
             ++stream->generation;
             stream->restart_offset = start;
             stream->restart = 1;
+            stream->complete = 0;
             stream->base = stream->available = start;
             sceKernelSignalSema(stream->space, 1);
             sceKernelSignalSema(stream->wake, 1);
@@ -839,6 +850,11 @@ static int range_read_at(void *opaque, int64_t offset, void *buffer, int bytes) 
     }
 }
 
+static void range_interrupt_reads(void *opaque, int interrupted) {
+    BiliRangeStream *stream = opaque;
+    stream->reads_interrupted = interrupted;
+    sceKernelSignalSema(stream->wake, 1);
+}
 static void range_cancel(void *opaque) {
     BiliRangeStream *stream = opaque;
     if (!stream) return;
@@ -910,7 +926,7 @@ static int range_begin(const BiliMediaUrl *media, const char *label, int64_t *si
                  stream->error[0] ? stream->error : "Media size timeout");
         goto fail;
     }
-    stream->source = (PspVideoSource){stream, stream->size, range_read_at, range_cancel, NULL};
+    stream->source = (PspVideoSource){stream, stream->size, range_read_at, range_cancel, NULL, range_interrupt_reads};
     *size = stream->size;
     *out = stream;
     return 0;
@@ -932,7 +948,7 @@ fail:
 
 static void range_finish(BiliRangeStream *stream, int *failed) {
     if (!stream) return;
-    if (!stream->complete) stream->cancelled = 1;
+    stream->cancelled = 1;
     if (stream->space >= 0) sceKernelSignalSema(stream->space, 1);
     if (stream->wake >= 0) sceKernelSignalSema(stream->wake, 1);
     if (stream->thread >= 0) {
@@ -1106,7 +1122,7 @@ static int stream_cache_write(BiliStreamCache *s,const char *data,size_t bytes) 
 
 static int stream_read_at(void *opaque,int64_t offset,void *buffer,int bytes) {
     BiliStreamCache *s=opaque;
-    if(!s || s->failed || offset<0 || bytes<0 || (uint64_t)offset>s->expected)return -1;
+    if(!s || s->failed || s->reads_interrupted || offset<0 || bytes<0 || (uint64_t)offset>s->expected)return -1;
     if((uint64_t)bytes>s->expected-(uint64_t)offset)bytes=(int)(s->expected-(uint64_t)offset);
     if(!bytes)return 0;
     unsigned target=(unsigned)((uint64_t)offset+(unsigned)bytes);
@@ -1126,7 +1142,7 @@ static int stream_read_at(void *opaque,int64_t offset,void *buffer,int bytes) {
 #endif
     unsigned last_available=s->available,last_change=sceKernelGetSystemTimeLow();
     while(s->available<target){
-        if(s->cancelled || s->failed || s->complete)return -1;
+        if(s->cancelled || s->failed || s->complete || s->reads_interrupted)return -1;
         SceUInt timeout=100000;
         sceKernelWaitSemaCB(s->wake,1,&timeout);
 #if BILI_STREAM_PROFILE
@@ -1199,6 +1215,17 @@ static int stream_read_at(void *opaque,int64_t offset,void *buffer,int bytes) {
     return result;
 }
 
+static void stream_interrupt_reads(void *opaque, int interrupted) {
+    BiliStreamCache *s = opaque;
+    s->reads_interrupted = interrupted;
+    if (!interrupted) {
+        /* Audio reader thread IDs change after a seek. No old reader is live. */
+        sceKernelWaitSema(s->io_lock, 1, NULL);
+        memset(s->readers, 0, sizeof(s->readers));
+        sceKernelSignalSema(s->io_lock, 1);
+    }
+    sceKernelSignalSema(s->wake, 1);
+}
 static void stream_cancel(void *opaque) {
     BiliStreamCache *s=opaque;
     if(!s)return;
@@ -1300,7 +1327,7 @@ static int stream_begin(const BiliStream *stream,BiliPlayback *out) {
     s->io_lock=sceKernelCreateSema("bili_stream_io",0,1,1,NULL);
     s->wake=sceKernelCreateSema("bili_stream_data",0,0,1,NULL);
     if(s->io_lock<0 || s->wake<0){snprintf(network_error,sizeof(network_error),"Cannot create stream synchronization");goto fail;}
-    s->source=(PspVideoSource){s,(int64_t)s->expected,stream_read_at,stream_cancel,NULL};
+    s->source=(PspVideoSource){s,(int64_t)s->expected,stream_read_at,stream_cancel,NULL,stream_interrupt_reads};
     s->thread=sceKernelCreateThread("bili_stream",stream_download_thread,
                                     BILI_STREAM_THREAD_PRIORITY,128*1024,
                                     PSP_THREAD_ATTR_USER,NULL);

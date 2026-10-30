@@ -96,3 +96,14 @@ sh tools/test-memory-profiles.sh
 PPSSPP 批量播放及 CSV 报告。支持现有 H.264 内部阶段采样和可选的 PPSSPP
 JIT 热点输出；真机 PSPLink、硬件计数器及 gprof 的能力与限制见该目录的
 `profiling.md`。媒体和每轮结果仅保存在本地。
+## 播放控件回放
+
+`tools/ppsspp/test-playback-controls.py` 使用 `BILI_DEVICE_PLAYBACK_TEST=ON` 的测试包，
+默认构建目录为 `build/playback-controls`，包目录为
+`build/playback-controls-dist/PSP/GAME/WiliMini`。可通过
+`BILI_HEADLESS_CLIENT_DIR` 和 `BILI_HEADLESS_PACKAGE` 覆盖。
+需配置 native ME 固件及 `PPSSPP_HEADLESS`；脚本生成媒体、按键回放和验证 JSON。
+
+`BILI_HEADLESS_REALTIME=1` 让启动器以实时速度运行，适用于网络下载测试。
+`tools/serve-playback-fixture.py --video <mp4> --audio <m4a>` 提供限定文件的 HTTP Range
+测试服务，运行结束后关闭。它不验证 Bilibili CDN 或真实画质切换。

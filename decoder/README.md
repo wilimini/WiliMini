@@ -94,3 +94,11 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 旧模拟器可显式构建 `-DBILI_PPSSPP_SCE_MPEG=ON` 使用保留的 sceMpeg 后端。
 详见 [模拟器后端与验证](../docs/ppsspp-player.md) 和
 [ME 兼容性分析](../docs/me-compatibility.md)。
+
+## 播放控制与显示回调
+
+`PspVideoOptions.presenter` 接收视频帧和控制状态；空帧表示重绘上一帧。
+宿主负责 DMA/GE 同步及换页。未提供回调时沿用默认视频显示。
+原生 ME 跳转保留视频/ME 实例；音频管线会重新打开。源的
+`interrupt_reads` 回调用于中断旧读取，不得销毁或取消下载源。
+快捷键、菜单、缓冲所有权和限制见 [播放控制与弹幕](../docs/playback-controls.md)。

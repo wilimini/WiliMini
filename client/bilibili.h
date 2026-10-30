@@ -46,6 +46,7 @@ typedef struct {
     BiliRangeStream *video;
     BiliRangeStream *audio;
     BiliLiveStream *live;
+    int quality, quality_count, qualities[3];
 } BiliPlayback;
 int bili_parse_home(const char *text, BiliHome *out);
 int bili_parse_stream(const char *text, BiliStream *out);

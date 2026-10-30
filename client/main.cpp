@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <memory>
 #include <malloc.h>
 #include <unistd.h>
 
@@ -15,6 +16,7 @@
 
 #include "app.hpp"
 #include "ui.hpp"
+#include "playback_osd.hpp"
 #include "storage_paths.h"
 #include <psp_runtime.h>
 #ifdef BILI_DEVICE_PLAYBACK_TEST
@@ -185,11 +187,27 @@ int main(int argc, char** argv) {
                               psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
                                   : PSP_VIDEO_BACKEND_NATIVE_ME;
+            auto osd = std::make_unique<pspapp::PlaybackOsd>(app.playbackTitle(), app.preferences(), app.playbackDanmaku(), app.playbackSubtitles());
+            options.presenter = osd->presenter();
+            options.start_paused = app.playbackPaused();
+            auto settings = app.playerSettings();
+            settings.subtitle_count = osd->subtitleCount();
+            if (settings.subtitle_track > settings.subtitle_count) settings.subtitle_track = 0;
+            settings.quality = app.playback().quality;
+            settings.quality_count = app.playback().quality_count;
+            for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
+            options.settings = &settings;
             PspVideoResult result{};
             const int error = psp_video_play(&options, &result);
             logMemory("after_playback");
             ui_resume();
-            app.finishPlayback(error, result.frames, result.eof, result.cancelled, result.error_stage, result.position_ms);
+            osd.reset();
+            app.setPlayerSettings(result.settings);
+            if (result.quality_requested && !exiting && error >= 0)
+                app.seekPlayback(result.position_ms, result.seek_paused != 0, result.quality_requested);
+            else if (result.seek_requested && !exiting && error >= 0)
+                app.seekPlayback(result.seek_ms, result.seek_paused != 0);
+            else app.finishPlayback(error, result.frames, result.eof, result.cancelled, result.error_stage, result.position_ms);
             previous = ~0u;
             continue;
         }

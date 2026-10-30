@@ -208,10 +208,15 @@ add_library(wili_client_objects OBJECT
     client/preferences.cpp
     client/app_settings.cpp
     client/playback.cpp
+    client/playback_osd.cpp
     client/api_client.cpp
     client/services/app_error.cpp
     client/services/playback_error.cpp
     client/services/network.cpp
+    client/services/subtitles.cpp
+    client/services/subtitle_service.cpp
+    client/services/danmaku.cpp
+    client/services/danmaku_service.cpp
     client/services/http_policy.c
     client/services/session_store.cpp
     client/services/auth_service.cpp
@@ -406,6 +411,11 @@ add_custom_target(package
 endif()
 
 add_custom_target(assets)
+add_custom_target(generate-player-icons
+    COMMAND "${Python3_EXECUTABLE}" "${ROOT}/scripts/generate-player-icons.py"
+    WORKING_DIRECTORY "${ROOT}"
+    COMMENT "Regenerating pinned wiliwili player icons (rsvg-convert and ImageMagick)")
+add_dependencies(assets generate-player-icons)
 if(BILI_FONT_FILE)
     add_custom_target(generate-font
         COMMAND python3 "${ROOT}/scripts/prepare-client-font.py" "${BILI_FONT_FILE}"
@@ -416,5 +426,7 @@ if(BILI_FONT_FILE)
 endif()
 if(BILI_BUILD_CLIENT)
     add_custom_target(me DEPENDS me_bridge)
-    add_dependencies(package assets)
+    if(BILI_FONT_FILE)
+        add_dependencies(package generate-font)
+    endif()
 endif()

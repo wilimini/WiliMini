@@ -162,6 +162,9 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     if (ret < 0) goto done;
     mux.stream = av_find_best_stream(mux.format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     if (mux.stream < 0) { ret = mux.stream; goto done; }
+    video_origin_us = source_origin_us(mux.format);
+    playback_metadata(mux.format->duration == AV_NOPTS_VALUE ? 0 : mux.format->duration / 1000,
+                      !mux.format->pb || (mux.format->pb->seekable & AVIO_SEEKABLE_NORMAL));
     AVCodecParameters *par = mux.format->streams[mux.stream]->codecpar;
     width = par->width; height = par->height; stride = (width + 15) & ~15;
     if (par->codec_id != AV_CODEC_ID_H264 || width <= 0 || height <= 0 || width > 1280 || height > 720) {
@@ -249,13 +252,16 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
             /* When audio ends before video, let the remaining video follow
              * the same epoch instead of waiting on a stopped audio clock. */
             if (audio.eof && audio.consumed == audio.produced)
-                clock = audio.first_pts_us + (int64_t)sceKernelGetSystemTimeWide() - audio.epoch_us;
-            if (pts_us <= clock - source_origin_us(audio.format)) break;
+                clock = audio.first_pts_us + playback_now_us() - audio.epoch_us;
+            int paused = playback_is_paused();
+            if ((!paused && pts_us <= clock - source_origin_us(audio.format)) ||
+                (presenter && paused && !stats->total_frames)) break;
+            if (presenter && present_video(NULL) < 0) { ret = -113; break; }
             sceKernelDelayThreadCB(2000);
         }
         if (quit_requested) break;
         if (audio.error) { ret = audio.error; break; }
-        uint32_t *vram = (uint32_t *)(0x44000000 + page * 512 * 272 * 4);
+        uint32_t *vram = (uint32_t *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * 4);
         memset(vram,0,512*272*4);
         int w=480, h=(int)((int64_t)height*480/width);
         if (h>272) { h=272; w=(int)((int64_t)width*272/height); }
@@ -264,8 +270,13 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
             const uint32_t *src=rgb+(y*height/h)*stride;
             for (int x=0;x<w;++x) dst[x]=src[x*width/w];
         }
-        sceDisplayWaitVblankStart();
-        sceDisplaySetFrameBuf(vram,512,PSP_DISPLAY_PIXEL_FORMAT_8888,PSP_DISPLAY_SETBUF_IMMEDIATE);
+        if (presenter) {
+            ret = present_video(vram);
+            if (ret < 0) break;
+        } else {
+            sceDisplayWaitVblankStart();
+            sceDisplaySetFrameBuf(vram,512,PSP_DISPLAY_PIXEL_FORMAT_8888,PSP_DISPLAY_SETBUF_IMMEDIATE);
+        }
         page ^= 1;
         ++stats->total_frames;
         playback_position_us = pts_us;

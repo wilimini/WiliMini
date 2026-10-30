@@ -93,6 +93,10 @@ static int sceDmacMemcpy(void* dst, const void* src, size_t bytes) {
 static void sceKernelDcacheWritebackInvalidateRange(void* ptr, size_t bytes) {
     assert((uintptr_t)ptr % 64 == 0 && bytes == allocated_bytes);
 }
+static const void *presenter;
+static int playback_seeking;
+static int playback_is_paused(void) { return 0; }
+static int present_video(const uint32_t *pixels) { (void)pixels; return 0; }
 #define memalign queue_alloc
 #define free queue_free
 #include "../decoder/src/rgb_pacer.h"

@@ -19,6 +19,8 @@ static unsigned rgb_presented, rgb_dropped;
 static int64_t rgb_max_late_us, rgb_total_late_us;
 static uint64_t rgb_warmup_us, rgb_last_us;
 static volatile int rgb_startup_ready;
+static volatile int rgb_seek_preview;
+static unsigned rgb_generation;
 typedef struct { int64_t pts, audio, target; uint64_t wall; int dropped; } RgbRecord;
 static RgbRecord rgb_records[6000];
 
@@ -26,43 +28,57 @@ static int rgb_worker(SceSize size, void *arg)
 {
     (void)size; (void)arg;
     int64_t previous_pts = AV_NOPTS_VALUE;
+    unsigned generation = rgb_generation;
     for (;;) {
-        sceKernelWaitSema(rgb_ready, 1, NULL);
+        SceUInt refresh_timeout = 33000;
+        int ready = sceKernelWaitSema(rgb_ready, 1, presenter ? &refresh_timeout : NULL);
+        if (ready < 0) {
+            if (rgb_stop) return 0;
+            if (presenter && rgb_startup_ready && !quit_requested && present_video(NULL) < 0) rgb_error = -113;
+            continue;
+        }
         if (rgb_stop && rgb_consumed == rgb_produced) return 0;
+        if (generation != rgb_generation) { generation = rgb_generation; previous_pts = AV_NOPTS_VALUE; }
         unsigned slot = rgb_consumed % rgb_slots;
         int64_t target = rgb_pts[slot];
 #if PSP_RGB_NEAREST_PTS
         if (previous_pts != AV_NOPTS_VALUE && target > previous_pts)
             target -= (target - previous_pts) / 2;
 #endif
-        int drop = quit_requested || rgb_error || audio_playback_failed();
-        while (!drop && !rgb_startup_ready && !quit_requested)
+        int drop = quit_requested || playback_seeking || rgb_error || audio_playback_failed();
+        while (!drop && !rgb_startup_ready && !quit_requested && !playback_seeking)
             sceKernelDelayThread(1000);
         while (!drop && !quit_requested) {
+            if (playback_seeking) { drop = 1; break; }
             int64_t delta = target - audio_clock_us();
-            if (delta <= 0) break;
-            sceKernelDelayThread(delta > 2000 ? 2000 : (unsigned)delta);
+            int paused = playback_is_paused();
+            if ((!paused && delta <= 0) || (presenter && paused && (!rgb_presented || rgb_seek_preview))) break;
+            if (presenter && present_video(NULL) < 0) { rgb_error = -113; drop = 1; break; }
+            sceKernelDelayThread(delta > 2000 || paused ? 2000 : (unsigned)delta);
             if (audio_playback_failed()) drop = 1;
         }
-        int64_t late = audio_clock_us() - target;
+        if (playback_seeking) drop = 1;
+        int64_t late = drop ? 0 : audio_clock_us() - target;
         /* Never spend DMA bandwidth displaying obsolete queued pictures. */
-        if (rgb_produced - rgb_consumed > 1) {
+        if (!drop && !playback_is_paused() && rgb_produced - rgb_consumed > 1) {
             int64_t next_pts = rgb_pts[(rgb_consumed + 1) % rgb_slots];
             if (audio_clock_us() >= (rgb_pts[slot] + next_pts) / 2) drop = 1;
         }
         if (!drop && !quit_requested) {
-            int ret = sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 4);
+            int ret = presenter ? present_video(rgb_pixels[slot]) :
+                sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 4);
             if (ret < 0) rgb_error = ret;
             else {
                 late = audio_clock_us() - target;
                 if (late > rgb_max_late_us) rgb_max_late_us = late;
                 if (late > 0) rgb_total_late_us += late;
                 ++rgb_presented;
+                rgb_seek_preview = 0;
             }
         } else ++rgb_dropped;
         rgb_last_us = sceKernelGetSystemTimeWide();
         if (rgb_consumed < 6000)
-            rgb_records[rgb_consumed] = (RgbRecord){rgb_pts[slot], audio_clock_us(), target, rgb_last_us,
+            rgb_records[rgb_consumed] = (RgbRecord){rgb_pts[slot], playback_seeking ? 0 : audio_clock_us(), target, rgb_last_us,
                                                    drop || quit_requested || rgb_error};
         previous_pts = rgb_pts[slot];
         ++rgb_consumed;
@@ -75,7 +91,8 @@ static int rgb_start(void)
     // A failed ME shutdown may still own the previous output allocation.
     if (rgb_pixels) return AVERROR(EBUSY);
     rgb_produced = rgb_consumed = rgb_presented = rgb_dropped = 0;
-    rgb_stop = rgb_error = rgb_startup_ready = 0;
+    rgb_stop = rgb_error = rgb_startup_ready = rgb_seek_preview = 0;
+    rgb_generation = 0;
     rgb_max_late_us = rgb_total_late_us = 0;
     rgb_warmup_us = rgb_last_us = 0;
     const uint64_t setup_start = sceKernelGetSystemTimeWide();
@@ -109,6 +126,7 @@ static int rgb_acquire(void)
 {
     for (;;) {
         if (rgb_error || quit_requested) return -111;
+        if (playback_seeking) return -114;
         SceUInt timeout = 100000;
         int ret = sceKernelWaitSema(rgb_space, 1, &timeout);
         if (ret >= 0) return rgb_produced % rgb_slots;

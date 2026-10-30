@@ -82,6 +82,9 @@ fi
 if [ "${BILI_HEADLESS_LOG:-0}" = 1 ]; then
     set -- "$@" --log
 fi
+if [ "${BILI_HEADLESS_REALTIME:-0}" = 1 ]; then
+    set -- "$@" --realtime
+fi
 if [ -n "${BILI_HEADLESS_DUMP_AUDIO:-}" ]; then
     set -- "$@" "--dump-audio=$BILI_HEADLESS_DUMP_AUDIO"
 fi

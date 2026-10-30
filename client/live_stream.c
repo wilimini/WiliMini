@@ -178,7 +178,7 @@ int bili_prepare_live_playback(const char *url, BiliPlayback *out) {
   for (int i = 0; i < 2; i++) {
     s->readers[i] = (LiveReader){s, i};
     s->sources[i] =
-        (PspVideoSource){&s->readers[i], -1, live_read, live_cancel, NULL};
+        (PspVideoSource){&s->readers[i], -1, live_read, live_cancel, NULL, NULL};
   }
   s->thread = sceKernelCreateThread("live_download", live_download, 0x20,
                                     128 * 1024, PSP_THREAD_ATTR_USER, NULL);

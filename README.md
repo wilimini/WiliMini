@@ -123,6 +123,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 # 文档
 
 - [播放器说明](decoder/README.md)：播放器 API、音视频格式和 Media Engine 生命周期
+- [播放控制与弹幕](docs/playback-controls.md)：快捷键、画质菜单、跳转和叠加绘制
 - [客户端服务说明](docs/client-services.md)：网络服务和客户端模块
 - [界面文案目录](docs/localization.md)：静态语言表和生成方式
 - [PPSSPP 播放后端](docs/ppsspp-player.md)：模拟器构建、固件和播放测试
@@ -164,6 +165,9 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 | L / R | 切换主标签页；在详情页打开评论 |
 | SELECT | 重新打开 PSP Wi-Fi 设置 |
 | START | 退出客户端 |
+
+播放时 START 暂停/继续，L/R 跳转 10 秒，左右细调并预览进度，△ 选择弹幕、字幕与画质入口，□ 切换弹幕。
+详见 [播放控制与弹幕](docs/playback-controls.md)。
 
 搜索页面使用 PSP 原生屏幕键盘输入关键词。视频详情页支持评论、收藏、
 稍后观看和播放进度操作。

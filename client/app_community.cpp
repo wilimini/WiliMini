@@ -242,6 +242,7 @@ void App::browseActivate() {
   if (item.next.kind == BrowseKind::Episode ||
       item.next.kind == BrowseKind::LiveStream) {
     jobMedia_ = item;
+    playbackPaused_ = false;
     startJob(Job::CommunityPlay);
     return;
   }

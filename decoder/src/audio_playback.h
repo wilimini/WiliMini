@@ -163,7 +163,7 @@ static int audio_output_thread(SceSize size, void *arg)
 {
     (void)size; (void)arg;
     if (audio_wait(audio.go) < 0) return 0;
-    while (!audio.stop && !quit_requested && (uint64_t)sceKernelGetSystemTimeWide() < audio.epoch_us)
+    while (!audio.stop && !quit_requested && (uint64_t)playback_now_us() < audio.epoch_us)
         sceKernelDelayThread(1000);
     while (!audio.stop && !quit_requested) {
         if (audio.eof && audio.consumed == audio.produced) break;
@@ -176,6 +176,9 @@ static int audio_output_thread(SceSize size, void *arg)
             ++audio.underruns;
             if (waited > audio.max_wait_us) audio.max_wait_us = waited;
         }
+        while (playback_is_paused() && !audio.stop && !quit_requested)
+            sceKernelDelayThread(10000);
+        if (audio.stop || quit_requested) break;
         unsigned slot = audio.consumed % AUDIO_BLOCKS;
         unsigned buffered = audio.produced - audio.consumed;
         if (!audio.eof && buffered < audio.min_buffer_blocks) audio.min_buffer_blocks = buffered;
@@ -205,7 +208,7 @@ static int audio_output_thread(SceSize size, void *arg)
         ++audio.clock_sequence;
         __asm__ volatile("" ::: "memory");
         audio.clock_played_samples = played;
-        audio.clock_anchor_us = sceKernelGetSystemTimeWide();
+        audio.clock_anchor_us = playback_now_us();
         __asm__ volatile("" ::: "memory");
         ++audio.clock_sequence;
         ++audio.blocks;
@@ -288,7 +291,7 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     fclose(pcm);
     if (written != count) return -107;
 #endif
-    audio.epoch_us = sceKernelGetSystemTimeWide() + 1000000;
+    audio.epoch_us = playback_now_us() + 1000000;
 #if PSP_RGB_PACE
     rgb_startup_ready = 1;
 #endif
@@ -298,22 +301,35 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
 static void audio_close(int drain)
 {
     if (drain && audio.output_thread >= 0 && !audio.error && !quit_requested) {
-        SceUInt timeout = 10000000;
-        if (sceKernelWaitThreadEndCB(audio.output_thread, &timeout) < 0)
-            audio.error = -104;
+        unsigned active_wait = 0;
+        while (!quit_requested) {
+            SceUInt timeout = 100000;
+            if (sceKernelWaitThreadEndCB(audio.output_thread, &timeout) >= 0) break;
+            if (!playback_is_paused()) active_wait += 100000;
+            if (active_wait >= 10000000) { audio.error = -104; break; }
+            // Native presentation has joined before final audio draining.
+            if (presenter) present_video(NULL);
+        }
     }
     audio.stop = 1;
-    if (!drain) {
+    if (!drain && !playback_seeking) {
         if (video_io_source && video_io_source->cancel)
             video_io_source->cancel(video_io_source->opaque);
         if (audio_io_source && audio_io_source != video_io_source && audio_io_source->cancel)
             audio_io_source->cancel(audio_io_source->opaque);
+    }
+    if (!drain && playback_seeking) {
+        if (video_io_source && video_io_source->interrupt_reads)
+            video_io_source->interrupt_reads(video_io_source->opaque, 1);
+        if (audio_io_source && audio_io_source != video_io_source && audio_io_source->interrupt_reads)
+            audio_io_source->interrupt_reads(audio_io_source->opaque, 1);
     }
     SceUID threads[] = {audio.decoder_thread, audio.output_thread};
     for (unsigned i = 0; i < 2; ++i) if (threads[i] >= 0) {
         sceKernelWaitThreadEndCB(threads[i], NULL);
         sceKernelDeleteThread(threads[i]);
     }
+    audio.decoder_thread = audio.output_thread = -1;
     if (audio.reserved) {
         /* A stopped sample may still own two DMA periods in the SRC hardware.
          * Let those finish before release. The release can still report busy
@@ -326,9 +342,11 @@ static void audio_close(int drain)
             sceKernelDelayThread(100000);
         }
         if(released<0)audio.error=released;
+        else audio.reserved = 0;
     }
     SceUID sems[] = {audio.space, audio.ready, audio.go};
     for (unsigned i = 0; i < 3; ++i) if (sems[i] >= 0) sceKernelDeleteSema(sems[i]);
+    audio.space = audio.ready = audio.go = -1;
     av_packet_free(&audio.packet);
     av_frame_free(&audio.frame);
     avcodec_free_context(&audio.codec);
@@ -346,7 +364,7 @@ static int64_t audio_clock_us(void)
         anchor = audio.clock_anchor_us;
         __asm__ volatile("" ::: "memory");
     } while ((seq & 1) || seq != audio.clock_sequence);
-    int64_t now = sceKernelGetSystemTimeWide();
+    int64_t now = playback_now_us();
     if (!anchor) return audio.first_pts_us + now - (int64_t)audio.epoch_us;
     int64_t elapsed = now - (int64_t)anchor;
     if (elapsed < 0) elapsed = 0;
