@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <pspgum.h>
@@ -59,6 +60,11 @@ void applyPreferences(const pspapp::Preferences& settings) {
     kText = settings.darkTheme ? color(235, 237, 242) : color(43, 46, 53);
     kTextDim = settings.darkTheme ? color(163, 170, 184) : color(117, 123, 134);
     kPink = settings.darkTheme ? color(255, 128, 170) : color(204, 65, 113);
+}
+
+std::string uiText(const pspapp::App& app, pspapp::TextId id,
+                   std::initializer_list<pspapp::TextArg> args = {}) {
+    return pspapp::formatText(id, app.preferences().locale, args);
 }
 
 uint32_t commands[65536] __attribute__((aligned(16)));
@@ -128,7 +134,7 @@ void blendPixel(int x, int y, uint32_t shade, unsigned alpha) {
     destination = result;
 }
 
-void drawText(int x, int y, float scale, uint32_t shade, const std::string& text, int maxWidth,
+void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
               bool centered = false, int clipTop = 0, int clipBottom = kHeight) {
     const int size = fontSize(scale);
     const int right = std::min(kWidth, x + maxWidth);
@@ -148,7 +154,7 @@ void drawText(int x, int y, float scale, uint32_t shade, const std::string& text
     }
 }
 
-std::vector<std::string> textLines(const std::string& text, int size, int maxWidth) {
+std::vector<std::string> textLines(std::string_view text, int size, int maxWidth) {
     std::vector<std::string> lines;
     int used = 0;
     std::string line;
@@ -166,7 +172,7 @@ std::vector<std::string> textLines(const std::string& text, int size, int maxWid
     return lines;
 }
 
-int drawWrapped(int x, int y, float scale, uint32_t shade, const std::string& text, int maxWidth,
+int drawWrapped(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
                 int maxLines, int lineHeight, int clipTop = 0, int clipBottom = kHeight) {
     const auto lines = textLines(text, fontSize(scale), maxWidth);
     lineHeight = std::max(lineHeight, fontSize(scale) + 4);
@@ -308,13 +314,18 @@ void drawHeader(const pspapp::App& app) {
     }
     fillRect(0, iconY[activeNav] - 1, navFocus ? 3 : 2, 22, kPink);
     if (app.utilityPage()) {
-        const char* title = "设置";
+        const char* title = pspapp::text(pspapp::TextId::page_settings_title, app.preferences().locale);
         switch (app.screen()) {
-            case pspapp::Screen::Storage: title = "设置 / 封面缓存"; break;
-            case pspapp::Screen::Help: title = "设置 / 按键帮助"; break;
-            case pspapp::Screen::About: title = "设置 / 关于"; break;
-            case pspapp::Screen::Licenses: title = "关于 / 开源许可"; break;
-            case pspapp::Screen::LicenseText: title = "开源许可 / 正文"; break;
+            case pspapp::Screen::Storage:
+                title = pspapp::text(pspapp::TextId::page_storage_title, app.preferences().locale); break;
+            case pspapp::Screen::Help:
+                title = pspapp::text(pspapp::TextId::page_help_title, app.preferences().locale); break;
+            case pspapp::Screen::About:
+                title = pspapp::text(pspapp::TextId::page_about_title, app.preferences().locale); break;
+            case pspapp::Screen::Licenses:
+                title = pspapp::text(pspapp::TextId::page_licenses_title, app.preferences().locale); break;
+            case pspapp::Screen::LicenseText:
+                title = pspapp::text(pspapp::TextId::page_license_text_title, app.preferences().locale); break;
             default: break;
         }
         drawText(38, 3, 0.9f, kText, title, 390);
@@ -350,8 +361,8 @@ void drawFooter(const pspapp::App& app) {
     static std::string lastStatus;
     static uint64_t statusUntil = 0;
     const uint64_t nowTicks = sceKernelGetSystemTimeWide();
-    const std::string confirm = app.preferences().confirmButton();
-    const std::string back = app.preferences().backButton();
+    const char* confirm = app.preferences().confirmButton();
+    const char* back = app.preferences().backButton();
     if (lastStatus != app.status()) {
         lastStatus = app.status();
         statusUntil = nowTicks + 2000000;
@@ -360,75 +371,91 @@ void drawFooter(const pspapp::App& app) {
     std::string hint;
     if (app.utilityPage()) {
         if (app.screen() == pspapp::Screen::Settings)
-            hint = "↑↓ 选择  ←→ 调整  " + confirm + " 打开  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_settings, {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::Storage)
-            hint = app.clearingCovers() ? confirm + " 确认清理封面  " + back + " 取消"
-                                        : confirm + " 清理封面  △ 刷新统计  " + back + " 返回";
+            hint = uiText(app, app.clearingCovers() ? pspapp::TextId::hint_storage_confirm
+                                                    : pspapp::TextId::hint_storage,
+                          {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::Licenses)
-            hint = "↑↓ 选择许可  " + confirm + " 阅读  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_licenses, {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::LicenseText)
-            hint = "↑↓ 滚动全文  " + back + " 返回许可列表";
+            hint = uiText(app, pspapp::TextId::hint_license_text, {{"back", back}});
         else if (app.screen() == pspapp::Screen::About)
-            hint = confirm + " 开源许可  " + back + " 返回";
-        else hint = back + " 返回设置";
+            hint = uiText(app, pspapp::TextId::hint_about, {{"confirm", confirm}, {"back", back}});
+        else hint = uiText(app, pspapp::TextId::hint_back_settings, {{"back", back}});
     } else if (app.screen() == pspapp::Screen::Login) {
-        hint = back + " 返回   △ 重试 / 刷新   SELECT 网络";
+        hint = uiText(app, pspapp::TextId::hint_login, {{"back", back}});
     } else if (app.busy()) {
         const char *progress = network_progress_message();
-        hint = std::string(progress[0] ? progress : app.status()) + " · " + back + " 取消并返回";
+        hint = uiText(app, pspapp::TextId::hint_busy,
+                      {{"progress", progress[0] ? progress : app.status()}, {"back", back}});
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
-        hint = "↑↓ 选择分区   " + confirm + " 进入   → 返回内容";
+        hint = uiText(app, pspapp::TextId::hint_navigation, {{"confirm", confirm}});
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
-        hint = "←→ 切换分类   ↓ 返回内容";
+        hint = uiText(app, pspapp::TextId::hint_categories);
     } else if (app.screen() == pspapp::Screen::Detail && !app.detailReady()) {
-        hint = "△ 重试详情  " + back + " 返回";
+        hint = uiText(app, pspapp::TextId::hint_detail_loading, {{"back", back}});
     } else if (app.screen() == pspapp::Screen::Detail) {
-        hint = confirm + (app.detailStartMs() > 0 ? " 续播" : " 播放") +
-               "  R 评论  L 收藏/云端  □ 本地稍后  " + back + " 返回";
+        hint = uiText(app, pspapp::TextId::hint_detail,
+                      {{"confirm", confirm}, {"action", app.detailStartMs() > 0
+                          ? pspapp::text(pspapp::TextId::value_resume, app.preferences().locale)
+                          : pspapp::text(pspapp::TextId::value_play, app.preferences().locale)},
+                       {"back", back}});
     } else if (app.screen() == pspapp::Screen::Browse) {
         const auto& page = app.browsePage();
         if (app.atTabRoot()) {
-            hint = "↑↓ 选择  " + confirm + " 打开  L/R 切换标签  " + back + " 首页";
+            hint = uiText(app, pspapp::TextId::hint_browse_root,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::Text) {
-            hint = "↑↓ 滚动全文  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_browse_text, {{"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::Image) {
-            hint = back + " 返回动态";
+            hint = uiText(app, pspapp::TextId::hint_browse_image, {{"back", back}});
         } else if (pspapp::isPgcPosterPage(page.request.kind)) {
-            hint = "方向键选择  " + confirm + " 详情  R 更多  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_browse_pgc,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::Season) {
-            hint = "↑↓ 选择  ← 分集 → 简介  " + confirm + " 打开  □ 追番  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_browse_season,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::Space) {
-            hint = page.followed ? "↑↓ 选择  " + confirm + " 打开  □ 取消关注  " + back + " 返回"
-                                : "↑↓ 选择  " + confirm + " 打开  □ 关注  " + back + " 返回";
+            hint = uiText(app, page.followed ? pspapp::TextId::hint_browse_space_follow
+                                             : pspapp::TextId::hint_browse_space_unfollow,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::DynamicDetail) {
-            hint = page.followed ? "↑↓ 选择  " + confirm + " 打开  □ 取消点赞  " + back + " 返回"
-                                : "↑↓ 选择  " + confirm + " 打开  □ 点赞  " + back + " 返回";
+            hint = uiText(app, page.followed ? pspapp::TextId::hint_browse_dynamic_unlike
+                                             : pspapp::TextId::hint_browse_dynamic_like,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::ChooseCollection) {
             const bool removesCollection = !page.items.empty() &&
                 app.browseSelection() < page.items.size() && page.items[app.browseSelection()].duration;
-            hint = "↑↓ 选择  " + confirm + (removesCollection ? " 移除收藏" : " 加入收藏") +
-                   "  " + back + " 返回";
+            hint = uiText(app, removesCollection ? pspapp::TextId::hint_browse_collection_remove
+                                                 : pspapp::TextId::hint_browse_collection_add,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (page.request.kind == pspapp::BrowseKind::Conversation ||
                    page.request.kind == pspapp::BrowseKind::Comments ||
                    page.request.kind == pspapp::BrowseKind::Replies) {
-            hint = "↑↓ 选择  " + confirm + " 打开  □ 撰写  R 更多  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_browse_conversation,
+                          {{"confirm", confirm}, {"back", back}});
         } else {
-            hint = "↑↓ 选择  " + confirm + " 打开  △ 刷新  R 更多  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_browse_default,
+                          {{"confirm", confirm}, {"back", back}});
         }
     } else if (app.screen() == pspapp::Screen::Comments) {
-        hint = "↑↓ 滚动  ←→ 选评论  " + confirm + " 操作  □ 写评论  R 更多";
+        hint = uiText(app, pspapp::TextId::hint_comments, {{"confirm", confirm}});
     } else if (app.tab() == pspapp::Tab::Search) {
         if (app.searchView() == pspapp::SearchView::History) {
-            hint = "↑↓ 选择  " + confirm + " 搜索  △ 删除  □ 输入  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_search_history,
+                          {{"confirm", confirm}, {"back", back}});
         } else if (app.searchView() == pspapp::SearchView::Landing) {
-            hint = "↑↓ 选择  " + confirm + " 确认  □ 输入  △ 刷新热搜  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_search_landing,
+                          {{"confirm", confirm}, {"back", back}});
         } else {
-            hint = "↑↓ 选择  " + confirm + " 打开  □ 修改关键词  △ 重试  " + back + " 返回";
+            hint = uiText(app, pspapp::TextId::hint_search_results,
+                          {{"confirm", confirm}, {"back", back}});
         }
     } else if (app.tab() == pspapp::Tab::Mine) {
-        hint = "↑↓ 选择  " + confirm + " 打开  □ 云端内容  " + back + " 返回";
+        hint = uiText(app, pspapp::TextId::hint_mine, {{"confirm", confirm}, {"back", back}});
     } else {
-        hint = "方向键选择  " + confirm + " 打开  □ 搜索  L/R 分类";
+        hint = uiText(app, pspapp::TextId::hint_home, {{"confirm", confirm}});
     }
     if (app.screen() != pspapp::Screen::Login && !app.clearingCovers() && !app.busy() &&
         (nowTicks < statusUntil ||
@@ -715,62 +742,93 @@ void drawSearch(const pspapp::App& app) {
 
 void drawUtility(const pspapp::App& app) {
     using pspapp::Screen;
+    const auto locale = app.preferences().locale;
     if (app.screen() == Screen::Settings) {
-        drawText(39, 31, 0.5f, kTextDim, "界面与操作 · 修改后自动保存", 428);
-        const char* labels[] = {"主题", "正文字号", "封面加载", "按键连发", "播放缓冲", "确认键", "Wi-Fi", "封面缓存", "按键帮助", "关于与开源许可"};
+        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::settings_header, locale), 428);
+        const pspapp::TextId labels[] = {
+            pspapp::TextId::settings_theme, pspapp::TextId::settings_body_size,
+            pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
+            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_confirm_button,
+            pspapp::TextId::settings_language, pspapp::TextId::settings_wifi,
+            pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
+            pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
-        const std::string values[] = {preferences.darkTheme ? "深色" : "浅色",
-            std::to_string(preferences.bodySize) + " px", preferences.showCovers ? "按需加载" : "关闭",
-            preferences.slowRepeat ? "慢速" : "标准",
-            std::to_string(preferences.playbackBufferFrames) + " 帧 / " +
-                std::to_string(preferences.playbackBufferFrames * 544) + "K",
-            preferences.confirmWithCircle ? "○ 确认" : "× 确认",
-            "系统连接 ›", "管理 ›", "查看 ›", "查看 ›"};
+        const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
+                                                                         : pspapp::TextId::value_light, locale),
+            std::to_string(preferences.bodySize) + " px",
+            pspapp::text(preferences.showCovers ? pspapp::TextId::value_on_demand
+                                               : pspapp::TextId::value_off, locale),
+            pspapp::text(preferences.slowRepeat ? pspapp::TextId::value_slow
+                                                : pspapp::TextId::value_standard, locale),
+            pspapp::formatText(pspapp::TextId::value_buffer, locale,
+                {{"frames", std::to_string(preferences.playbackBufferFrames)},
+                 {"memory", std::to_string(preferences.playbackBufferFrames * 544)}}),
+            pspapp::formatText(pspapp::TextId::value_confirm, locale,
+                {{"button", preferences.confirmButton()}}),
+            pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
+                                                          : pspapp::TextId::value_language_en, locale),
+            pspapp::text(pspapp::TextId::value_system_connect, locale),
+            pspapp::text(pspapp::TextId::value_manage, locale),
+            pspapp::text(pspapp::TextId::value_view, locale),
+            pspapp::text(pspapp::TextId::value_view, locale)};
         for (size_t i = 0; i < static_cast<size_t>(pspapp::SettingItem::Count); ++i) {
-            const int y = 49 + static_cast<int>(i) * 20;
+            const int y = 49 + static_cast<int>(i) * 18;
             if (app.settingSelection() == i) fillRect(33, y + 3, 2, 16, kPink);
-            drawText(39, y, 0.7f, kText, labels[i], 280);
-            drawText(330, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 138);
+            drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
+            drawText(300, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 168);
         }
     } else if (app.screen() == Screen::Storage) {
-        drawText(39, 31, 0.5f, kTextDim, "仅统计本机缓存的 JPEG 封面", 428);
-        drawText(39, 60, 0.7f, kText, "封面数量", 260);
-        drawText(330, 60, 0.7f, kText, std::to_string(app.coverFiles()) + " 张", 138);
+        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::storage_title, locale), 428);
+        drawText(39, 60, 0.7f, kText, pspapp::text(pspapp::TextId::storage_cover_count, locale), 260);
+        drawText(330, 60, 0.7f, kText,
+                 uiText(app, pspapp::TextId::storage_count_value,
+                        {{"count", std::to_string(app.coverFiles())}}), 138);
         char size[32];
         std::snprintf(size, sizeof(size), "%.1f KiB", app.coverBytes() / 1024.0);
-        drawText(39, 86, 0.7f, kText, "占用空间", 260);
+        drawText(39, 86, 0.7f, kText, pspapp::text(pspapp::TextId::storage_space, locale), 260);
         drawText(330, 86, 0.7f, kText, size, 138);
         fillRect(39, 118, 428, 1, kLine);
-        drawWrapped(39, 135, 0.7f, kText, "清理封面后，联网浏览视频时会按需重新下载。", 428, 2, 18);
-        drawText(39, 185, 0.5f, kTextDim, "登录、观看历史、稍后观看与列表数据会保留。", 428);
+        drawWrapped(39, 135, 0.7f, kText, pspapp::text(pspapp::TextId::storage_download_info, locale), 428, 2, 18);
+        drawText(39, 185, 0.5f, kTextDim,
+                 pspapp::text(pspapp::TextId::storage_preserved_info, locale), 428);
         if (app.clearingCovers())
-            drawText(39, 215, 0.7f, kPink,
-                     "再次按 " + std::string(app.preferences().confirmButton()) + " 确认清理，" +
-                         app.preferences().backButton() + " 取消", 428);
+            drawText(39, 215, 0.7f, kPink, uiText(app, pspapp::TextId::storage_clear_confirm,
+                     {{"confirm", app.preferences().confirmButton()},
+                      {"back", app.preferences().backButton()}}), 428);
     } else if (app.screen() == Screen::Help) {
-        const char* labels[] = {"通用", "侧栏", "首页", "搜索", "我的", "详情", "评论"};
-        const std::string text[] = {std::string(app.preferences().confirmButton()) + " 确认，" +
-                app.preferences().backButton() + " 逐层返回", "内容最左侧按 ←，↑↓ 选入口",
-            "2×2 网格，↓ 滚动，L/R 分类", "□ 输入，△ 刷新或删除历史",
-            std::string(app.preferences().confirmButton()) + " 打开账号或本地记录",
-            "↑↓ 分P，□ 稍后观看，R 评论", "↑↓ 滚动全文，R 继续加载"};
+        const pspapp::TextId labels[] = {
+            pspapp::TextId::help_label_general, pspapp::TextId::help_label_sidebar,
+            pspapp::TextId::help_label_home, pspapp::TextId::help_label_search,
+            pspapp::TextId::help_label_mine, pspapp::TextId::help_label_detail,
+            pspapp::TextId::help_label_comments};
+        const pspapp::TextId rows[] = {
+            pspapp::TextId::help_general, pspapp::TextId::help_sidebar,
+            pspapp::TextId::help_home, pspapp::TextId::help_search,
+            pspapp::TextId::help_mine, pspapp::TextId::help_detail,
+            pspapp::TextId::help_comments};
+        const std::string text[] = {
+            uiText(app, rows[0], {{"confirm", app.preferences().confirmButton()},
+                                  {"back", app.preferences().backButton()}}),
+            pspapp::text(rows[1], locale), pspapp::text(rows[2], locale), pspapp::text(rows[3], locale),
+            uiText(app, rows[4], {{"confirm", app.preferences().confirmButton()}}),
+            pspapp::text(rows[5], locale), pspapp::text(rows[6], locale)};
         for (int i = 0; i < 7; ++i) {
             const int y = 39 + i * 29;
-            drawText(39, y + 2, 0.5f, kTextDim, labels[i], 68);
+            drawText(39, y + 2, 0.5f, kTextDim, pspapp::text(labels[i], locale), 68);
             drawText(112, y, 0.7f, kText, text[i], 356);
         }
     } else if (app.screen() == Screen::About) {
         drawText(39, 39, 0.9f, kText, "WiliMini", 428);
         drawText(39, 66, 0.5f, kTextDim, app.buildVersion(), 428);
-        drawText(39, 99, 0.7f, kText, "为 PSP 的 480×272 屏幕设计", 428);
-        drawText(39, 127, 0.7f, kText, "界面与素材参考 Wiliwili", 428);
-        drawText(39, 155, 0.5f, kTextDim, "中文：文泉驿微米黑 · 原生 12 / 14 / 16 px 位图", 428);
+        drawText(39, 99, 0.7f, kText, pspapp::text(pspapp::TextId::about_design, locale), 428);
+        drawText(39, 127, 0.7f, kText, pspapp::text(pspapp::TextId::about_reference, locale), 428);
+        drawText(39, 155, 0.5f, kTextDim, pspapp::text(pspapp::TextId::about_font, locale), 428);
         fillRect(39, 188, 428, 1, kLine);
         fillRect(33, 209, 2, 16, kPink);
-        drawText(39, 206, 0.7f, kPink,
-                 "开源许可 · " + std::string(app.preferences().confirmButton()) + " 阅读随包全文", 428);
+        drawText(39, 206, 0.7f, kPink, uiText(app, pspapp::TextId::about_license,
+                 {{"confirm", app.preferences().confirmButton()}}), 428);
     } else if (app.screen() == Screen::Licenses) {
-        drawText(39, 31, 0.5f, kTextDim, "依赖、字体和素材的许可证", 428);
+        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::licenses_title, locale), 428);
         for (size_t i = 0; i < pspapp::settingsLicenseCount; ++i) {
             const int y = 54 + static_cast<int>(i) * 23;
             const bool selected = app.licenseSelection() == i;

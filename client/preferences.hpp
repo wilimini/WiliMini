@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include "memory_budget.hpp"
+#include "localization.hpp"
 
 namespace pspapp {
 enum class SettingItem : std::size_t {
@@ -10,6 +11,7 @@ enum class SettingItem : std::size_t {
     SlowRepeat,
     PlaybackBufferFrames,
     ConfirmWithCircle,
+    Language,
     Wifi,
     CoverCache,
     Help,
@@ -24,9 +26,14 @@ struct Preferences {
     bool slowRepeat = false;
     int playbackBufferFrames = defaultPlaybackBufferFrames();
     bool confirmWithCircle = false;
+    Locale locale = Locale::ZhHans;
 
-    const char* confirmButton() const { return confirmWithCircle ? "○" : "×"; }
-    const char* backButton() const { return confirmWithCircle ? "×" : "○"; }
+    const char* confirmButton() const {
+        return buttonGlyph(confirmWithCircle ? ControllerButton::Circle : ControllerButton::Cross);
+    }
+    const char* backButton() const {
+        return buttonGlyph(confirmWithCircle ? ControllerButton::Cross : ControllerButton::Circle);
+    }
 };
 
 // Missing files use defaults; malformed files are reported without overwriting them.

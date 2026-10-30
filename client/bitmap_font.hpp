@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include <string>
+#include <string_view>
 
 struct BitmapGlyph {
     uint32_t codepoint = 0;
@@ -12,5 +12,5 @@ bool bitmapFontInit(const char* path);
 void bitmapFontShutdown();
 const BitmapGlyph* bitmapGlyph(uint32_t codepoint, int size);
 int bitmapAdvance(uint32_t codepoint, int size);
-uint32_t bitmapNext(const std::string& text, size_t& position);
-int bitmapMeasure(const std::string& text, int size);
+uint32_t bitmapNext(std::string_view text, size_t& position);
+int bitmapMeasure(std::string_view text, int size);

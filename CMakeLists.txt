@@ -203,6 +203,8 @@ add_library(wili_client_objects OBJECT
     client/services/search_service.cpp
     client/services/community_service.cpp
     client/app_community.cpp
+    client/localization.cpp
+    "${CMAKE_BINARY_DIR}/generated/localization.generated.cpp"
     client/third_party/qrcodegen/qrcodegen.c
     client/ui.cpp
     client/bitmap_font.cpp
@@ -213,6 +215,24 @@ add_library(wili_client_objects OBJECT
     client/psp_select.c
     client/psp_dns.c
     client/dns_packet.c)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(LOCALIZATION_OUTPUTS
+    "${CMAKE_BINARY_DIR}/generated/localization.generated.hpp"
+    "${CMAKE_BINARY_DIR}/generated/localization.generated.cpp")
+add_custom_command(
+    OUTPUT ${LOCALIZATION_OUTPUTS}
+    COMMAND "${Python3_EXECUTABLE}" "${ROOT}/scripts/generate-localization.py"
+        --zh-hans "${ROOT}/resources/i18n/zh-Hans.json"
+        --en-us "${ROOT}/resources/i18n/en-US.json"
+        --output-dir "${CMAKE_BINARY_DIR}/generated"
+    DEPENDS
+        "${ROOT}/scripts/generate-localization.py"
+        "${ROOT}/resources/i18n/zh-Hans.json"
+        "${ROOT}/resources/i18n/en-US.json"
+    VERBATIM
+    COMMENT "Generating static localization tables")
+add_custom_target(generate_localization DEPENDS ${LOCALIZATION_OUTPUTS})
+add_dependencies(wili_client_objects generate_localization)
 set(CLIENT_INCLUDE_DIRS
     "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/decoder/include"

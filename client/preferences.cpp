@@ -30,7 +30,18 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
-        loaded.confirmWithCircle = root.value("confirm_with_circle", false);
+        if (!root.contains("confirm_button")) {
+            loaded.confirmWithCircle = root.value("confirm_with_circle", false);
+        } else {
+            const std::string button = root.at("confirm_button").get<std::string>();
+            if (button == "circle") loaded.confirmWithCircle = true;
+            else if (button == "cross") loaded.confirmWithCircle = false;
+            else return false;
+        }
+        const std::string locale = root.value("locale", std::string("zh-Hans"));
+        if (locale == "zh-Hans") loaded.locale = Locale::ZhHans;
+        else if (locale == "en-US") loaded.locale = Locale::EnUs;
+        else return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
         if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
             loaded.playbackBufferFrames != 8) return false;
@@ -45,11 +56,14 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     if (preferences.bodySize != 14 && preferences.bodySize != 16) return false;
     if (preferences.playbackBufferFrames != 2 && preferences.playbackBufferFrames != 4 &&
         preferences.playbackBufferFrames != 8) return false;
+    if (preferences.locale != Locale::ZhHans && preferences.locale != Locale::EnUs) return false;
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
-        {"confirm_with_circle", preferences.confirmWithCircle}}).dump();
+        {"confirm_with_circle", preferences.confirmWithCircle},
+        {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
+        {"locale", localeCode(preferences.locale)}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
     if (!file) return false;

@@ -37,7 +37,8 @@ void App::openSettings() {
     if (busy()) return;
     navigation_.push<SettingsRoute>();
     navigation_.current().focus = FocusArea::Content;
-    status_ = "设置 · ←→ 调整 · " + std::string(preferences_.confirmButton()) + " 打开";
+    status_ = formatText(TextId::settings_status_open, preferences_.locale,
+                         {{"confirm", preferences_.confirmButton()}});
 }
 
 void App::changeSetting() {
@@ -52,16 +53,19 @@ void App::changeSetting() {
         case SettingItem::PlaybackBufferFrames: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
+        case SettingItem::Language:
+            next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
+            break;
         default: return;
     }
     if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
-        status_ = "设置保存失败 · 请检查记忆棒空间";
+        status_ = text(TextId::settings_save_failed, preferences_.locale);
         return;
     }
     preferences_ = next;
     status_ = navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)
-                  ? "已保存 · 下次播放生效 · 小缓冲更省内存"
-                  : "已保存 · 立即生效";
+                  ? text(TextId::settings_saved_buffer, preferences_.locale)
+                  : text(TextId::settings_saved, preferences_.locale);
 }
 
 void App::updateStorage() {

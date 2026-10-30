@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -72,7 +73,7 @@ int bitmapAdvance(uint32_t cp, int size) {
     return record ? record->advance : size;
 }
 
-uint32_t bitmapNext(const std::string& text, size_t& pos) {
+uint32_t bitmapNext(std::string_view text, size_t& pos) {
     if (pos >= text.size()) return 0;
     const unsigned char first = text[pos++];
     if (first < 0x80) return first;
@@ -86,7 +87,7 @@ uint32_t bitmapNext(const std::string& text, size_t& pos) {
     return cp;
 }
 
-int bitmapMeasure(const std::string& text, int size) {
+int bitmapMeasure(std::string_view text, int size) {
     int width = 0;
     for (size_t pos = 0; pos < text.size();) {
         width += bitmapAdvance(bitmapNext(text, pos), size);

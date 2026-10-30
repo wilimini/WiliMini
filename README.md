@@ -42,6 +42,7 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 - **PSP 优化**：使用 VFPU、DMA 和 Media Engine 优化性能
 - **模拟器支持**：可以在启用 Media Engine 的 PPSSPP 中运行和验证
 - **主题切换**：支持深色和浅色主题
+- **语言选项**：设置页和按键提示支持简体中文与 English
 
 ## 性能优化架构
 
@@ -123,6 +124,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 
 - [播放器说明](decoder/README.md)：播放器 API、音视频格式和 Media Engine 生命周期
 - [客户端服务说明](docs/client-services.md)：网络服务和客户端模块
+- [界面文案目录](docs/localization.md)：静态语言表和生成方式
 - [PPSSPP 播放后端](docs/ppsspp-player.md)：模拟器构建、固件和播放测试
 - [Media Engine 兼容性分析](docs/me-compatibility.md)：ME bridge 与固件差异
 - [内存配置说明](docs/memory-profiles.md)：PSP-1000 与扩展内存配置
