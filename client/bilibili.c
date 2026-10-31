@@ -121,6 +121,50 @@ static CURL *transport;
 static CURL *api_transport; /* Serialized JSON requests, separate from media/covers. */
 static char buvid3[33];
 static char session_cookies[4096];
+/* One share object lets the API handle, the cover/download handle and each
+ * media thread's private handle reuse DNS answers and resume TLS sessions
+ * instead of repeating the full handshake. Only DNS and TLS sessions are
+ * shared: connections stay private to their handle, and the cookie engine is
+ * never shared. Every lock type gets its own semaphore because curl also locks
+ * CURL_LOCK_DATA_SHARE internally when handles attach or detach. */
+static CURLSH *http_share;
+static SceUID http_share_locks[CURL_LOCK_DATA_LAST];
+static void http_share_lock(CURL *handle,curl_lock_data data,curl_lock_access access,void *user) {
+    (void)handle;(void)access;(void)user;
+    if((int)data>=0 && (int)data<CURL_LOCK_DATA_LAST && http_share_locks[data]>=0)
+        sceKernelWaitSema(http_share_locks[data],1,NULL);
+}
+static void http_share_unlock(CURL *handle,curl_lock_data data,void *user) {
+    (void)handle;(void)user;
+    if((int)data>=0 && (int)data<CURL_LOCK_DATA_LAST && http_share_locks[data]>=0)
+        sceKernelSignalSema(http_share_locks[data],1);
+}
+static void http_share_destroy(void) {
+    if(http_share){curl_share_cleanup(http_share);http_share=NULL;}
+    for(int i=0;i<CURL_LOCK_DATA_LAST;++i)
+        if(http_share_locks[i]>=0){sceKernelDeleteSema(http_share_locks[i]);http_share_locks[i]=-1;}
+}
+/* Failure leaves http_share NULL and every handle simply uses private caches. */
+static void http_share_init(void) {
+    for(int i=0;i<CURL_LOCK_DATA_LAST;++i)http_share_locks[i]=-1;
+    int ok=1;
+    for(int i=0;i<CURL_LOCK_DATA_LAST && ok;++i){
+        http_share_locks[i]=sceKernelCreateSema("bili_share",0,1,1,NULL);
+        if(http_share_locks[i]<0)ok=0;
+    }
+    if(ok)http_share=curl_share_init();
+    if(!http_share)ok=0;
+    if(ok)ok=curl_share_setopt(http_share,CURLSHOPT_LOCKFUNC,http_share_lock)==CURLSHE_OK &&
+             curl_share_setopt(http_share,CURLSHOPT_UNLOCKFUNC,http_share_unlock)==CURLSHE_OK &&
+             curl_share_setopt(http_share,CURLSHOPT_SHARE,CURL_LOCK_DATA_DNS)==CURLSHE_OK &&
+             curl_share_setopt(http_share,CURLSHOPT_SHARE,CURL_LOCK_DATA_SSL_SESSION)==CURLSHE_OK;
+    if(!ok)http_share_destroy();
+}
+/* curl_easy_reset() may drop the attachment, so call this after every reset. */
+static void http_share_apply(CURL *c) {
+    if(http_share)curl_easy_setopt(c,CURLOPT_SHARE,http_share);
+}
+
 void bili_http_set_session(const char *cookies) {
     snprintf(session_cookies, sizeof(session_cookies), "%s", cookies ? cookies : "");
 }
@@ -176,6 +220,8 @@ int network_init(void) {
     if((r=sceNetResolverInit())<0)return r;
     if((r=sceNetApctlInit(0x8000,0x30))<0)return r;
     if(curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK)return -1;
+    psp_dns_init();
+    http_share_init();
     transport=curl_easy_init();if(!transport)return -1;
     initialized=1;return 0;
 }
@@ -245,7 +291,7 @@ int network_connect(void) {
     snprintf(network_error,sizeof(network_error),profile?"Wi-Fi connect request failed":"SELECT: choose a Wi-Fi connection");
     return -1;
 }
-void network_close(void){if(!initialized)return;curl_easy_cleanup(api_transport);api_transport=NULL;curl_easy_cleanup(transport);transport=NULL;curl_global_cleanup();sceNetApctlDisconnect();sceNetApctlTerm();sceNetResolverTerm();sceNetInetTerm();sceNetTerm();initialized=0;}
+void network_close(void){if(!initialized)return;curl_easy_cleanup(api_transport);api_transport=NULL;curl_easy_cleanup(transport);transport=NULL;http_share_destroy();psp_dns_shutdown();curl_global_cleanup();sceNetApctlDisconnect();sceNetApctlTerm();sceNetResolverTerm();sceNetInetTerm();sceNetTerm();initialized=0;}
 typedef struct {
     FILE *file;
     char *text;
@@ -310,6 +356,7 @@ static int request(const char *url,Sink *sink) {
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
     if(!sink->response)curl_easy_reset(c);
+    http_share_apply(c);
     transfer_kb=transfer_total_kb=0;
     curl_easy_setopt(c,CURLOPT_URL,url);
     if(sink->form){
@@ -711,6 +758,7 @@ static void range_configure(CURL *curl, const char *url, const char *range,
                             void *write_data, void *header_data,
                             char *error, struct curl_slist **headers) {
     curl_easy_reset(curl);
+    http_share_apply(curl);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_RANGE, range);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error);
@@ -910,7 +958,26 @@ static void range_cancel(void *opaque) {
     sceKernelSignalSema(stream->sized, 1);
 }
 
-static int range_begin(const BiliMediaUrl *media, const char *label, int64_t *size,
+/* Tear down a stream that never reached (or failed) the playback handoff. */
+static void range_destroy(BiliRangeStream *stream) {
+    if (!stream) return;
+    if (stream->thread >= 0) {
+        stream->cancelled = 1;
+        sceKernelSignalSema(stream->space, 1);
+        sceKernelWaitThreadEndCB(stream->thread, NULL);
+        sceKernelDeleteThread(stream->thread);
+    }
+    if (stream->lock >= 0) sceKernelDeleteSema(stream->lock);
+    if (stream->wake >= 0) sceKernelDeleteSema(stream->wake);
+    if (stream->space >= 0) sceKernelDeleteSema(stream->space);
+    if (stream->sized >= 0) sceKernelDeleteSema(stream->sized);
+    free(stream->ring);
+    free(stream);
+}
+
+/* Allocate the stream and start its download thread. The thread connects and
+ * learns the media size in the background; range_wait() collects the result. */
+static int range_start(const BiliMediaUrl *media, const char *label,
                        BiliRangeStream **out, char *error, size_t error_size) {
     if (!media || !media->url || !out) return -1;
     if (transfer_cancel) {
@@ -955,9 +1022,19 @@ static int range_begin(const BiliMediaUrl *media, const char *label, int64_t *si
         snprintf(error, error_size, "Cannot start media thread");
         goto fail;
     }
-    const int64_t deadline = (int64_t)sceKernelGetSystemTimeWide() + 30000000;
+    *out = stream;
+    return 0;
+fail:
+    range_destroy(stream);
+    return -1;
+}
+
+/* Wait until the stream's thread has reported the media size (or failed). The
+ * caller owns cleanup on failure so it can tear both streams down together. */
+static int range_wait(BiliRangeStream *stream, int64_t deadline, int64_t *size,
+                      char *error, size_t error_size) {
     int sized = 0;
-    while (!transfer_cancel && sceKernelGetSystemTimeWide() < deadline) {
+    while (!transfer_cancel && (int64_t)sceKernelGetSystemTimeWide() < deadline) {
         SceUInt timeout = 100000;
         if (sceKernelWaitSema(stream->sized, 1, &timeout) >= 0) {
             sized = 1;
@@ -970,26 +1047,11 @@ static int range_begin(const BiliMediaUrl *media, const char *label, int64_t *si
         if (transfer_cancel) stream->cancelled = 1;
         snprintf(error, error_size, "%s", transfer_cancel ? "Cancelled" :
                  stream->error[0] ? stream->error : "Media size timeout");
-        goto fail;
+        return -1;
     }
     stream->source = (PspVideoSource){stream, stream->size, range_read_at, range_cancel, NULL, range_interrupt_reads};
     *size = stream->size;
-    *out = stream;
     return 0;
-fail:
-    if (stream->thread >= 0) {
-        stream->cancelled = 1;
-        sceKernelSignalSema(stream->space, 1);
-        sceKernelWaitThreadEndCB(stream->thread, NULL);
-        sceKernelDeleteThread(stream->thread);
-    }
-    if (stream->lock >= 0) sceKernelDeleteSema(stream->lock);
-    if (stream->wake >= 0) sceKernelDeleteSema(stream->wake);
-    if (stream->space >= 0) sceKernelDeleteSema(stream->space);
-    if (stream->sized >= 0) sceKernelDeleteSema(stream->sized);
-    free(stream->ring);
-    free(stream);
-    return -1;
 }
 
 static void range_finish(BiliRangeStream *stream, int *failed) {
@@ -1435,13 +1497,23 @@ int bili_prepare_range_playback(const BiliVideo *v, const BiliMediaUrl *video_ur
     char error[160] = {0};
     int64_t video_size = 0, audio_size = 0;
     BiliRangeStream *video = NULL, *audio = NULL;
-    if (range_begin(video_url, "video", &video_size, &video, error, sizeof(error)) < 0) {
+    /* Start both transfers before waiting for either. DNS, TCP, TLS and the
+     * first response then overlap instead of running back to back; the
+     * resolver is safe for this because each lookup gets its own result. */
+    if (range_start(video_url, "video", &video, error, sizeof(error)) < 0) {
         snprintf(network_error, sizeof(network_error), "%s", error);
         return -1;
     }
-    if (range_begin(audio_url, "audio", &audio_size, &audio, error, sizeof(error)) < 0) {
-        int ignored = 0;
-        range_finish(video, &ignored);
+    if (range_start(audio_url, "audio", &audio, error, sizeof(error)) < 0) {
+        range_destroy(video);
+        snprintf(network_error, sizeof(network_error), "%s", error);
+        return -1;
+    }
+    const int64_t deadline = (int64_t)sceKernelGetSystemTimeWide() + 30000000;
+    if (range_wait(video, deadline, &video_size, error, sizeof(error)) < 0 ||
+        range_wait(audio, deadline, &audio_size, error, sizeof(error)) < 0) {
+        range_destroy(audio);
+        range_destroy(video);
         snprintf(network_error, sizeof(network_error), "%s", error);
         return -1;
     }
