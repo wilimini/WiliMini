@@ -94,6 +94,10 @@ int controlledPlaybackTest() {
             PspVideoOptions options{};
             options.path = video.c_str();
             options.log_root = CLIENT_ROOT;
+            // Match main.cpp: PPSSPP builds with the sceMpeg backend must not fall back to native ME.
+            options.backend = BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
+                                  ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
+                                  : PSP_VIDEO_BACKEND_NATIVE_ME;
             options.start_ms = requestedStart;
             options.start_paused = requestedPaused;
             options.sample = config.value("sample", false);
