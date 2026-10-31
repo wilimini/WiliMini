@@ -42,29 +42,33 @@ int main(void) {
     init(&s);
     assert(pc_input(&s, PC_REWIND, 1100000) == PC_SEEK && s.preview_ms == 10000);
     init(&s); s.settings.quality_count = 3; s.settings.qualities[1] = 32; s.settings.qualities[2] = 64;
-    pc_input(&s, PC_PANEL, 1100000); assert(s.menu_open == 1);
-    pc_input(&s, PC_CONFIRM, 1200000); assert(s.menu_open == 2);
-    pc_input(&s, PC_RIGHT, 1300000);
-    assert(!s.seeking && s.quality_index == 1);
-    pc_input(&s, PC_CONFIRM, 1500000); // Quality requires confirmation.
-    pc_input(&s, 0, 1600000);
-    assert(pc_input(&s, PC_CONFIRM, 1700000) == PC_QUALITY);
+    pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_CONFIRM, 1200000);
+    pc_input(&s, PC_RIGHT, 1300000); assert(s.quality_index == 0 && !s.seeking);
+    pc_input(&s, PC_UP, 1400000); assert(s.quality_index == 1 && s.settings.quality == 16);
+    pc_input(&s, PC_BACK, 1500000); pc_input(&s, PC_CONFIRM, 1600000);
+    assert(s.quality_index == 0); // Cancel discards preview.
+    pc_input(&s, PC_UP, 1700000); assert(pc_input(&s, PC_CONFIRM, 1800000) == PC_QUALITY);
     init(&s); s.settings.subtitle_count = 2;
-    pc_input(&s, PC_PANEL, 1100000);
-    pc_input(&s, PC_LEFT, 1200000); assert(s.menu_row == 4 && !s.seeking);
-    pc_input(&s, PC_CONFIRM, 1300000); assert(s.menu_open == 2);
-    pc_input(&s, PC_DOWN, 1400000); assert(s.settings.subtitle_track == 1);
-    pc_input(&s, 0, 1500000); pc_input(&s, PC_DOWN, 1600000);
-    assert(s.settings.subtitle_track == 2);
-    pc_input(&s, PC_BACK, 1700000); assert(s.menu_open == 1);
-    pc_input(&s, PC_LEFT, 1800000); assert(s.menu_row == 1);
-    pc_input(&s, PC_CONFIRM, 1900000); pc_input(&s, PC_RIGHT, 2000000);
-    assert(!s.settings.danmaku_enabled);
-    pc_input(&s, PC_DOWN, 2100000); assert(s.menu_row == 2);
-    pc_input(&s, PC_RIGHT, 2200000); assert(s.settings.danmaku_density == 2);
-    pc_input(&s, PC_PANEL, 2300000); assert(s.menu_open == 0);
-    init(&s); pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_LEFT, 1200000);
+    pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_LEFT, 1200000);
     pc_input(&s, PC_CONFIRM, 1300000); pc_input(&s, PC_DOWN, 1400000);
-    assert(s.settings.subtitle_track == 0); // No tracks available.
+    assert(s.menu_value == 1 && s.settings.subtitle_track == 0);
+    pc_input(&s, PC_BACK, 1500000); pc_input(&s, PC_CONFIRM, 1600000);
+    assert(s.menu_value == 0);
+    pc_input(&s, PC_DOWN, 1700000); pc_input(&s, PC_CONFIRM, 1800000);
+    assert(s.settings.subtitle_track == 1 && s.menu_open == PC_FOOTER);
+    pc_input(&s, PC_LEFT, 1900000); pc_input(&s, PC_CONFIRM, 2000000);
+    pc_input(&s, 0, 2100000); pc_input(&s, PC_CONFIRM, 2200000);
+    assert(!s.settings.danmaku_enabled && s.menu_open == PC_MENU && s.menu_row == 1);
+    pc_input(&s, PC_DOWN, 2300000); pc_input(&s, PC_CONFIRM, 2400000);
+    assert(s.menu_open == PC_VALUES && s.menu_value == 1);
+    pc_input(&s, PC_DOWN, 2500000); assert(s.settings.danmaku_density == 1 && s.menu_value == 2);
+    pc_input(&s, PC_BACK, 2600000); assert(s.menu_open == PC_MENU);
+    pc_input(&s, PC_CONFIRM, 2700000); assert(s.menu_value == 1);
+    pc_input(&s, PC_DOWN, 2800000); pc_input(&s, PC_CONFIRM, 2900000);
+    assert(s.settings.danmaku_density == 2 && s.menu_open == PC_MENU);
+    pc_input(&s, PC_DOWN, 3000000); pc_input(&s, PC_CONFIRM, 3100000);
+    pc_input(&s, PC_UP, 3200000); assert(s.settings.danmaku_opacity == 75);
+    pc_input(&s, PC_CONFIRM, 3300000); assert(s.settings.danmaku_opacity == 50);
+    pc_input(&s, PC_PANEL, 3400000); assert(s.menu_open == PC_PLAYING);
     puts("playback controls: PASS");
 }

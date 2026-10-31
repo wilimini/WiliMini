@@ -9,15 +9,19 @@ namespace {
 struct PlaybackTestPresentation {
     struct Sample { uint64_t time; PspVideoStatus status; } samples[512]{};
     unsigned count = 0;
-    uint64_t last = 0;
+    uint64_t last = 0, firstFrame = 0;
     const PspVideoPresenter* target = nullptr;
     PspVideoPresenter presenter{this, [](void* opaque, const uint32_t* pixels, const PspVideoStatus* status) {
         auto* self = static_cast<PlaybackTestPresentation*>(opaque);
         uint64_t now = sceKernelGetSystemTimeWide();
+        if (pixels && !self->firstFrame) self->firstFrame = now;
         if (self->count < 512 && now - self->last >= 100000) {
             self->samples[self->count++] = {now, *status}; self->last = now;
         }
         return self->target->present(self->target->opaque, pixels, status);
+    }, [](void* opaque, PspVideoSettings* settings) {
+        auto* self = static_cast<PlaybackTestPresentation*>(opaque);
+        if (self->target->update_settings) self->target->update_settings(self->target->opaque, settings);
     }};
 };
 struct PlaybackTestSource {
@@ -117,6 +121,7 @@ int controlledPlaybackTest() {
                 options.audio_source = &audioInput.source;
             }
             PspVideoSettings settings{16, 3, {16, 32, 64}, 1, 1, 75, 0, 0};
+            std::vector<std::pair<std::string, uint64_t>> overlayRequests;
             std::unique_ptr<pspapp::PlaybackOsd> osd;
             std::unique_ptr<PlaybackTestPresentation> presentation;
             if (config.value("controls", false)) {
@@ -139,6 +144,23 @@ int controlledPlaybackTest() {
                 osd = std::make_unique<pspapp::PlaybackOsd>(config.value("title", "播放控件测试 / Playback controls"), prefs, comments, subtitles);
                 settings.subtitle_count = osd->subtitleCount();
                 settings.subtitle_track = config.value("subtitle_track", 0);
+                if (config.value("async_overlays", false)) {
+                    settings.subtitle_track = 1;
+                    settings.subtitle_count = 2;
+                    osd->enableNetwork("fixture", 1, 0, [&](const std::string& url, pspapp::ErrorOperation op) {
+                        const bool metadata = url.find("/x/player/v2") != std::string::npos;
+                        const bool comments = url.find("/dm/list.so") != std::string::npos;
+                        overlayRequests.emplace_back(metadata ? "metadata" : comments ? "danmaku" : "selected_subtitle", sceKernelGetSystemTimeWide());
+                        sceKernelDelayThread(1200000); // Deliberately slow optional resources.
+                        pspapp::HttpResponse r;
+                        if (config.value("overlay_failure", false)) {
+                            r.error = {pspapp::ErrorDomain::Network, pspapp::ErrorKind::Timeout, op, 28};
+                        } else if (metadata) r.body = R"({"code":0,"data":{"subtitle":{"subtitles":[{"lan_doc":"简体中文","subtitle_url":"https://fixture.invalid/zh.json"},{"lan_doc":"English","subtitle_url":"https://fixture.invalid/en.json"}]}}})";
+                        else if (comments) r.body = "<i><d p=\"0,1,25,16777215,0\">后台弹幕测试</d></i>";
+                        else r.body = R"({"body":[{"from":0,"to":8,"content":"字幕按需加载，不阻塞首帧。"}]})";
+                        return r;
+                    });
+                }
                 options.settings = &settings;
                 presentation = std::make_unique<PlaybackTestPresentation>();
                 presentation->target = osd->presenter();
@@ -147,12 +169,15 @@ int controlledPlaybackTest() {
             const auto before = mallinfo();
             PspVideoResult result{};
             code = psp_video_play(&options, &result);
+            osd.reset(); // Join optional resource worker before inspecting requests.
+            for (const auto& request : overlayRequests) output["overlay_requests"].push_back({{"kind", request.first}, {"time_us", request.second}});
             if (mode == "range") {
                 const int networkResult = bili_finish_playback(&networkPlayback);
                 output["network_cleanup"] = networkResult;
             }
             const auto after = mallinfo();
             if (presentation) {
+                output["first_frame_us"] = presentation->firstFrame;
                 auto samples = json::array();
                 for (unsigned n = 0; n < presentation->count; ++n) {
                     const auto& item = presentation->samples[n];
