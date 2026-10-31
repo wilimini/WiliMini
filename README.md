@@ -29,7 +29,9 @@ WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界�
 音视频解码和显示都在 PSP 本机完成，不依赖外部串流设备。
 
 项目以接近 wiliwili 的浏览体验为目标，并针对 PSP 的内存、带宽和 Media Engine
-进行适配。目前主要在 PSP-3000 + ARK-5 上验证，理论支持 PSP-1000 和其他型号。
+进行适配。目前主要在 PSP-3000 + ARK-5 上验证。
+
+> （2026-10-31 更新）已在 PSP-1000，PSP-2000上验证。
 
 # 特点
 
@@ -43,6 +45,7 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 - **模拟器支持**：可以在启用 Media Engine 的 PPSSPP 中运行和验证
 - **主题切换**：支持深色和浅色主题
 - **语言选项**：设置页和按键提示支持简体中文与 English
+- **全型号支持**：支持PSP-1000, PSP-2000, PSP-3000, PSP Go
 
 ## 性能优化架构
 
@@ -229,8 +232,8 @@ dist/PSP/GAME/WiliMini/
 ```
 
 支持两个 ME 执行后端
-- MIST（`me_bridge.prx`，默认）
-- Custom Core （PSP-1000可用）
+- Custom Core （默认，PSP-1000可用）
+- MIST（PSP-2000以上可用）
 
 详见[播放器说明](decoder/README.md#custom-core-执行后端实验性)。
 
