@@ -34,7 +34,7 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
-        const std::string meBackend = root.value("me_backend", std::string("mist"));
+        const std::string meBackend = root.value("me_backend", std::string("custom-core"));
         if (meBackend == "mist") loaded.meBackend = MeBackend::Mist;
         else if (meBackend == "custom-core") loaded.meBackend = MeBackend::CustomCore;
         else return false;

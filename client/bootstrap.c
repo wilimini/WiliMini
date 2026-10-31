@@ -28,10 +28,10 @@ static int saved_me_backend(const char *root){
     char path[128];
     snprintf(path,sizeof(path),"%s/settings.json",root);
     SceUID file=sceIoOpen(path,PSP_O_RDONLY,0);
-    if(file<0)return WILI_ME_BACKEND_MIST;
+    if(file<0)return WILI_ME_BACKEND_CUSTOM_CORE;
     const int length=sceIoRead(file,text,sizeof(text)-1);
     sceIoClose(file);
-    return length>0?wili_me_backend_from_settings(text,(size_t)length):WILI_ME_BACKEND_MIST;
+    return length>0?wili_me_backend_from_settings(text,(size_t)length):WILI_ME_BACKEND_CUSTOM_CORE;
 }
 /* A bridge that fails to start is unloaded so the fallback can export me_lab. */
 static int start_bridge(const char *root,int backend){

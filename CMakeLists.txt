@@ -55,7 +55,7 @@ set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
 # Both execution backends are built into every package as separate bridge PRXs.
-# The bootstrap loads one according to settings.json; the default is MIST.
+# The bootstrap loads one according to settings.json; the default is Custom Core.
 set(BILI_ME_BACKENDS mist custom-core)
 
 execute_process(

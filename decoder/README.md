@@ -86,12 +86,12 @@ ME 桥按固件标识选表，播放器同步选择自身的 FAT/T2 函数表。
 
 ## Custom Core 执行后端（实验性）
 
-原生播放器默认使用 MIST。每次 `make package` 都生成两个桥 PRX：
+原生播放器默认使用 Custom Core。每次 `make package` 都生成两个桥 PRX：
 `me_bridge.prx`（MIST）和 `me_bridge_custom_core.prx`（Custom Core），
 二者导出相同的 `me_lab` 接口，另有 `meLabBackend()` 返回后端编号。
 
 选择方式：设置 → “ME 后端”（保存在 `settings.json` 的 `me_backend`，
-取值 `mist` 或 `custom-core`，缺省为 `mist`）。启动器（`bootstrap.c`）在加载
+取值 `mist` 或 `custom-core`，缺省或无法识别时为 `custom-core`）。启动器（`bootstrap.c`）在加载
 客户端前读取该值，只加载对应的桥；客户端在每次播放初始化时用
 `meLabBackend()` 选择 MIST 返回跳板（`me_task`）或 Custom Core 的 C 工作函数
 （`me_worker`）。因此修改后必须退出（START）并重新打开 WiliMini 才生效，运行中

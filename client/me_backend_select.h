@@ -22,30 +22,34 @@ static inline const char *wili_me_backend_name(int backend) {
 }
 
 /* The loader runs before the C++ client, so it only looks for the
- * "me_backend" string in settings.json written by preferences.cpp. Anything
- * missing, malformed or unknown selects the default MIST bridge; the client
- * validates the same file strictly and reports problems itself. */
+ * "me_backend" string in settings.json written by preferences.cpp. Only an
+ * explicit "mist" selects MIST; anything missing, malformed or unknown selects
+ * WILI_ME_BACKEND_CUSTOM_CORE. The client validates the same file strictly and
+ * reports problems itself. */
 static inline int wili_me_backend_from_settings(const char *text, size_t length) {
     static const char key[] = "\"me_backend\"";
     static const char custom[] = "custom-core";
-    if (!text) return WILI_ME_BACKEND_MIST;
+    static const char mist[] = "mist";
+    if (!text) return WILI_ME_BACKEND_CUSTOM_CORE;
     const size_t key_length = sizeof(key) - 1;
-    const size_t custom_length = sizeof(custom) - 1;
     for (size_t i = 0; i + key_length <= length; ++i) {
         if (memcmp(text + i, key, key_length) != 0) continue;
         size_t p = i + key_length;
         while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
-        if (p >= length || text[p] != ':') return WILI_ME_BACKEND_MIST;
+        if (p >= length || text[p] != ':') return WILI_ME_BACKEND_CUSTOM_CORE;
         ++p;
         while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
-        if (p >= length || text[p] != '"') return WILI_ME_BACKEND_MIST;
+        if (p >= length || text[p] != '"') return WILI_ME_BACKEND_CUSTOM_CORE;
         ++p;
-        if (p + custom_length < length && memcmp(text + p, custom, custom_length) == 0 &&
-            text[p + custom_length] == '"')
+        if (p + sizeof(custom) - 1 < length && memcmp(text + p, custom, sizeof(custom) - 1) == 0 &&
+            text[p + sizeof(custom) - 1] == '"')
             return WILI_ME_BACKEND_CUSTOM_CORE;
-        return WILI_ME_BACKEND_MIST;
+        if (p + sizeof(mist) - 1 < length && memcmp(text + p, mist, sizeof(mist) - 1) == 0 &&
+            text[p + sizeof(mist) - 1] == '"')
+            return WILI_ME_BACKEND_MIST;
+        return WILI_ME_BACKEND_CUSTOM_CORE;
     }
-    return WILI_ME_BACKEND_MIST;
+    return WILI_ME_BACKEND_CUSTOM_CORE;
 }
 
 #endif

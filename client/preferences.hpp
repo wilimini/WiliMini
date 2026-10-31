@@ -31,7 +31,7 @@ struct Preferences {
     bool showCovers = true;
     bool slowRepeat = false;
     int playbackBufferFrames = defaultPlaybackBufferFrames();
-    MeBackend meBackend = MeBackend::Mist;
+    MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     Locale locale = Locale::ZhHans;
 

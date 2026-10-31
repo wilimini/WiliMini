@@ -82,7 +82,7 @@ manifest = {
     "compiled_utc": args.compiled_utc,
     "build_type": args.build_type,
     "me_backends": args.me_backends,
-    "me_backend_default": "mist",
+    "me_backend_default": "custom-core",
     "diagnostics_schema": 1,
     "files": files,
     "decoder": "VFPU4 + nearest luma/chroma + list0-only bipred + full residual reconstruction + nonref skip + ME/DMA + audio clock RGB queue; C++17 Wiliwili API/UI frontend",

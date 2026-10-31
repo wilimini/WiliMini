@@ -14,9 +14,9 @@ int main(int argc, char** argv) {
     std::ofstream(path) << R"({"version":1,"dark_theme":true,"body_size":16,"show_covers":false,"slow_repeat":true})";
     assert(pspapp::loadPreferences(path, value));
     assert(value.playbackBufferFrames == defaultFrames && value.darkTheme && value.bodySize == 16);
-    // Files saved before the ME backend setting existed keep the MIST default.
-    assert(value.meBackend == pspapp::MeBackend::Mist);
-    for (auto backend : {pspapp::MeBackend::CustomCore, pspapp::MeBackend::Mist}) {
+    // Files saved before the ME backend setting existed use the Custom Core default.
+    assert(value.meBackend == pspapp::MeBackend::CustomCore);
+    for (auto backend : {pspapp::MeBackend::Mist, pspapp::MeBackend::CustomCore}) {
         value.meBackend = backend;
         assert(pspapp::savePreferences(path, value));
         pspapp::Preferences restored;
