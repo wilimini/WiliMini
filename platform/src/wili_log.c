@@ -177,17 +177,72 @@ int wili_log_ring_count(void) {
 #endif
 }
 
+unsigned wili_log_mark(void) {
+#if WILI_LOG_RING_LINES > 0
+    lock_take();
+    const unsigned mark = ring_total;
+    lock_give();
+    return mark;
+#else
+    return 0;
+#endif
+}
+
+#if WILI_LOG_RING_LINES > 0
+/* Copies one line at a time under the lock and writes it after releasing it, so a slow
+ * Memory Stick never blocks threads that are logging. Lines overwritten while we copy are
+ * skipped and counted. */
+static int dump_from(unsigned from, FILE *out, int announce_loss) {
+    char line[WILI_LOG_LINE_MAX];
+    int written = 0;
+    unsigned seq = from;
+    if (announce_loss) {
+        lock_take();
+        const unsigned total = ring_total;
+        lock_give();
+        if (seq < total && total - seq > WILI_LOG_RING_LINES)
+            fprintf(out, "log_lines_overwritten=%u\n", total - WILI_LOG_RING_LINES - seq);
+    }
+    for (;;) {
+        lock_take();
+        const unsigned total = ring_total;
+        if (seq >= total) {
+            lock_give();
+            break;
+        }
+        if (total - seq > WILI_LOG_RING_LINES) seq = total - WILI_LOG_RING_LINES;
+        memcpy(line, ring[seq % WILI_LOG_RING_LINES], sizeof(line));
+        lock_give();
+        fputs(line, out);
+        ++seq;
+        ++written;
+    }
+    return written;
+}
+#endif
+
+int wili_log_dump_since(unsigned mark, FILE *out) {
+#if WILI_LOG_RING_LINES > 0
+    return out ? dump_from(mark, out, 1) : 0;
+#else
+    (void)mark; (void)out;
+    return 0;
+#endif
+}
+
 int wili_log_dump(FILE *out) {
 #if WILI_LOG_RING_LINES > 0
-    if (!out) return 0;
-    lock_take();
-    const unsigned count = ring_total < WILI_LOG_RING_LINES ? ring_total : WILI_LOG_RING_LINES;
-    const unsigned first = ring_total - count;
-    for (unsigned i = 0; i < count; ++i) fputs(ring[(first + i) % WILI_LOG_RING_LINES], out);
-    lock_give();
-    return (int)count;
+    return out ? dump_from(0, out, 0) : 0;
 #else
     (void)out;
     return 0;
 #endif
+}
+
+int wili_log_save_since(const char *path, unsigned mark) {
+    FILE *out = path ? fopen(path, "w") : NULL;
+    if (!out) return -1;
+    const int lines = wili_log_dump_since(mark, out);
+    if (fclose(out)) return -1;
+    return lines;
 }

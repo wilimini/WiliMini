@@ -12,3 +12,6 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined \
 # The loader links the logger without a ring buffer; it must still compile cleanly.
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -DWILI_LOG_RING_LINES=0 -Iplatform/include \
     -c platform/src/wili_log.c -o "$out/wili-log-noring.o"
+# Run folder naming, numbering and pruning rules (pure logic; the directory calls are PSP-only).
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -Iplatform/include tests/wili_results_test.c -o "$out/wili-results-test"
+"$out/wili-results-test"

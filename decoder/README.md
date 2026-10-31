@@ -121,6 +121,8 @@ Custom Core 使用固定版本上游的 `me-core.h` 启动代码和 `me-lib.c` �
 ## 播放故障日志
 
 原生 ME 播放每次在 `results/run-XXX/diagnostics.txt` 保存诊断节点。
+两种后端的每次播放还会在同一目录保存 `log.txt`（本次播放期间的日志）。`results/` 默认只保留最近 20 次运行，
+诊断分析（profile）运行不会被清理，详见 [调试文档](../docs/debug.md#playback-result-folders)。
 文件记录软件 Git 版本（含 dirty 标记）、构建配置时间（UTC）、构建类型、
 ME 桥自身的构建标识、设备本地时间、机型 ID、基础固件 devkit 版本、
 进程内尝试次数、系统运行时间和可用内存。机型 ID 使用 SDK 原始值

@@ -68,17 +68,6 @@ static void playback_diagnostic(const char *stage, int result)
      * to save the preceding stage. A hard lock/power cut may still lose writes. */
     fclose(out);
 }
-/* Append the newest log lines so one file shows what the player reported around a failure. */
-static void playback_diagnostic_log_tail(void)
-{
-    if (!diagnostic_path[0]) return;
-    FILE *out = fopen(diagnostic_path, "a");
-    if (!out) return;
-    fputs("recent_log_begin\n", out);
-    const int lines = wili_log_dump(out);
-    fprintf(out, "recent_log_end lines=%d\n", lines);
-    fclose(out);
-}
 static void playback_diagnostic_begin(const char *run_path)
 {
     diagnostic_sequence = 0;

@@ -114,7 +114,41 @@ int main(void) {
     fclose(lf);
     assert(n == WILI_LOG_LINE_MAX - 1 && line[n - 1] == '\n');
 
+    /* A mark selects only the lines logged after it (one playback), and a file save works. */
+    wili_log_set_all(WILI_LOG_INFO);
+    snprintf(path, sizeof(path), "%s/mark.txt", tmp);
+    assert(freopen("/dev/null", "w", stdout));
+    WLOG_I(WLC_CLIENT, "before mark");
+    const unsigned mark = wili_log_mark();
+    for (int i = 0; i < 5; ++i) WLOG_I(WLC_PLAYER, "after mark %d", i);
+    assert(wili_log_save_since(path, mark) == 5);
+    FILE *mf = fopen(path, "r");
+    assert(mf);
+    int seen = 0;
+    while (fgets(line, sizeof(line), mf)) {
+        assert(!strstr(line, "before mark") && !strstr(line, "log_lines_overwritten"));
+        assert(strstr(line, " I PLAYER after mark "));
+        ++seen;
+    }
+    fclose(mf);
+    assert(seen == 5);
+    assert(wili_log_save_since("/nonexistent-dir/x.log", mark) == -1);
+    assert(wili_log_save_since(NULL, mark) == -1);
+
+    /* More lines than the ring holds: the file says how many were lost and keeps the newest. */
+    const unsigned wrap_mark = wili_log_mark();
+    for (int i = 0; i < 100; ++i) WLOG_I(WLC_PLAYER, "wrap %d", i);
+    assert(wili_log_save_since(path, wrap_mark) == 64);
+    mf = fopen(path, "r");
+    assert(mf && fgets(line, sizeof(line), mf));
+    assert(strcmp(line, "log_lines_overwritten=36\n") == 0);
+    assert(fgets(line, sizeof(line), mf) && strstr(line, " I PLAYER wrap 36"));
+    fclose(mf);
+    /* A mark from the future or an up-to-date mark writes nothing. */
+    assert(wili_log_save_since(path, wili_log_mark()) == 0);
+    assert(wili_log_save_since(path, wili_log_mark() + 50) == 0);
+
     wili_log_shutdown();
-    fprintf(stderr, "Leveled logger (format, filtering, spec, ring, threads, truncation): passed\n");
+    fprintf(stderr, "Leveled logger (format, filtering, spec, ring, threads, truncation, marks): passed\n");
     return 0;
 }

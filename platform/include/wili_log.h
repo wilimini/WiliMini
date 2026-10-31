@@ -82,8 +82,17 @@ int wili_log_parse_level(const char *text, WiliLogLevel *level);
  * of items applied, or -1 on a null spec. */
 int wili_log_configure(const char *spec);
 
-/* Writes the buffered lines, oldest first. Returns the number written. */
+/* Writes the buffered lines, oldest first. Returns the number written. The file write
+ * happens outside the ring lock. */
 int wili_log_dump(FILE *out);
+/* wili_log_mark() returns a position; wili_log_dump_since() writes only lines logged after
+ * it (for example one playback). If the ring wrapped, the first line reports how many were
+ * lost as "log_lines_overwritten=N". Returns the number of log lines written. */
+unsigned wili_log_mark(void);
+int wili_log_dump_since(unsigned mark, FILE *out);
+/* Creates or replaces `path` with the lines since `mark`. Returns the line count, or -1 if the
+ * file could not be written. */
+int wili_log_save_since(const char *path, unsigned mark);
 /* Number of lines currently held, and the capacity (0 when the ring is disabled). */
 int wili_log_ring_count(void);
 int wili_log_ring_capacity(void);
