@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
+#include <wili_log.h>
+#include <wili_results.h>
 #include "playback_diagnostics.h"
 #define WARMUP_FRAMES 30
 #if PSP_PTS_PACE
@@ -263,7 +265,7 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     seek_requested = 0;
     ++playback_seeks;
     playback_seeking = 0;
-    printf("PLAYER seek=%u target_ms=%lld session=retained\n", playback_seeks, (long long)playback_start_ms);
+    WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained", playback_seeks, (long long)playback_start_ms);
     return 0;
 #else
     (void)format; (void)codec; (void)packet; (void)frame; (void)run_path;
@@ -464,17 +466,89 @@ static int draw_frame(const AVFrame *frame)
     return 0;
 }
 
+/* The run folder of the playback in progress ("" if none), and where its log starts. */
+static char current_run_path[192];
+static unsigned run_log_mark;
+
+static void remove_run_dir(const char *path)
+{
+    /* Names are collected first: removing while reading a directory can skip entries. */
+    char names[16][64];
+    int count = 0;
+    SceUID dir = sceIoDopen(path);
+    if (dir >= 0) {
+        SceIoDirent entry;
+        memset(&entry, 0, sizeof(entry));
+        while (sceIoDread(dir, &entry) > 0 && count < 16) {
+            if (!FIO_S_ISDIR(entry.d_stat.st_mode) &&
+                snprintf(names[count], sizeof(names[0]), "%s", entry.d_name) < (int)sizeof(names[0]))
+                ++count; /* a longer name is not ours; the folder then stays and is retried later */
+            memset(&entry, 0, sizeof(entry));
+        }
+        sceIoDclose(dir);
+    }
+    for (int i = 0; i < count; ++i) {
+        char file[256];
+        if (snprintf(file, sizeof(file), "%s/%s", path, names[i]) < (int)sizeof(file)) sceIoRemove(file);
+    }
+    sceIoRmdir(path);
+}
+
+/* Creates results/run-NNN for this playback and removes the oldest runs beyond
+ * WILI_RESULTS_KEEP. Profiling runs keep every folder because they are experiment
+ * evidence. Playback must not fail because of its logs: when no numbered folder can be
+ * made, results/latest is reused (and overwritten) instead. */
 static int select_run_dir(char *path, size_t length)
 {
+    static int scan[1024];
+    int count = 0;
+    current_run_path[0] = 0;
     snprintf(path, length, "%s/results", ROOT);
     sceIoMkdir(path, 0777);
-    for (int i = 1; i < 1000; ++i) {
-        SceIoStat stat;
-        snprintf(path, length, "%s/results/run-%03d", ROOT, i);
-        if (sceIoGetstat(path, &stat) < 0 && sceIoMkdir(path, 0777) >= 0)
-            return 0;
+    SceUID dir = sceIoDopen(path);
+    if (dir >= 0) {
+        SceIoDirent entry;
+        memset(&entry, 0, sizeof(entry));
+        while (sceIoDread(dir, &entry) > 0) {
+            const int index = FIO_S_ISDIR(entry.d_stat.st_mode) ? wili_run_index(entry.d_name) : -1;
+            if (index > 0 && count < (int)(sizeof(scan) / sizeof(scan[0]))) scan[count++] = index;
+            memset(&entry, 0, sizeof(entry));
+        }
+        sceIoDclose(dir);
     }
-    return -1;
+    int next = 1, drop[WILI_RESULTS_PRUNE_STEP];
+    const int drops = wili_run_plan(scan, count, profile_requested ? 0 : WILI_RESULTS_KEEP, &next, drop,
+                                    WILI_RESULTS_PRUNE_STEP);
+    WLOG_D(WLC_IO, "results scan folders=%d next=%d prune=%d", count, next, drops);
+    for (int attempt = 0; drops >= 0 && attempt < 8; ++attempt) {
+        snprintf(path, length, "%s/results/run-%03d", ROOT, next + attempt);
+        /* Some filesystems (PPSSPP's among them) accept mkdir on an existing folder, which
+         * would mix two runs; check first, as the original numbering did. */
+        SceIoStat existing;
+        if (sceIoGetstat(path, &existing) >= 0 || sceIoMkdir(path, 0777) < 0) continue;
+        for (int i = 0; i < drops; ++i) {
+            char old[192];
+            snprintf(old, sizeof(old), "%s/results/run-%03d", ROOT, drop[i]);
+            remove_run_dir(old);
+        }
+        if (drops) WLOG_I(WLC_IO, "results pruned=%d kept_newest=%d", drops, WILI_RESULTS_KEEP);
+        snprintf(current_run_path, sizeof(current_run_path), "%s", path);
+        return 0;
+    }
+    WLOG_W(WLC_IO, "results run folder unavailable; reusing results/latest");
+    snprintf(path, length, "%s/results/latest", ROOT);
+    sceIoMkdir(path, 0777);
+    snprintf(current_run_path, sizeof(current_run_path), "%s", path);
+    return 0;
+}
+
+/* Everything logged since the playback began, next to summary.json. */
+static void save_run_log(void)
+{
+    if (!current_run_path[0]) return;
+    char file[224];
+    snprintf(file, sizeof(file), "%s/log.txt", current_run_path);
+    wili_log_save_since(file, run_log_mark);
 }
 
 #if BILI_PPSSPP_SCE_MPEG
@@ -792,7 +866,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
         ++*output_count;
         if (*output_count == WARMUP_FRAMES) {
             const struct mallinfo heap = mallinfo();
-            printf("MEM decode heap_used=%u system_free=%u system_max=%u\n",
+            WLOG_I(WLC_MEM, "decode heap_used=%u system_free=%u system_max=%u",
                    (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
         }
         av_frame_unref(frame);
@@ -904,7 +978,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
-    printf("VIDEO width=%d height=%d refs=%d\n", codec->width, codec->height, codec->refs);
+    WLOG_I(WLC_PLAYER, "VIDEO width=%d height=%d refs=%d", codec->width, codec->height, codec->refs);
     playback_diagnostic("video_codec_ready", 0);
     source_memory("video_codec");
 #if PSP_APPROX_QPEL
@@ -1249,6 +1323,8 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     client_playback = 1;
     quit_requested = 0;
     profile_requested = options->diagnostic_profile != 0;
+    current_run_path[0] = 0;
+    run_log_mark = wili_log_mark();
     yuv_rgb_init(&yuv_rgb_tables);
     scale_map_init(&scale_map);
     av_log_set_level(AV_LOG_ERROR);
@@ -1280,10 +1356,11 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     else
 #endif
     {
-        printf("PLAYER backend=psp-native\n");
+        WLOG_I(WLC_PLAYER, "backend=psp-native");
         ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
     }
     poll_controller = 0;
+    save_run_log();
     if (control >= 0) {
         sceKernelWaitThreadEnd(control, NULL);
         sceKernelDeleteThread(control);

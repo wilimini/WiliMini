@@ -2,6 +2,7 @@
  * No FFmpeg objects or reference counts cross thread boundaries. */
 #ifndef PSP_RGB_PACER_H
 #define PSP_RGB_PACER_H
+#include <wili_log.h>
 #if PSP_AUDIO && PSP_RGB_PACE
 #include <pspdmac.h>
 #include <malloc.h>
@@ -100,7 +101,7 @@ static int rgb_start(void)
     if (!rgb_pixels) return AVERROR(ENOMEM);
     memset(rgb_pixels, 0, rgb_slots * sizeof(*rgb_pixels));
     sceKernelDcacheWritebackInvalidateRange(rgb_pixels, rgb_slots * sizeof(*rgb_pixels));
-    printf("MEM rgb_start frames=%u bytes=%u setup_us=%u\n", rgb_slots,
+    WLOG_I(WLC_MEM, "rgb_start frames=%u bytes=%u setup_us=%u", rgb_slots,
            (unsigned)(rgb_slots * sizeof(*rgb_pixels)),
            (unsigned)(sceKernelGetSystemTimeWide() - setup_start));
     rgb_space = sceKernelCreateSema("rgb_space", 0, rgb_slots, rgb_slots, NULL);

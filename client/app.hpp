@@ -16,6 +16,10 @@
 
 namespace pspapp {
 
+// Applies the saved log level and per-channel overrides to the process-wide logger.
+void applyLogPreferences(const Preferences& preferences);
+
+
 struct LocalVideo {
     std::string bvid;
     std::string title;

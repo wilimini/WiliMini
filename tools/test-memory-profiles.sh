@@ -13,5 +13,6 @@ for frames in 2 8; do
     "$out/preferences-$frames-test" "$out/settings-test.json" "$frames"
 done
 ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -pthread \
-    -fsanitize=address,undefined -Itests/psp_stubs tests/rgb_pacer_test.c -o "$out/rgb-pacer-test"
+    -fsanitize=address,undefined -Itests/psp_stubs -Iplatform/include tests/rgb_pacer_test.c \
+    platform/src/wili_log.c -o "$out/rgb-pacer-test"
 "$out/rgb-pacer-test"

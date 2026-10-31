@@ -4,6 +4,7 @@
 #include <kubridge.h>
 #include <psprtc.h>
 #include "build_diagnostics.h"
+#include <wili_log.h>
 #if PSP_ME_RENDER
 #include "me_bridge.h"
 #include "me_diagnostics.h"

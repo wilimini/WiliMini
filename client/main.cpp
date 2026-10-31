@@ -19,6 +19,7 @@
 #include "playback_osd.hpp"
 #include "storage_paths.h"
 #include <psp_runtime.h>
+#include <wili_log.h>
 #ifdef BILI_DEVICE_PLAYBACK_TEST
 #include "../tests/psp_playback_test.hpp"
 #endif
@@ -37,9 +38,9 @@ volatile int exiting = 0;
 
 void logMemory(const char* phase) {
     const auto heap = mallinfo();
-    std::printf("MEM %s heap_used=%u heap_arena_free=%u system_free=%u system_max=%u\n",
-                phase, static_cast<unsigned>(heap.uordblks), static_cast<unsigned>(heap.fordblks),
-                sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+    WLOG_I(WLC_MEM, "%s heap_used=%u heap_arena_free=%u system_free=%u system_max=%u",
+           phase, static_cast<unsigned>(heap.uordblks), static_cast<unsigned>(heap.fordblks),
+           sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
 }
 
 int exitCallback(int, int, void*) {
@@ -89,9 +90,10 @@ void networkDialog() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    wili_log_init();
     const char* root = wili_storage_from_client(argc > 0 && argv ? argv[0] : nullptr);
     if (!root || chdir(root) < 0) {
-        std::printf("CLIENT cannot open package root; start through EBOOT.PBP\n");
+        WLOG_E(WLC_CLIENT, "cannot open package root; start through EBOOT.PBP");
         sceKernelDelayThread(5000000);
         sceKernelExitGame();
         return 1;
@@ -99,9 +101,9 @@ int main(int argc, char** argv) {
     client_storage_index = root == wili_storage_roots[0] ? 0 : root == wili_storage_roots[1] ? 1 : 2;
     client_storage_device = std::strncmp(root, "ms0:", 4) == 0 ? "ms0:"
                           : std::strncmp(root, "ef0:", 4) == 0 ? "ef0:" : "host0:";
-    std::printf("CLIENT root=%s\n", root);
-    std::printf("CLIENT heap_kib=%d default_rgb_frames=%d\n",
-                BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
+    WLOG_I(WLC_CLIENT, "root=%s", root);
+    WLOG_I(WLC_CLIENT, "heap_kib=%d default_rgb_frames=%d",
+           BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
     const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
                                                PSP_THREAD_ATTR_USER, nullptr);
     if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
@@ -130,7 +132,7 @@ int main(int argc, char** argv) {
     pspapp::App app;
     if (!(BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP)) {
         app.setActiveMeBackend(psp_video_me_backend());
-        std::printf("CLIENT me_backend=%d\n", app.activeMeBackend());
+        WLOG_I(WLC_CLIENT, "me_backend=%d", app.activeMeBackend());
     }
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
@@ -370,6 +372,10 @@ int main(int argc, char** argv) {
     network_close();
     ui_shutdown();
     logMemory("shutdown");
+    // The newest lines of this session; "log_lines_overwritten" says if it ran longer.
+    sceIoMkdir(CLIENT_PATH("/logs"), 0777);
+    wili_log_save_since(CLIENT_PATH("/logs/last-run.log"), 0);
+    wili_log_shutdown();
     sceKernelExitGame();
     return 0;
 }

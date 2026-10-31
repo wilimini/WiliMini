@@ -750,7 +750,8 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_me_backend,
             pspapp::TextId::settings_confirm_button,
-            pspapp::TextId::settings_language, pspapp::TextId::settings_wifi,
+            pspapp::TextId::settings_language, pspapp::TextId::settings_log_level,
+            pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
             pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
@@ -776,13 +777,17 @@ void drawUtility(const pspapp::App& app) {
                 {{"button", preferences.confirmButton()}}),
             pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
                                                           : pspapp::TextId::value_language_en, locale),
+            pspapp::text(preferences.logLevel == pspapp::LogVerbosity::Error ? pspapp::TextId::value_log_error
+                         : preferences.logLevel == pspapp::LogVerbosity::Warn ? pspapp::TextId::value_log_warn
+                         : preferences.logLevel == pspapp::LogVerbosity::Debug ? pspapp::TextId::value_log_debug
+                                                                               : pspapp::TextId::value_log_info, locale),
             pspapp::text(pspapp::TextId::value_system_connect, locale),
             pspapp::text(pspapp::TextId::value_manage, locale),
             pspapp::text(pspapp::TextId::value_view, locale),
             pspapp::text(pspapp::TextId::value_view, locale)};
         for (size_t i = 0; i < static_cast<size_t>(pspapp::SettingItem::Count); ++i) {
-            const int y = 49 + static_cast<int>(i) * 17;
-            if (app.settingSelection() == i) fillRect(33, y + 3, 2, 16, kPink);
+            const int y = 48 + static_cast<int>(i) * 16;
+            if (app.settingSelection() == i) fillRect(33, y + 3, 2, 15, kPink);
             drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
             drawText(300, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 168);
         }
