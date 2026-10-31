@@ -59,7 +59,7 @@ static int dns_server(char *server,size_t size){
         struct in_addr address;
         if(inet_aton(server,&address)==1 && address.s_addr)return 1;
     }
-    snprintf(server,size,"223.5.5.5");
+    snprintf(server,size,"8.8.8.8");
     return 1;
 }
 
