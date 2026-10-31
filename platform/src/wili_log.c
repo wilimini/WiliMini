@@ -18,9 +18,6 @@
 #ifndef WILI_LOG_RING_LINES
 #define WILI_LOG_RING_LINES 64
 #endif
-#ifndef WILI_LOG_LINE_MAX
-#define WILI_LOG_LINE_MAX 192
-#endif
 
 unsigned char wili_log_levels[WLC_COUNT] = {
     WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO,

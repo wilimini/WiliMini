@@ -91,7 +91,7 @@ int main(void) {
     assert(dump && wili_log_dump(dump) == 64);
     fclose(dump);
     dump = fopen(path, "r");
-    char line[256];
+    char line[WILI_LOG_LINE_MAX + 8];
     int lines = 0;
     while (fgets(line, sizeof(line), dump)) {
         assert(strstr(line, " E IO thread ") && line[strlen(line) - 1] == '\n');
@@ -112,7 +112,7 @@ int main(void) {
     FILE *lf = fopen(path, "r");
     size_t n = fread(line, 1, sizeof(line), lf);
     fclose(lf);
-    assert(n == 192 - 1 && line[n - 1] == '\n');
+    assert(n == WILI_LOG_LINE_MAX - 1 && line[n - 1] == '\n');
 
     wili_log_shutdown();
     fprintf(stderr, "Leveled logger (format, filtering, spec, ring, threads, truncation): passed\n");

@@ -1,5 +1,6 @@
 #include "app_error.hpp"
 #include <cstdio>
+#include <wili_log.h>
 
 namespace pspapp {
 const char *operationName(ErrorOperation op) {
@@ -118,11 +119,18 @@ bool mayRetry(const AppError &e) {
 void logError(const std::string &path, const AppError &e) {
     if (!e || e.cancelled())
         return;
+    // Typed fields only, as in the file below: no URLs, cookies or response bodies.
+    WLOG_E(WLC_CLIENT, "error operation=%s domain=%d kind=%d raw_code=%d http_status=%d",
+           operationName(e.operation), int(e.domain), int(e.kind), e.rawCode, e.httpStatus);
     if (FILE *out = std::fopen(path.c_str(), "w")) {
         std::fprintf(out,
                      "operation=%s\ndomain=%d\nkind=%d\nraw_code=%d\nhttp_status=%d\nmessage=%s\n",
                      operationName(e.operation), int(e.domain), int(e.kind), e.rawCode,
                      e.httpStatus, errorMessage(e).c_str());
+        // The newest log lines (including the error above) show what led up to it.
+        std::fputs("recent_log_begin\n", out);
+        const int lines = wili_log_dump(out);
+        std::fprintf(out, "recent_log_end lines=%d\n", lines);
         std::fclose(out);
     }
 }

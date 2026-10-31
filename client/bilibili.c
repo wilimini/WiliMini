@@ -1,6 +1,7 @@
 #include "services/playback_request_policy.h"
 #include "bilibili.h"
 #include "json.h"
+#include <wili_log.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,17 +184,22 @@ int network_ready(void){int state=0;return initialized && sceNetApctlGetState(&s
 #ifdef BILI_DEVICE_LIVE
 static void network_report(void) {
     SceNetApctlInfo info;
+    char line[256];
+    size_t n=0;
     int sys_save=-1;
     sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_WLAN_POWERSAVE,&sys_save);
+#define NET_APPEND(...) do{ if(n<sizeof(line)){ int w=snprintf(line+n,sizeof(line)-n,__VA_ARGS__); if(w>0)n+=(size_t)w; } }while(0)
     if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_SSID,&info)>=0)
-        printf("NET ssid=%.*s",(int)(info.ssidLength<32?info.ssidLength:32),info.ssid);
-    else printf("NET ssid=?");
-    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_STRENGTH,&info)>=0)printf(" strength=%u",info.strength);
-    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_CHANNEL,&info)>=0)printf(" channel=%u",info.channel);
-    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_POWER_SAVE,&info)>=0)printf(" ap_power_save=%u",info.powerSave);
-    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_IP,&info)>=0)printf(" ip=%s",info.ip);
-    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_GATEWAY,&info)>=0)printf(" gateway=%s",info.gateway);
-    printf(" sys_power_save=%d\n",sys_save);
+        NET_APPEND("ssid=%.*s",(int)(info.ssidLength<32?info.ssidLength:32),info.ssid);
+    else NET_APPEND("ssid=?");
+    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_STRENGTH,&info)>=0)NET_APPEND(" strength=%u",info.strength);
+    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_CHANNEL,&info)>=0)NET_APPEND(" channel=%u",info.channel);
+    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_POWER_SAVE,&info)>=0)NET_APPEND(" ap_power_save=%u",info.powerSave);
+    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_IP,&info)>=0)NET_APPEND(" ip=%s",info.ip);
+    if(sceNetApctlGetInfo(PSP_NET_APCTL_INFO_GATEWAY,&info)>=0)NET_APPEND(" gateway=%s",info.gateway);
+    NET_APPEND(" sys_power_save=%d",sys_save);
+#undef NET_APPEND
+    WLOG_I(WLC_NET,"%s",line);
 }
 #endif
 int network_has_profile(void) {
@@ -290,7 +296,7 @@ static void http_timing(CURL *curl, const char *kind) {
     curl_easy_getinfo(curl,CURLINFO_TOTAL_TIME,&total);
     curl_easy_getinfo(curl,CURLINFO_NUM_CONNECTS,&connections);
     curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
-    printf("HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f\n",
+    WLOG_I(WLC_NET,"HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f",
            kind,status,connections,dns*1000,connect*1000,tls*1000,first*1000,total*1000);
 #else
     (void)curl;(void)kind;
@@ -319,7 +325,7 @@ static int request(const char *url,Sink *sink) {
     }
 #ifdef BILI_NETWORK_DIAGNOSTICS
     /* Never print login keys, signed queries, Cookie headers or Set-Cookie. */
-    printf("HTTP request started\n");
+    WLOG_I(WLC_NET,"HTTP request started");
     curl_easy_setopt(c,CURLOPT_VERBOSE,0L);
 #endif
     char detail[CURL_ERROR_SIZE]={0};
@@ -471,7 +477,7 @@ int bili_home(int page,BiliHome *out) {
             if(!body)break;
             Sink sink={.text=body,.limit=128*1024};
             int result=request(sites[i],&sink);
-            printf("SITE TEST %s result=%d bytes=%u error=%s\n",sites[i],result,(unsigned)sink.used,result<0?network_error:"");
+            WLOG_I(WLC_NET,"SITE TEST %s result=%d bytes=%u error=%s",sites[i],result,(unsigned)sink.used,result<0?network_error:"");
             free(body);
         }
     }
@@ -1314,10 +1320,10 @@ static void stream_report(BiliStreamCache *s) {
     uint64_t span=s->prof.last_data_us>s->prof.first_data_us?s->prof.last_data_us-s->prof.first_data_us:0;
     uint64_t elapsed=s->prof.finished_us>s->prof.started_us?s->prof.finished_us-s->prof.started_us:0;
     uint64_t rate=span?(uint64_t)s->prof.bytes*1000000u/span:0;
-    printf("STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu\n",
+    WLOG_I(WLC_NET,"STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu",
            (unsigned long long)s->prof.connect_us,(unsigned long long)s->prof.first_byte_us,
            (unsigned long long)s->prof.http_total_us,(unsigned long long)s->prof.http_speed_bps);
-    printf("STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu\n",
+    WLOG_I(WLC_NET,"STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu",
            s->prof.writes,s->prof.bytes,(unsigned long long)elapsed,(unsigned long long)span,
            (unsigned long long)rate,(unsigned long long)s->prof.callback_us,
            (unsigned long long)s->prof.backpressure_us,s->prof.waits,
@@ -1330,7 +1336,7 @@ static void stream_report(BiliStreamCache *s) {
         StreamReader *r=&s->readers[i];
         if(!r->tid)continue;
         uint64_t copy_bps=r->copy_us?(uint64_t)r->bytes*1000000u/r->copy_us:0;
-        printf("STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu\n",
+        WLOG_I(WLC_NET,"STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu",
                i,(unsigned)r->tid,r->calls,r->bytes,r->waits,
                (unsigned long long)r->wait_us,(unsigned long long)r->max_wait_us,
                (unsigned long long)r->lock_us,(unsigned long long)r->copy_us,
@@ -1357,7 +1363,7 @@ static int stream_begin(const BiliStream *stream,BiliPlayback *out) {
         s->segments[i].size=bytes;
     }
 #ifdef BILI_DEVICE_LIVE
-    printf("LIVE STREAM ram=%u bytes expected=%u\n",s->capacity,s->expected);
+    WLOG_I(WLC_NET,"LIVE STREAM ram=%u bytes expected=%u",s->capacity,s->expected);
 #endif
     if(s->disk){
         snprintf(s->path,sizeof(s->path),"%s",out->path);
@@ -1446,7 +1452,7 @@ int bili_prepare_range_playback(const BiliVideo *v, const BiliMediaUrl *video_ur
         return -1;
     }
 #ifdef BILI_DEVICE_LIVE
-    printf("LIVE RANGE video=%u audio=%u\n", (unsigned)video_size, (unsigned)audio_size);
+    WLOG_I(WLC_NET,"LIVE RANGE video=%u audio=%u", (unsigned)video_size, (unsigned)audio_size);
 #endif
     out->streaming = 1;
     out->video = video;

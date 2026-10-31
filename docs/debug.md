@@ -25,10 +25,14 @@ message, so searches for `LOADER root=`, `CLIENT root=` or `MEM rgb_start` still
 - Every channel defaults to `INFO`. `wili_log_configure("info,net=debug")` changes
   levels at runtime; a settings.json hook for it is not wired up yet.
 - `WILI_LOG_MAX_LEVEL` (default `DEBUG`) removes higher levels at compile time.
-- The last 64 lines are kept in RAM and `wili_log_dump()` writes them to a file.
-  Nothing calls it yet, so crash and error files do not include them today.
-- Only `main.cpp` and the loader use it so far. Other modules, including the
-  decoder, still print with `printf` and have no timestamps or levels.
+- The last 64 lines are kept in RAM. `last-error.txt` and the end of the run's
+  `diagnostics.txt` append them between `recent_log_begin` and `recent_log_end`.
+  Lines longer than 384 bytes are truncated.
+- Converted so far: `main.cpp`, the loader, `bilibili.c` network/stream reports,
+  and the player (`PLAYER`, `MEM`, `VIDEO` lines). `HTTP timing`, `STREAM` and
+  `LIVE` lines now appear as `NET` lines. Not converted: `memory_profile.c` (`ALLOC`,
+  profile builds only) and `decoder/me/bridge.c`, a kernel module that cannot
+  link the user-mode logger.
 
 Run `sh tools/test-logging.sh` for the host check. It does not cover the PSP build.
 Check `root=`, the selected profile and the compiled heap/defaults.

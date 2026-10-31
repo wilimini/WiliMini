@@ -46,6 +46,12 @@ typedef enum {
     WLC_COUNT
 } WiliLogChannel;
 
+/* Longest formatted line including "[sec.ms] L CHANNEL " and the newline; longer
+ * lines are truncated. The stream profile reports need roughly 340 bytes. */
+#ifndef WILI_LOG_LINE_MAX
+#define WILI_LOG_LINE_MAX 384
+#endif
+
 #ifndef WILI_LOG_MAX_LEVEL
 #define WILI_LOG_MAX_LEVEL WILI_LOG_DEBUG
 #endif

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
+#include <wili_log.h>
 #include "playback_diagnostics.h"
 #define WARMUP_FRAMES 30
 #if PSP_PTS_PACE
@@ -263,7 +264,7 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     seek_requested = 0;
     ++playback_seeks;
     playback_seeking = 0;
-    printf("PLAYER seek=%u target_ms=%lld session=retained\n", playback_seeks, (long long)playback_start_ms);
+    WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained", playback_seeks, (long long)playback_start_ms);
     return 0;
 #else
     (void)format; (void)codec; (void)packet; (void)frame; (void)run_path;
@@ -792,7 +793,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
         ++*output_count;
         if (*output_count == WARMUP_FRAMES) {
             const struct mallinfo heap = mallinfo();
-            printf("MEM decode heap_used=%u system_free=%u system_max=%u\n",
+            WLOG_I(WLC_MEM, "decode heap_used=%u system_free=%u system_max=%u",
                    (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
         }
         av_frame_unref(frame);
@@ -904,7 +905,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
-    printf("VIDEO width=%d height=%d refs=%d\n", codec->width, codec->height, codec->refs);
+    WLOG_I(WLC_PLAYER, "VIDEO width=%d height=%d refs=%d", codec->width, codec->height, codec->refs);
     playback_diagnostic("video_codec_ready", 0);
     source_memory("video_codec");
 #if PSP_APPROX_QPEL
@@ -1109,6 +1110,7 @@ done:
     stats->total_frames = output_count;
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
     playback_diagnostic(psp_video_stage_name(video_stage), ret);
+    playback_diagnostic_log_tail();
     save_results(run_path, stats, render, full, ret);
     return ret;
 }
@@ -1280,7 +1282,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     else
 #endif
     {
-        printf("PLAYER backend=psp-native\n");
+        WLOG_I(WLC_PLAYER, "backend=psp-native");
         ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
     }
     poll_controller = 0;

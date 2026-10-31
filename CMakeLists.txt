@@ -162,6 +162,7 @@ target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
+    "${ROOT}/platform/include"
     "${ROOT}/decoder/include"
     "${ROOT}/decoder/src"
     "${ROOT}/decoder/me"
