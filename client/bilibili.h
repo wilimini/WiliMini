@@ -69,6 +69,9 @@ void network_progress_reset(void);
 int network_has_profile(void);
 void network_remember_profile(void);
 void network_close(void);
+/* Resolver result storage lock; network_init()/network_close() own the lifetime. */
+void psp_dns_init(void);
+void psp_dns_shutdown(void);
 extern volatile int transfer_cancel;
 extern volatile unsigned transfer_kb, transfer_total_kb;
 extern char network_error[160];

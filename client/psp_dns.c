@@ -12,6 +12,34 @@
 #include <netdb.h>
 #include <stdio.h>
 #include <string.h>
+/* Several curl handles may resolve at once (video/audio startup). Give every
+ * lookup its own hostent from a small ring instead of one shared static. Curl
+ * copies the answer into its own address list before the caller's next lookup,
+ * so a slot only has to outlive the return; the ring just keeps concurrent
+ * callers from sharing storage. */
+#define DNS_RESULT_SLOTS 8
+typedef struct {
+    struct hostent entry;
+    char name[254];
+    uint32_t address;
+    char *addresses[2];
+} DnsResult;
+static DnsResult dns_results[DNS_RESULT_SLOTS];
+static unsigned dns_next_result;
+static SceUID dns_lock=-1;
+void psp_dns_init(void){
+    if(dns_lock<0)dns_lock=sceKernelCreateSema("bili_dns",0,1,1,NULL);
+}
+void psp_dns_shutdown(void){
+    if(dns_lock>=0){sceKernelDeleteSema(dns_lock);dns_lock=-1;}
+}
+static DnsResult *dns_claim_result(void){
+    /* Without the lock (before network_init) only one thread can exist here. */
+    if(dns_lock>=0)sceKernelWaitSema(dns_lock,1,NULL);
+    DnsResult *result=&dns_results[dns_next_result++%DNS_RESULT_SLOTS];
+    if(dns_lock>=0)sceKernelSignalSema(dns_lock,1);
+    return result;
+}
 static int dns_server(char *server,size_t size){
     FILE *f=fopen(CLIENT_PATH("/dns-server.txt"),"r");
     if(f){
@@ -67,13 +95,14 @@ struct hostent *__wrap_gethostbyname(const char *host){
     }
     sceNetInetClose(fd);
     if(!ip){h_errno=HOST_NOT_FOUND;return NULL;}
-    /* curl is built with a synchronous resolver; only the network worker calls
-     * it. Match libc's static hostent lifetime without heap allocations. */
-    static struct hostent result;static char name[254];static uint32_t address;
-    static char *addresses[2];
-    snprintf(name,sizeof(name),"%s",host);address=ip;
-    addresses[0]=(char*)&address;addresses[1]=NULL;
-    memset(&result,0,sizeof(result));result.h_name=name;result.h_addrtype=AF_INET;
-    result.h_length=4;result.h_addr_list=addresses;result.h_addr=(char*)&address;
-    return &result;
+    /* curl is built with a synchronous resolver and copies the answer right
+     * away. Match libc's hostent lifetime without heap allocations. */
+    DnsResult *result=dns_claim_result();
+    snprintf(result->name,sizeof(result->name),"%s",host);result->address=ip;
+    result->addresses[0]=(char*)&result->address;result->addresses[1]=NULL;
+    memset(&result->entry,0,sizeof(result->entry));
+    result->entry.h_name=result->name;result->entry.h_addrtype=AF_INET;
+    result->entry.h_length=4;result->entry.h_addr_list=result->addresses;
+    result->entry.h_addr=(char*)&result->address;
+    return &result->entry;
 }

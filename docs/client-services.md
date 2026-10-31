@@ -38,9 +38,28 @@ at network shutdown. Cover and media transfers do not borrow this handle.
 Reuse depends on the server keeping the connection open; curl reconnects when
 necessary. This does not eliminate the first TLS handshake to a new origin.
 
-DASH video and audio startup remain sequential: the current PSP DNS wrapper
-returns a shared static hostent. Concurrent initial resolution needs a separate
-thread-safety change before parallel startup can be enabled safely.
+DASH video and audio startup overlap: both range threads are started before
+either is awaited, so DNS, TCP, TLS and the first response run together and the
+30 second size deadline is shared. This relies on the PSP DNS wrapper giving each
+lookup its own `hostent` from a small ring guarded by a semaphore (it used to
+return one shared static). If either stream fails or is cancelled, both are torn
+down together.
+
+All curl handles (API, cover/download and each media thread's private handle)
+attach to one `CURLSH` that shares only DNS answers and TLS session tickets, so
+later connections can resume a session instead of repeating the full handshake.
+Connections and cookies are not shared. A second handle opened at the same moment
+as the first cannot resume a session that is still being negotiated, so expect
+the gain on reconnects, seeks, backup URLs and repeat visits to a host rather than
+on the very first pair of connections. If the share cannot be created, handles
+silently fall back to private caches.
+
+The WBI signing key from `/x/web-interface/nav` is kept in memory and in
+`wbi-key.txt` next to the other client files, with a one hour lifetime (unchanged)
+measured against the device clock. A file that is missing, malformed, expired or
+dated in the future is ignored. When the server rejects a signature (`-403`) the
+saved copy is deleted before the key is refetched. The key is public nav data, not
+a credential.
 
 For timing diagnostics, build with
 `CMAKE_ARGS=-DBILI_NETWORK_DIAGNOSTICS=ON make package`.
