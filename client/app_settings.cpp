@@ -7,6 +7,7 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <pspiofilemgr.h>
+#include <wili_log.h>
 
 namespace pspapp {
 namespace {
@@ -33,6 +34,14 @@ bool coverEntry(const SceIoDirent& entry) {
 }
 } // namespace
 
+void applyLogPreferences(const Preferences& preferences) {
+    // Set the base level first so a channel override is not reset by it.
+    wili_log_set_all(static_cast<WiliLogLevel>(preferences.logLevel));
+    if (!preferences.logChannels.empty()) wili_log_configure(preferences.logChannels.c_str());
+    WLOG_I(WLC_CLIENT, "log_level=%s channels=%s", logVerbosityCode(preferences.logLevel),
+           preferences.logChannels.empty() ? "-" : preferences.logChannels.c_str());
+}
+
 void App::openSettings() {
     if (busy()) return;
     navigation_.push<SettingsRoute>();
@@ -55,6 +64,11 @@ void App::changeSetting() {
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;
+        case SettingItem::LogLevel:
+            next.logLevel = next.logLevel == LogVerbosity::Error ? LogVerbosity::Warn
+                          : next.logLevel == LogVerbosity::Warn ? LogVerbosity::Info
+                          : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
+            break;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
@@ -66,6 +80,8 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
+    if (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection) == SettingItem::LogLevel)
+        applyLogPreferences(preferences_);
     const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)

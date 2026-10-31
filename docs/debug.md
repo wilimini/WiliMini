@@ -22,8 +22,16 @@ Client and loader logs come from `platform/include/wili_log.h`. Each line is
 message, so searches for `LOADER root=`, `CLIENT root=` or `MEM rgb_start` still work.
 
 - Channels: `CLIENT`, `LOADER`, `NET`, `AUTH`, `UI`, `PLAYER`, `ME`, `MEM`, `IO`.
-- Every channel defaults to `INFO`. `wili_log_configure("info,net=debug")` changes
-  levels at runtime; a settings.json hook for it is not wired up yet.
+- Every channel defaults to `INFO`. The client reads two optional `settings.json` keys
+  at startup (`App::init`) and applies them immediately; the loader does not read them.
+  - `log_level`: `error`, `warn`, `info` (default) or `debug`. Settings > Log level
+    cycles it and takes effect at once. `debug` is the most detail a production build
+    can print, because `verbose` is compiled out.
+  - `log_channels`: optional per-channel overrides, for example
+    `"net=debug,player=warn"`, applied after `log_level`. Edit it by hand (no UI);
+    letters, `=`, `,` and spaces only, up to 96 characters. It is kept when settings are saved.
+  An unknown `log_level` or a bad `log_channels` makes the whole file unreadable, like other
+  invalid settings: defaults are used and the file is not rewritten.
 - `WILI_LOG_MAX_LEVEL` (default `DEBUG`) removes higher levels at compile time.
 - The last 64 lines are kept in RAM. `last-error.txt` and the end of the run's
   `diagnostics.txt` append them between `recent_log_begin` and `recent_log_end`.

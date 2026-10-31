@@ -9,6 +9,27 @@ const char* meBackendCode(MeBackend backend) {
     return backend == MeBackend::CustomCore ? "custom-core" : "mist";
 }
 
+const char* logVerbosityCode(LogVerbosity level) {
+    switch (level) {
+        case LogVerbosity::Error: return "error";
+        case LogVerbosity::Warn: return "warn";
+        case LogVerbosity::Debug: return "debug";
+        default: return "info";
+    }
+}
+
+namespace {
+constexpr std::size_t kMaxLogChannels = 96;
+// Only what wili_log_configure() understands, so a typo cannot smuggle odd text into logs.
+bool validLogChannels(const std::string& spec) {
+    if (spec.size() > kMaxLogChannels) return false;
+    for (const char c : spec)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '=' || c == ',' || c == ' '))
+            return false;
+    return true;
+}
+} // namespace
+
 bool loadPreferences(const char* path, Preferences& preferences) {
     preferences = {};
     FILE* file = std::fopen(path, "rb");
@@ -50,6 +71,14 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         if (locale == "zh-Hans") loaded.locale = Locale::ZhHans;
         else if (locale == "en-US") loaded.locale = Locale::EnUs;
         else return false;
+        const std::string logLevel = root.value("log_level", std::string("info"));
+        if (logLevel == "error") loaded.logLevel = LogVerbosity::Error;
+        else if (logLevel == "warn") loaded.logLevel = LogVerbosity::Warn;
+        else if (logLevel == "info") loaded.logLevel = LogVerbosity::Info;
+        else if (logLevel == "debug") loaded.logLevel = LogVerbosity::Debug;
+        else return false;
+        loaded.logChannels = root.value("log_channels", std::string());
+        if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
         if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
             loaded.playbackBufferFrames != 8) return false;
@@ -65,6 +94,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     if (preferences.playbackBufferFrames != 2 && preferences.playbackBufferFrames != 4 &&
         preferences.playbackBufferFrames != 8) return false;
     if (preferences.locale != Locale::ZhHans && preferences.locale != Locale::EnUs) return false;
+    if (!validLogChannels(preferences.logChannels)) return false;
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
@@ -72,7 +102,9 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"me_backend", meBackendCode(preferences.meBackend)},
         {"confirm_with_circle", preferences.confirmWithCircle},
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
-        {"locale", localeCode(preferences.locale)}}).dump();
+        {"locale", localeCode(preferences.locale)},
+        {"log_level", logVerbosityCode(preferences.logLevel)},
+        {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
     if (!file) return false;

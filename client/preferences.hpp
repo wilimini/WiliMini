@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <string>
 #include "memory_budget.hpp"
 #include "localization.hpp"
 
@@ -13,6 +14,7 @@ enum class SettingItem : std::size_t {
     MeBackend,
     ConfirmWithCircle,
     Language,
+    LogLevel,
     Wifi,
     CoverCache,
     Help,
@@ -25,6 +27,11 @@ enum class SettingItem : std::size_t {
 enum class MeBackend : int { Mist = 0, CustomCore = 1 };
 const char* meBackendCode(MeBackend backend);
 
+// Values match WiliLogLevel in platform/include/wili_log.h. Verbose is compiled out of
+// production builds, so it is not offered. Applied immediately, no restart needed.
+enum class LogVerbosity : int { Error = 1, Warn = 2, Info = 3, Debug = 4 };
+const char* logVerbosityCode(LogVerbosity level);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -34,6 +41,10 @@ struct Preferences {
     MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     Locale locale = Locale::ZhHans;
+    LogVerbosity logLevel = LogVerbosity::Info;
+    // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
+    // settings.json and preserved on save; see wili_log_configure().
+    std::string logChannels;
 
     const char* confirmButton() const {
         return buttonGlyph(confirmWithCircle ? ControllerButton::Circle : ControllerButton::Cross);
