@@ -748,11 +748,18 @@ void drawUtility(const pspapp::App& app) {
         const pspapp::TextId labels[] = {
             pspapp::TextId::settings_theme, pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
-            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_confirm_button,
+            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_me_backend,
+            pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
             pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
+        const std::string meBackend = pspapp::text(
+            preferences.meBackend == pspapp::MeBackend::CustomCore ? pspapp::TextId::value_me_custom_core
+                                                                   : pspapp::TextId::value_me_mist, locale);
+        // A saved change only takes effect after the loader picks the other bridge PRX.
+        const bool meRestart = app.activeMeBackend() >= 0 &&
+            app.activeMeBackend() != static_cast<int>(preferences.meBackend);
         const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
                                                                          : pspapp::TextId::value_light, locale),
             std::to_string(preferences.bodySize) + " px",
@@ -763,6 +770,8 @@ void drawUtility(const pspapp::App& app) {
             pspapp::formatText(pspapp::TextId::value_buffer, locale,
                 {{"frames", std::to_string(preferences.playbackBufferFrames)},
                  {"memory", std::to_string(preferences.playbackBufferFrames * 544)}}),
+            meRestart ? pspapp::formatText(pspapp::TextId::value_me_restart, locale, {{"backend", meBackend}})
+                      : meBackend,
             pspapp::formatText(pspapp::TextId::value_confirm, locale,
                 {{"button", preferences.confirmButton()}}),
             pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
@@ -772,7 +781,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::text(pspapp::TextId::value_view, locale),
             pspapp::text(pspapp::TextId::value_view, locale)};
         for (size_t i = 0; i < static_cast<size_t>(pspapp::SettingItem::Count); ++i) {
-            const int y = 49 + static_cast<int>(i) * 18;
+            const int y = 49 + static_cast<int>(i) * 17;
             if (app.settingSelection() == i) fillRect(33, y + 3, 2, 16, kPink);
             drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
             drawText(300, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 168);

@@ -128,6 +128,10 @@ int main(int argc, char** argv) {
     return playbackTest;
 #endif
     pspapp::App app;
+    if (!(BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP)) {
+        app.setActiveMeBackend(psp_video_me_backend());
+        std::printf("CLIENT me_backend=%d\n", app.activeMeBackend());
+    }
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
     logMemory("app_init");

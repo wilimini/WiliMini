@@ -4,8 +4,9 @@
 #include <me-core-mapper/me-core-mapper.h>
 #include "full_render.h"
 static YuvRgbTables me_tables __attribute__((aligned(64)));
-/* MIST return convention from mcidclan/psp-media-engine-mist (MIT).
- * Task and data live in user RAM, outside the ME's local EDRAM alias. */
+/* Shared C worker for MIST and Custom Core. MIST uses me_entry.S to return to
+ * firmware; Custom Core calls this worker directly. Task data use an uncached
+ * alias outside the ME's local EDRAM. */
 int me_task(int index, void *param);
 int __attribute__((noinline)) me_worker(int index, void *param)
 {

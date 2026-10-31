@@ -228,6 +228,12 @@ BUILD_TYPE=Release PARALLEL=4 make package
 dist/PSP/GAME/WiliMini/
 ```
 
+支持两个 ME 执行后端
+- MIST（`me_bridge.prx`，默认）
+- Custom Core （PSP-1000可用）
+
+详见[播放器说明](decoder/README.md#custom-core-执行后端实验性)。
+
 也可以直接使用 CMake：
 
 ```sh

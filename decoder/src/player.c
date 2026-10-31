@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
+#include "playback_diagnostics.h"
 #define WARMUP_FRAMES 30
 #if PSP_PTS_PACE
 static uint64_t presentation_deadline, presentation_origin_us;
@@ -547,7 +548,7 @@ static void save_results(const char *path, const RunStats *s, int render,
     FILE *present = fopen(file, "w");
     if (present) {
         fputs("output_index,pts_us,audio_us,wall_us,dropped,target_us\n", present);
-        for (unsigned i = 0; i < rgb_consumed && i < 6000; ++i)
+        for (unsigned i = 0; diagnostic_audio_valid && i < rgb_consumed && i < 6000; ++i)
             fprintf(present, "%u,%lld,%lld,%llu,%d,%lld\n", i,
                     (long long)rgb_records[i].pts, (long long)rgb_records[i].audio,
                     (unsigned long long)rgb_records[i].wall, rgb_records[i].dropped,
@@ -570,11 +571,18 @@ static void save_results(const char *path, const RunStats *s, int render,
     if (out) {
         fputs("{\n", out);
         fputs("  \"backend\": \"psp-native\",\n", out);
+        fprintf(out, "  \"me_backend\": \"%s\",\n", playback_me_backend_name());
+        fprintf(out, "  \"diagnostics_schema\": 1,\n  \"compiled_utc\": \"%s\",\n"
+                "  \"build_type\": \"%s\",\n  \"model_id\": %d,\n"
+                "  \"devkit_version\": \"%08x\",\n  \"attempt_in_process\": %u,\n",
+                WILI_DIAGNOSTIC_COMPILED_UTC, WILI_DIAGNOSTIC_BUILD_TYPE,
+                diagnostic_model, diagnostic_devkit, diagnostic_attempt);
         fprintf(out, "  \"start_ms\": %lld,\n  \"position_ms\": %lld,\n  \"first_video_us\": %lld,\n",
                 (long long)playback_start_ms, (long long)(playback_position_us / 1000), (long long)first_video_us);
         fprintf(out, "  \"client_catchup_events\": %u,\n  \"client_catchup_packets\": %u,\n", s->catchup_events, s->catchup_packets);
 #if PSP_AUDIO
-        audio_report(out);
+        fprintf(out, "  \"audio_stats_valid\": %s,\n", diagnostic_audio_valid ? "true" : "false");
+        if (diagnostic_audio_valid) audio_report(out);
 #endif
         fprintf(out, "  \"skip_frame\": %d,\n  \"media_us\": %lld,\n",
                 PSP_SKIP_FRAME, (long long)s->media_us);
@@ -834,6 +842,8 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     stats->render_hash = 2166136261u;
 #endif
     packet_record_count = packet_records_truncated = 0;
+    diagnostic_audio_valid = 0;
+    diagnostic_path[0] = 0;
 #if PSP_AUDIO_VERIFY
     visual_count = 0;
 #endif
@@ -846,6 +856,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     video_stage = PSP_VIDEO_STAGE_LOG;
     if (select_run_dir(run_path, path_size) < 0)
         return -2;
+    playback_diagnostic_begin(run_path);
 #if PSP_ME_DECODE
     video_stage = PSP_VIDEO_STAGE_ME_INIT;
     ret = me_decode_start();
@@ -854,7 +865,9 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
 #if PSP_ME_RENDER
     if (render) {
         video_stage = PSP_VIDEO_STAGE_ME_RENDER_INIT;
+        playback_diagnostic("me_render_init_begin", 0);
         ret = me_render_start();
+        playback_diagnostic("me_render_init_end", ret);
         if (ret < 0) goto done;
     }
 #endif
@@ -892,6 +905,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
     printf("VIDEO width=%d height=%d refs=%d\n", codec->width, codec->height, codec->refs);
+    playback_diagnostic("video_codec_ready", 0);
     source_memory("video_codec");
 #if PSP_APPROX_QPEL
     if (avpriv_psp_approx_reconstruction_v2 != 2) { ret = -91; goto done; }
@@ -901,8 +915,10 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     if (!packet || !frame) { ret = AVERROR(ENOMEM); goto done; }
 #if PSP_AUDIO
     audio_started = 1;
+    diagnostic_audio_valid = 1;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
     ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, run_path);
+    playback_diagnostic("audio_init_end", ret);
     if (ret < 0) goto done;
 #endif
 
@@ -1014,6 +1030,7 @@ decode_again:
 
 done:
     if (playback_seeking && !quit_requested && ret >= 0) goto decode_again;
+    playback_diagnostic("cleanup_begin", ret);
 #if PSP_ME_DECODE
     {
         int finish = me_decode_stop();
@@ -1045,9 +1062,13 @@ done:
         stats->measured_us = me_last_presented_us - me_warmup_presented_us;
 #endif
 #if PSP_AUDIO && PSP_RGB_PACE
-    if (render && rgb_finish() < 0) {
-        if (ret >= 0) { ret = -112; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
-        ++stats->errors;
+    if (render) {
+        int finish = rgb_finish();
+        playback_diagnostic("rgb_finish_end", finish);
+        if (finish < 0) {
+            if (ret >= 0) { ret = -112; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
+            ++stats->errors;
+        }
     }
     if (rgb_warmup_us && rgb_last_us >= rgb_warmup_us)
         stats->measured_us = rgb_last_us - rgb_warmup_us;
@@ -1056,6 +1077,7 @@ done:
 #if PSP_ME_RENDER
     if (render) {
         int shutdown = me_render_shutdown();
+        playback_diagnostic("me_shutdown_end", shutdown);
         if (shutdown < 0) {
             /* Keep the source/decode error when shutdown only reports the
              * already-failed pipeline. */
@@ -1086,6 +1108,7 @@ done:
     source_close(&format, &input_io);
     stats->total_frames = output_count;
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
+    playback_diagnostic(psp_video_stage_name(video_stage), ret);
     save_results(run_path, stats, render, full, ret);
     return ret;
 }
@@ -1286,4 +1309,11 @@ void psp_video_stop(void) {
     quit_requested = 1;
     if(video_io_source && video_io_source->cancel)video_io_source->cancel(video_io_source->opaque);
     if(audio_io_source && audio_io_source->cancel)audio_io_source->cancel(audio_io_source->opaque);
+}
+int psp_video_me_backend(void) {
+#if PSP_ME_RENDER
+    return meLabBackend();
+#else
+    return -1;
+#endif
 }

@@ -52,6 +52,9 @@ void App::changeSetting() {
         case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
         case SettingItem::PlaybackBufferFrames: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
+        case SettingItem::MeBackend:
+            next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
+            break;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
@@ -63,9 +66,11 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
-    status_ = navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)
-                  ? text(TextId::settings_saved_buffer, preferences_.locale)
-                  : text(TextId::settings_saved, preferences_.locale);
+    const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
+    status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
+            : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)
+                ? text(TextId::settings_saved_me_backend, preferences_.locale)
+            : text(TextId::settings_saved, preferences_.locale);
 }
 
 void App::updateStorage() {

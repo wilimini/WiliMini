@@ -54,6 +54,9 @@ set(ROOT "${CMAKE_SOURCE_DIR}")
 set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
+# Both execution backends are built into every package as separate bridge PRXs.
+# The bootstrap loads one according to settings.json; the default is Custom Core.
+set(BILI_ME_BACKENDS mist custom-core)
 
 execute_process(
     COMMAND git describe --tags --always --dirty
@@ -66,6 +69,9 @@ if(NOT BILI_GIT_DESCRIBE_RESULT EQUAL 0 OR NOT BILI_BUILD_VERSION)
     set(BILI_BUILD_VERSION "local")
 endif()
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+string(TIMESTAMP BILI_BUILD_UTC "%Y-%m-%dT%H:%M:%SZ" UTC)
+configure_file("${ROOT}/cmake/build_diagnostics.h.in"
+    "${CMAKE_BINARY_DIR}/generated/build_diagnostics.h" @ONLY)
 configure_file("${ROOT}/cmake/build_info.hpp.in"
     "${CMAKE_BINARY_DIR}/generated/build_info.hpp" @ONLY)
 
@@ -95,7 +101,7 @@ file(CREATE_LINK "${ME_CORE_ROOT}" "${ME_INCLUDE_ROOT}/me-core-mapper" SYMBOLIC)
 
 set(DECODER_DEFINITIONS
     _POSIX_C_SOURCE=200809L
-    PSP_BUILD_ID=\"wili-mini-demo-01\"
+    PSP_BUILD_ID=\"${BILI_BUILD_VERSION}\"
     PSP_HEADLESS_BENCH=0
     PSP_BENCH_FULL=0
     PSP_PTS_PACE=1
@@ -149,12 +155,13 @@ add_library(pspvideo STATIC
     decoder/src/player.c
     decoder/src/vfpu_dsp.c
     decoder/src/audio_vfpu.c
-    decoder/me/me_entry.S
     decoder/me/me_lab.S
+    decoder/me/me_entry.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/decoder/include"
     "${ROOT}/decoder/src"
     "${ROOT}/decoder/me"
@@ -176,32 +183,39 @@ add_custom_command(
     DEPENDS "${ROOT}/decoder/me/exports.exp" "${ROOT}/cmake/BuildExports.cmake"
     COMMENT "Generating ME bridge exports")
 
-add_executable(me_bridge
-    decoder/me/bridge.c
-    decoder/me/mist_backend.c
-    "${ME_EXPORTS_C}"
-    "${ME_MIST_ROOT}/me-mist-utils.c"
-    "${ME_CORE_ROOT}/me-core-mapping.c")
-target_compile_options(me_bridge PRIVATE -ffunction-sections -fdata-sections)
-target_include_directories(me_bridge PRIVATE
-    "${ROOT}/decoder/me"
-    "${ME_MIST_ROOT}"
-    "${ME_CORE_ROOT}"
-    "${ME_INCLUDE_ROOT}")
-target_link_options(me_bridge PRIVATE
-    -G0
-    -nostartfiles
-    "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
-    -Wl,-zmax-page-size=128)
-target_link_libraries(me_bridge PRIVATE pspkernel pspsdk)
-set_target_properties(me_bridge PROPERTIES
-    OUTPUT_NAME me_bridge
-    SUFFIX ".elf"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-add_custom_command(TARGET me_bridge POST_BUILD
-    COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:me_bridge>"
-    COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:me_bridge>" "${CMAKE_BINARY_DIR}/me_bridge.prx"
-    COMMENT "Fixing imports and generating me_bridge.prx")
+# Each bridge exports the same me_lab ABI plus meLabBackend(); only one is loaded.
+function(add_me_bridge target output_name)
+    add_executable(${target} "${ME_EXPORTS_C}" "${ME_CORE_ROOT}/me-core-mapping.c" ${ARGN})
+    target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
+    target_include_directories(${target} PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${ROOT}/decoder/me"
+        "${ME_MIST_ROOT}"
+        "${ME_CORE_ROOT}"
+        "${ME_INCLUDE_ROOT}")
+    target_link_options(${target} PRIVATE
+        -G0
+        -nostartfiles
+        "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
+        -Wl,-zmax-page-size=128)
+    target_link_libraries(${target} PRIVATE pspkernel pspsdk)
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${output_name}
+        SUFFIX ".elf"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:${target}>"
+        COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:${target}>" "${CMAKE_BINARY_DIR}/${output_name}.prx"
+        COMMENT "Fixing imports and generating ${output_name}.prx")
+endfunction()
+
+add_me_bridge(me_bridge me_bridge
+    decoder/me/bridge.c decoder/me/mist_backend.c "${ME_MIST_ROOT}/me-mist-utils.c")
+add_me_bridge(me_bridge_custom_core me_bridge_custom_core
+    decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c "${ME_CORE_ROOT}/me-lib.c")
+# Keep PSP export roots while discarding the upstream user-mode kcall loader.
+target_link_options(me_bridge_custom_core PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
+target_link_libraries(me_bridge_custom_core PRIVATE psppower)
 
 add_library(wili_client_objects OBJECT
     platform/src/psp_device.c
@@ -390,6 +404,7 @@ add_custom_target(package
         "${CMAKE_BINARY_DIR}/wili_mini.prx"
         "${CMAKE_BINARY_DIR}/wili_mini_1000.prx"
         "${CMAKE_BINARY_DIR}/me_bridge.prx"
+        "${CMAKE_BINARY_DIR}/me_bridge_custom_core.prx"
         "${PACKAGE_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/wqy.bmf" "${PACKAGE_DIR}/wqy.bmf"
@@ -399,6 +414,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/build/curl-source/COPYING" "${PACKAGE_DIR}/licenses/curl.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_FFMPEG_SOURCE_DIR}/COPYING.LGPLv2.1" "${PACKAGE_DIR}/licenses/ffmpeg.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/decoder/me/LICENSE.MIST.txt" "${PACKAGE_DIR}/licenses/me-mist.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ME_CORE_ROOT}/LICENSE.md" "${PACKAGE_DIR}/licenses/me-custom-core.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/api/wiliwili/LICENSE" "${PACKAGE_DIR}/licenses/wiliwili.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/qrcodegen/LICENSE.txt" "${PACKAGE_DIR}/licenses/qrcodegen.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/pspsdk/LICENSE" "${PACKAGE_DIR}/licenses/pspsdk.txt"
@@ -409,7 +425,11 @@ add_custom_target(package
         --ffmpeg "${PSP_FFMPEG_PREFIX}"
         --ffmpeg-source "${BILI_FFMPEG_SOURCE_DIR}"
         --curl "${PSP_CURL_PREFIX}"
-    DEPENDS wili_mini wili_mini_1000 me_bridge eboot
+        --version "${BILI_BUILD_VERSION}"
+        --compiled-utc "${BILI_BUILD_UTC}"
+        --build-type "${CMAKE_BUILD_TYPE}"
+        --me-backends ${BILI_ME_BACKENDS}
+    DEPENDS wili_mini wili_mini_1000 me_bridge me_bridge_custom_core eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
 endif()
@@ -429,7 +449,7 @@ if(BILI_FONT_FILE)
     add_dependencies(assets generate-font)
 endif()
 if(BILI_BUILD_CLIENT)
-    add_custom_target(me DEPENDS me_bridge)
+    add_custom_target(me DEPENDS me_bridge me_bridge_custom_core)
     if(BILI_FONT_FILE)
         add_dependencies(package generate-font)
     endif()

@@ -15,12 +15,13 @@ static const char *const wili_storage_roots[] = {
 /* Select a complete package before loading any module, so versions cannot mix. */
 static inline const char *wili_select_storage(int (*file_exists)(const char *), int require_me) {
     static const char *const files[] = {
-        "me_bridge.prx", "wili_mini.prx", "wili_mini_1000.prx", "cacert.pem", "wqy.bmf"
+        "me_bridge.prx", "me_bridge_custom_core.prx",
+        "wili_mini.prx", "wili_mini_1000.prx", "cacert.pem", "wqy.bmf"
     };
     for (unsigned i = 0; i < sizeof(wili_storage_roots) / sizeof(wili_storage_roots[0]); ++i) {
         unsigned j;
         for (j = 0; j < sizeof(files) / sizeof(files[0]); ++j) {
-            if (j == 0 && !require_me) continue;
+            if (j < 2 && !require_me) continue;
             char path[128];
             snprintf(path, sizeof(path), "%s/%s", wili_storage_roots[i], files[j]);
             if (!file_exists(path)) break;

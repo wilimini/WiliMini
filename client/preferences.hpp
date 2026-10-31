@@ -10,6 +10,7 @@ enum class SettingItem : std::size_t {
     ShowCovers,
     SlowRepeat,
     PlaybackBufferFrames,
+    MeBackend,
     ConfirmWithCircle,
     Language,
     Wifi,
@@ -19,12 +20,18 @@ enum class SettingItem : std::size_t {
     Count
 };
 
+// Values match ME_BACKEND_* in decoder/me/me_bridge.h and client/me_backend_select.h.
+// The bootstrap loads the matching bridge PRX, so a change applies on next launch.
+enum class MeBackend : int { Mist = 0, CustomCore = 1 };
+const char* meBackendCode(MeBackend backend);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
     bool showCovers = true;
     bool slowRepeat = false;
     int playbackBufferFrames = defaultPlaybackBufferFrames();
+    MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     Locale locale = Locale::ZhHans;
 
