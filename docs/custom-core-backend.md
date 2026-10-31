@@ -6,13 +6,19 @@ it does not install a separate kcall plugin or patch the firmware syscall table.
 FFmpeg decoding, rendering kernels, media settings and RGB queues stay shared
 with the MIST build. This is not a decoder performance experiment.
 
-Build the diagnostic client through the normal entry point:
+Build the diagnostic client through the normal entry point. Every package carries
+both the MIST and Custom Core bridge PRXs; the backend is chosen at launch:
 
 ```sh
 make package BUILD_DIR=build/custom-core-test \
-  CMAKE_ARGS='-DBILI_ME_BACKEND=custom-core -DBILI_DEVICE_PLAYBACK_TEST=ON -DBILI_DIST_DIR=build/custom-core-test-dist'
+  CMAKE_ARGS='-DBILI_DEVICE_PLAYBACK_TEST=ON -DBILI_DIST_DIR=build/custom-core-test-dist'
 sh tools/test-me-bridge.sh
 ```
+
+Select Custom Core by placing `"me_backend":"custom-core"` in the package's
+`settings.json` before launch (the Settings screen writes the same field in the
+normal client; changing it there needs a restart). Confirm `LOADER me_backend=custom-core`
+in the startup log and `me_backend=custom-core` in `diagnostics.txt`.
 
 Place a local 640x360 H.264/stereo AAC MP4 named `me-test.mp4` in the generated
 `build/custom-core-test-dist/PSP/GAME/WiliMini/` directory, with this

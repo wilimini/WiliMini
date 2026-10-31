@@ -5,6 +5,7 @@
 #include <psprtc.h>
 #include "build_diagnostics.h"
 #if PSP_ME_RENDER
+#include "me_bridge.h"
 #include "me_diagnostics.h"
 #endif
 static char diagnostic_path[192];
@@ -14,6 +15,20 @@ static int diagnostic_model;
 static unsigned diagnostic_devkit;
 static ScePspDateTime diagnostic_clock;
 static unsigned diagnostic_attempt;
+
+/* The loader chooses the bridge PRX from the user's setting; report what it started. */
+static const char *playback_me_backend_name(void)
+{
+#if PSP_ME_RENDER
+    switch (meLabBackend()) {
+    case ME_BACKEND_MIST: return "mist";
+    case ME_BACKEND_CUSTOM_CORE: return "custom-core";
+    default: return "unknown";
+    }
+#else
+    return "none";
+#endif
+}
 
 static void playback_diagnostic(const char *stage, int result)
 {
@@ -71,7 +86,7 @@ static void playback_diagnostic_begin(const char *run_path)
             diagnostic_model, diagnostic_devkit, diagnostic_attempt,
             diagnostic_clock.year, diagnostic_clock.month, diagnostic_clock.day,
             diagnostic_clock.hour, diagnostic_clock.minute, diagnostic_clock.second, rtc_result,
-            WILI_DIAGNOSTIC_ME_BACKEND, PSP_ME_RENDER, PSP_ME_DMA, PSP_ME_CACHE, PSP_ME_FULL_CACHE, PSP_ME_RENDER_QUEUE);
+            playback_me_backend_name(), PSP_ME_RENDER, PSP_ME_DMA, PSP_ME_CACHE, PSP_ME_FULL_CACHE, PSP_ME_RENDER_QUEUE);
     fclose(out);
     playback_diagnostic("begin", 0);
 }

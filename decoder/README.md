@@ -86,16 +86,23 @@ ME 桥按固件标识选表，播放器同步选择自身的 FAT/T2 函数表。
 
 ## Custom Core 执行后端（实验性）
 
-原生播放器默认仍使用 MIST。可构建独立的 Custom Core 安装包：
+原生播放器默认使用 MIST。每次 `make package` 都生成两个桥 PRX：
+`me_bridge.prx`（MIST）和 `me_bridge_custom_core.prx`（Custom Core），
+二者导出相同的 `me_lab` 接口，另有 `meLabBackend()` 返回后端编号。
 
-```sh
-make package BUILD_DIR=build/custom-core \
-  CMAKE_ARGS='-DBILI_ME_BACKEND=custom-core -DBILI_DIST_DIR=build/custom-core-dist'
-```
+选择方式：设置 → “ME 后端”（保存在 `settings.json` 的 `me_backend`，
+取值 `mist` 或 `custom-core`，缺省为 `mist`）。启动器（`bootstrap.c`）在加载
+客户端前读取该值，只加载对应的桥；客户端在每次播放初始化时用
+`meLabBackend()` 选择 MIST 返回跳板（`me_task`）或 Custom Core 的 C 工作函数
+（`me_worker`）。因此修改后必须退出（START）并重新打开 WiliMini 才生效，运行中
+不会切换已加载的桥；设置页在已保存值与已加载值不同时显示“需重启”。
+这样每次启动 ME 都处于干净状态，不在同一进程内交叉使用两种复位流程。
 
-完整安装包位于 `build/custom-core-dist/PSP/GAME/WiliMini/`。客户端与桥必须来自
-同一次打包；Custom Core 直接调用 C 工作函数，MIST 使用固件返回跳板，不能混装。
-`build.json`、播放诊断及 summary 的 `me_backend` 记录构建选择。
+若 Custom Core 桥加载或启动失败，启动器会输出日志并回退到 MIST；这不涵盖
+首次播放时的 ME 启动失败（如固件表不匹配），后者按原有播放错误处理。
+完整安装包须同时包含两个桥（启动器的完整性检查要求），并来自同一次打包。
+`build.json` 的 `me_backends` 列出包内后端，播放诊断及 summary 的 `me_backend`
+记录运行时实际加载的后端。
 
 Custom Core 使用固定版本上游的 `me-core.h` 启动代码和 `me-lib.c` 缓存函数，
 由现有内核桥安装，无需额外安装 `kcall.prx`。任务通过一个 64 字节对齐的非缓存

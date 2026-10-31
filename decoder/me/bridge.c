@@ -49,6 +49,8 @@ int meLabGetDiagnostics(MeDiagnostics *out, unsigned size)
     return 0;
 }
 
+int meLabBackend(void) { return ME_BACKEND_MIST; }
+
 /* MIST user-mode entry points are unused in this kernel-only bridge. */
 int meMistCall(FPCall f, void *p) { return f(p); }
 int kCall_2(FCall f, unsigned int seg) { return ((FCall)((uintptr_t)f | seg))(); }

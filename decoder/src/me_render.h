@@ -82,11 +82,12 @@ static int me_render_start(void)
     me_total_lateness_us = 0;
     me_late_frames = me_max_lateness_us = 0;
 #endif
-#if PSP_ME_CUSTOM_CORE
-    int ret = meLabInit((unsigned)me_worker);
-#else
-    int ret = meLabInit((unsigned)me_task);
-#endif
+    int ret;
+    switch (meLabBackend()) {
+    case ME_BACKEND_CUSTOM_CORE: ret = meLabInit((unsigned)me_worker); break;
+    case ME_BACKEND_MIST: ret = meLabInit((unsigned)me_task); break;
+    default: return AVERROR(ENODEV);
+    }
     if (ret < 0) return ret;
     meCoreSelectSystemTable(ret);
     sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));

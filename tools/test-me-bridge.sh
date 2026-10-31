@@ -11,3 +11,6 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -fsanitize=address,undefined -Itests/me_bridge_stubs \
     tests/custom_core_bridge_test.c -o build/host-me-bridge/custom-core-test
 build/host-me-bridge/custom-core-test
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -Iclient \
+    tests/me_backend_select_test.c -o build/host-me-bridge/backend-select-test
+build/host-me-bridge/backend-select-test

@@ -228,9 +228,11 @@ BUILD_TYPE=Release PARALLEL=4 make package
 dist/PSP/GAME/WiliMini/
 ```
 
-实验性 Custom Core ME 执行后端通过 `-DBILI_ME_BACKEND=custom-core` 选择，
-默认仍为 MIST。两者共用 FFmpeg 解码与转色代码；独立构建和验证步骤见
-[播放器说明](decoder/README.md#custom-core-执行后端实验性)。
+支持两个 ME 执行后端
+- MIST（`me_bridge.prx`，默认）
+- Custom Core （PSP-1000可用）
+
+详见[播放器说明](decoder/README.md#custom-core-执行后端实验性)。
 
 也可以直接使用 CMake：
 

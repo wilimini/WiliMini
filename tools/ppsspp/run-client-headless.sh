@@ -51,7 +51,7 @@ fi
 if [ ! -d "$memstick/PSP/GAME/WiliMini" ]; then
     cp -R "$package" "$memstick/PSP/GAME/WiliMini"
 fi
-for artifact in EBOOT.PBP wili_mini.prx wili_mini_1000.prx me_bridge.prx cacert.pem build.json wqy.bmf; do
+for artifact in EBOOT.PBP wili_mini.prx wili_mini_1000.prx me_bridge.prx me_bridge_custom_core.prx cacert.pem build.json wqy.bmf; do
     cp -f "$package/$artifact" "$memstick/PSP/GAME/WiliMini/$artifact"
 done
 if [ ! -f "$memstick/PSP/GAME/WiliMini/wifi-profile.txt" ]; then

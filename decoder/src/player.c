@@ -571,7 +571,7 @@ static void save_results(const char *path, const RunStats *s, int render,
     if (out) {
         fputs("{\n", out);
         fputs("  \"backend\": \"psp-native\",\n", out);
-        fprintf(out, "  \"me_backend\": \"%s\",\n", WILI_DIAGNOSTIC_ME_BACKEND);
+        fprintf(out, "  \"me_backend\": \"%s\",\n", playback_me_backend_name());
         fprintf(out, "  \"diagnostics_schema\": 1,\n  \"compiled_utc\": \"%s\",\n"
                 "  \"build_type\": \"%s\",\n  \"model_id\": %d,\n"
                 "  \"devkit_version\": \"%08x\",\n  \"attempt_in_process\": %u,\n",
@@ -1309,4 +1309,11 @@ void psp_video_stop(void) {
     quit_requested = 1;
     if(video_io_source && video_io_source->cancel)video_io_source->cancel(video_io_source->opaque);
     if(audio_io_source && audio_io_source->cancel)audio_io_source->cancel(audio_io_source->opaque);
+}
+int psp_video_me_backend(void) {
+#if PSP_ME_RENDER
+    return meLabBackend();
+#else
+    return -1;
+#endif
 }

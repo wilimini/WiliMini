@@ -5,6 +5,10 @@
 #include <nlohmann/json.hpp>
 
 namespace pspapp {
+const char* meBackendCode(MeBackend backend) {
+    return backend == MeBackend::CustomCore ? "custom-core" : "mist";
+}
+
 bool loadPreferences(const char* path, Preferences& preferences) {
     preferences = {};
     FILE* file = std::fopen(path, "rb");
@@ -30,6 +34,10 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
+        const std::string meBackend = root.value("me_backend", std::string("mist"));
+        if (meBackend == "mist") loaded.meBackend = MeBackend::Mist;
+        else if (meBackend == "custom-core") loaded.meBackend = MeBackend::CustomCore;
+        else return false;
         if (!root.contains("confirm_button")) {
             loaded.confirmWithCircle = root.value("confirm_with_circle", false);
         } else {
@@ -61,6 +69,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
+        {"me_backend", meBackendCode(preferences.meBackend)},
         {"confirm_with_circle", preferences.confirmWithCircle},
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
         {"locale", localeCode(preferences.locale)}}).dump();

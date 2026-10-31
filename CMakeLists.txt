@@ -54,11 +54,9 @@ set(ROOT "${CMAKE_SOURCE_DIR}")
 set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
-set(BILI_ME_BACKEND "mist" CACHE STRING "Native ME execution backend: mist or custom-core")
-set_property(CACHE BILI_ME_BACKEND PROPERTY STRINGS mist custom-core)
-if(NOT BILI_ME_BACKEND MATCHES "^(mist|custom-core)$")
-    message(FATAL_ERROR "BILI_ME_BACKEND must be mist or custom-core")
-endif()
+# Both execution backends are built into every package as separate bridge PRXs.
+# The bootstrap loads one according to settings.json; the default is MIST.
+set(BILI_ME_BACKENDS mist custom-core)
 
 execute_process(
     COMMAND git describe --tags --always --dirty
@@ -158,12 +156,8 @@ add_library(pspvideo STATIC
     decoder/src/vfpu_dsp.c
     decoder/src/audio_vfpu.c
     decoder/me/me_lab.S
+    decoder/me/me_entry.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
-if(BILI_ME_BACKEND STREQUAL "mist")
-    target_sources(pspvideo PRIVATE decoder/me/me_entry.S)
-else()
-    target_compile_definitions(pspvideo PRIVATE PSP_ME_CUSTOM_CORE=1)
-endif()
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
@@ -189,40 +183,39 @@ add_custom_command(
     DEPENDS "${ROOT}/decoder/me/exports.exp" "${ROOT}/cmake/BuildExports.cmake"
     COMMENT "Generating ME bridge exports")
 
-add_executable(me_bridge "${ME_EXPORTS_C}" "${ME_CORE_ROOT}/me-core-mapping.c")
-if(BILI_ME_BACKEND STREQUAL "custom-core")
-    target_sources(me_bridge PRIVATE decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c
-        "${ME_CORE_ROOT}/me-lib.c")
-else()
-    target_sources(me_bridge PRIVATE decoder/me/bridge.c decoder/me/mist_backend.c
-        "${ME_MIST_ROOT}/me-mist-utils.c")
-endif()
-target_compile_options(me_bridge PRIVATE -ffunction-sections -fdata-sections)
-target_include_directories(me_bridge PRIVATE
-    "${CMAKE_BINARY_DIR}/generated"
-    "${ROOT}/decoder/me"
-    "${ME_MIST_ROOT}"
-    "${ME_CORE_ROOT}"
-    "${ME_INCLUDE_ROOT}")
-target_link_options(me_bridge PRIVATE
-    -G0
-    -nostartfiles
-    "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
-    -Wl,-zmax-page-size=128)
-if(BILI_ME_BACKEND STREQUAL "custom-core")
-    # Keep PSP export roots while discarding the upstream user-mode kcall loader.
-    target_link_options(me_bridge PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
-    target_link_libraries(me_bridge PRIVATE psppower)
-endif()
-target_link_libraries(me_bridge PRIVATE pspkernel pspsdk)
-set_target_properties(me_bridge PROPERTIES
-    OUTPUT_NAME me_bridge
-    SUFFIX ".elf"
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-add_custom_command(TARGET me_bridge POST_BUILD
-    COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:me_bridge>"
-    COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:me_bridge>" "${CMAKE_BINARY_DIR}/me_bridge.prx"
-    COMMENT "Fixing imports and generating me_bridge.prx")
+# Each bridge exports the same me_lab ABI plus meLabBackend(); only one is loaded.
+function(add_me_bridge target output_name)
+    add_executable(${target} "${ME_EXPORTS_C}" "${ME_CORE_ROOT}/me-core-mapping.c" ${ARGN})
+    target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
+    target_include_directories(${target} PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${ROOT}/decoder/me"
+        "${ME_MIST_ROOT}"
+        "${ME_CORE_ROOT}"
+        "${ME_INCLUDE_ROOT}")
+    target_link_options(${target} PRIVATE
+        -G0
+        -nostartfiles
+        "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
+        -Wl,-zmax-page-size=128)
+    target_link_libraries(${target} PRIVATE pspkernel pspsdk)
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${output_name}
+        SUFFIX ".elf"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:${target}>"
+        COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:${target}>" "${CMAKE_BINARY_DIR}/${output_name}.prx"
+        COMMENT "Fixing imports and generating ${output_name}.prx")
+endfunction()
+
+add_me_bridge(me_bridge me_bridge
+    decoder/me/bridge.c decoder/me/mist_backend.c "${ME_MIST_ROOT}/me-mist-utils.c")
+add_me_bridge(me_bridge_custom_core me_bridge_custom_core
+    decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c "${ME_CORE_ROOT}/me-lib.c")
+# Keep PSP export roots while discarding the upstream user-mode kcall loader.
+target_link_options(me_bridge_custom_core PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
+target_link_libraries(me_bridge_custom_core PRIVATE psppower)
 
 add_library(wili_client_objects OBJECT
     platform/src/psp_device.c
@@ -411,6 +404,7 @@ add_custom_target(package
         "${CMAKE_BINARY_DIR}/wili_mini.prx"
         "${CMAKE_BINARY_DIR}/wili_mini_1000.prx"
         "${CMAKE_BINARY_DIR}/me_bridge.prx"
+        "${CMAKE_BINARY_DIR}/me_bridge_custom_core.prx"
         "${PACKAGE_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/wqy.bmf" "${PACKAGE_DIR}/wqy.bmf"
@@ -434,8 +428,8 @@ add_custom_target(package
         --version "${BILI_BUILD_VERSION}"
         --compiled-utc "${BILI_BUILD_UTC}"
         --build-type "${CMAKE_BUILD_TYPE}"
-        --me-backend "${BILI_ME_BACKEND}"
-    DEPENDS wili_mini wili_mini_1000 me_bridge eboot
+        --me-backends ${BILI_ME_BACKENDS}
+    DEPENDS wili_mini wili_mini_1000 me_bridge me_bridge_custom_core eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
 endif()
@@ -455,7 +449,7 @@ if(BILI_FONT_FILE)
     add_dependencies(assets generate-font)
 endif()
 if(BILI_BUILD_CLIENT)
-    add_custom_target(me DEPENDS me_bridge)
+    add_custom_target(me DEPENDS me_bridge me_bridge_custom_core)
     if(BILI_FONT_FILE)
         add_dependencies(package generate-font)
     endif()

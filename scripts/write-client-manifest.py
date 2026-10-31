@@ -16,6 +16,11 @@ parser.add_argument("--package", required=True, type=Path)
 parser.add_argument("--ffmpeg", required=True, type=Path)
 parser.add_argument("--ffmpeg-source", type=Path)
 parser.add_argument("--curl", required=True, type=Path)
+parser.add_argument("--version", default="local")
+parser.add_argument("--compiled-utc", default="unknown")
+parser.add_argument("--build-type", default="unknown")
+parser.add_argument("--me-backends", nargs="+", choices=["mist", "custom-core"],
+                    default=["mist", "custom-core"])
 args = parser.parse_args()
 
 root = args.root.resolve()
@@ -54,6 +59,7 @@ sources = [
     root / "CMakeLists.txt",
     root / "Makefile",
     *root.glob("cmake/*.cmake"),
+    *root.glob("cmake/*.in"),
 ]
 libraries = [*ffmpeg.glob("lib/*.a"), curl / "lib/libcurl.a"]
 files = {
@@ -72,6 +78,12 @@ manifest = {
         ["psp-gcc", "-dumpfullversion"], text=True
     ).strip(),
     "build": "wiliwili-psp-cpp17-cmake-01",
+    "version": args.version,
+    "compiled_utc": args.compiled_utc,
+    "build_type": args.build_type,
+    "me_backends": args.me_backends,
+    "me_backend_default": "mist",
+    "diagnostics_schema": 1,
     "files": files,
     "decoder": "VFPU4 + nearest luma/chroma + list0-only bipred + full residual reconstruction + nonref skip + ME/DMA + audio clock RGB queue; C++17 Wiliwili API/UI frontend",
 }

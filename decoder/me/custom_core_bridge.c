@@ -26,6 +26,8 @@ static MeDiagnostics diagnostics = {
     .build = WILI_DIAGNOSTIC_BUILD " " WILI_DIAGNOSTIC_COMPILED_UTC " custom-core"
 };
 
+int meLabBackend(void) { return ME_BACKEND_CUSTOM_CORE; }
+
 static void me_diagnostic(unsigned event, int result, unsigned a, unsigned b, unsigned c)
 {
     int intr = sceKernelCpuSuspendIntr();

@@ -63,6 +63,7 @@ static MeDiagnosticRecord last_event(unsigned event) {
     return (MeDiagnosticRecord){0};
 }
 int main(void) {
+    assert(meLabBackend() == ME_BACKEND_MIST);
     for (unsigned i = 0; i < 2; ++i) {
         table_id = i ? ME_CORE_IMG_TABLE : ME_CORE_T2_IMG_TABLE;
         unsigned expected_table = i ? 0x18a210 : 0x3ce870;

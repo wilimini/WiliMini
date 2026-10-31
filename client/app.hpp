@@ -50,6 +50,9 @@ public:
     void updateStorage();
     bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
     const Preferences& preferences() const { return preferences_; }
+    // ME_BACKEND_* loaded by the bootstrap; -1 when native ME is not in use.
+    int activeMeBackend() const { return activeMeBackend_; }
+    void setActiveMeBackend(int backend) { activeMeBackend_ = backend; }
     size_t settingSelection() const { return navigation_.get<SettingsRoute>().selection; }
     size_t licenseSelection() const { return navigation_.get<LicensesRoute>().selection; }
     const std::string& licenseText() const { return navigation_.get<LicenseTextRoute>().text; }
@@ -197,6 +200,7 @@ private:
     static App *workerApp;
 
     Preferences preferences_;
+    int activeMeBackend_ = -1;
     size_t coverFiles_ = 0;
     uint64_t coverBytes_ = 0;
     unsigned coverGeneration_ = 0;
