@@ -81,7 +81,81 @@ ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不�
 音频：AAC / HE-AAC，双声道，44.1 或 48 kHz；不提供重采样。
 其他编码、无音频、单声道等组合在本 demo 仍会报错。PSP-1000 尚未验证。
 ME 桥按固件标识选表，播放器同步选择自身的 FAT/T2 函数表。
-刷新 ME 时保留固件已有的启动跳转与 RAM 配置，不要求重启邮箱等于猜测地址。
+现有 MIST 刷新保留固件 RAM 配置，并将启动参数地址改写为 `0x88400000`；
+该流程与下述 Custom Core 启动方式不同。
+
+## Custom Core 执行后端（实验性）
+
+原生播放器默认仍使用 MIST。可构建独立的 Custom Core 安装包：
+
+```sh
+make package BUILD_DIR=build/custom-core \
+  CMAKE_ARGS='-DBILI_ME_BACKEND=custom-core -DBILI_DIST_DIR=build/custom-core-dist'
+```
+
+完整安装包位于 `build/custom-core-dist/PSP/GAME/WiliMini/`。客户端与桥必须来自
+同一次打包；Custom Core 直接调用 C 工作函数，MIST 使用固件返回跳板，不能混装。
+`build.json`、播放诊断及 summary 的 `me_backend` 记录构建选择。
+
+Custom Core 使用固定版本上游的 `me-core.h` 启动代码和 `me-lib.c` 缓存函数，
+由现有内核桥安装，无需额外安装 `kcall.prx`。任务通过一个 64 字节对齐的非缓存
+邮箱提交，不注入固件 syscall 表。启动先等待 ME 就绪，再执行不访问视频缓冲的
+空任务，确认工作函数可以完整返回后才继续播放。
+
+退出先等待任务返回，再请求常驻循环停止；收到停止确认后，主 CPU 复位 ME，
+恢复保存的启动 SRAM 并释放复位，随后播放器才释放 RGB 缓冲。任务或停止超时
+会拒绝后续播放并保留仍可能被访问的内存，需完全关机重启。
+此后端尚未实现休眠上下文恢复，持有 ME 期间锁定电源开关，恢复固件后解锁；
+播放中拨动开关的休眠请求可能在解锁后执行。
+
+主机替身测试只能验证生命周期与超时保护，不能证明启动、缓存或恢复固件的真机
+正确性。PSP-3000 验证流程和记录见 [Custom Core 验证](../docs/custom-core-backend.md)。
+
+## 播放故障日志
+
+原生 ME 播放每次在 `results/run-XXX/diagnostics.txt` 保存诊断节点。
+文件记录软件 Git 版本（含 dirty 标记）、构建配置时间（UTC）、构建类型、
+ME 桥自身的构建标识、设备本地时间、机型 ID、基础固件 devkit 版本、
+进程内尝试次数、系统运行时间和可用内存。机型 ID 使用 SDK 原始值
+（0 为 PSP-1000，1 为 PSP-2000）；devkit 值不能识别 PRO-C、ARK 等完整
+自制系统名称，反馈时仍需手动注明。构建时间是 CMake 配置时间。
+
+初始化前后、首个 ME 任务提交/完成、错误和清理阶段会写文件并关闭文件。
+ME 桥使用最多 24 条记录的固定内存环；正常播放只记录首个任务，避免逐帧
+写记忆棒。实验性 ME 队列的工作线程不写文件，桥记录在初始化和收尾时导出。
+节点中的 `bridge_seq` 是桥加载以来的递增序号；`time_us` 是 32 位系统
+微秒计数，会回绕。跨次重试会导出环中尚存的前次上下文。
+
+桥事件的 `a`、`b`、`c` 为十六进制值：
+
+| 事件 | a | b | c |
+| --- | --- | --- | --- |
+| init | 已初始化 | 仍有待完成任务 | 任务入口地址 |
+| profile | 固件表 ID | ME 表地址 | 0 |
+| bootstrap | BFC00060 RAM 配置 | BFC00064 | BFC00068 |
+| backend | 0 | 0 | 0 |
+| dma_begin | 读取的 ME 地址 | 目标物理地址 | BC8001B0 DMA 状态 |
+| dma_end | 清理前 DMA 状态 | 等待微秒 | 成功时保存的原入口 |
+| inject_begin | 注入索引 | 新入口 | 原入口 |
+| submit | 操作 | 宽 | 高 |
+| trigger | 任务地址 | done | value |
+| wait_timeout / wait_done | BFC00700 完成邮箱 | done | value |
+| shutdown | 已初始化 | 仍有待完成任务 | 0 |
+| restore_begin | 注入索引 | 原入口 | 0 |
+
+`submit` 被拒绝（result=-1）时 a/b 为 ready/pending；`dma_begin`
+分配失败（result=-7）时 b 为分配错误。`result` 保留原始返回码，
+`ready` 的非负结果是固件表 ID。任务超时的 `value` 对应 `me_task.h`
+中的进度标记：1 进入工作函数，2–4 输入平面处理，5 转色/缩放前，
+6 转色/缩放后，`4d450001` 工作函数结束。应结合 done 和完成邮箱判断，
+不能仅凭一个标记认定 ME 已安全停止。
+
+`summary.json` 同时记录构建与设备字段；`audio_stats_valid=false`
+表示本次尚未进入音频初始化，此时省略音频及 RGB 统计，不沿用前次值。
+日志不保存 Cookie、签名 URL 或媒体内容。测试反馈请提供整个 `results/`、
+`last-error.txt`、`last-playback-error.txt` 和安装包的 `build.json`，并注明
+完整系统版本、插件启用情况，以及各次尝试之间是否完全关机重启。
+硬死机或断电可能丢失尚未落盘的信息；日志无法保证捕获所有硬件故障。
 
 FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源及 MIT 许可见
 `me/LICENSE.MIST.txt` 和 `docs/references.lock.json`。已有实验日志保留，记录中的

@@ -16,6 +16,8 @@ typedef struct { unsigned index; void *param; } MistTrigger;
 unsigned *test_register(unsigned address);
 #define hw(address) (*test_register(address))
 int pspSdkSetK1(int value);
+int sceKernelCpuSuspendIntr(void);
+void sceKernelCpuResumeIntrWithSync(int state);
 int meCoreGetTableIdFromWitnessWord(void);
 void sceKernelDcacheWritebackInvalidateAll(void);
 void sceKernelDcacheWritebackInvalidateRange(void *, unsigned);

@@ -89,6 +89,19 @@ sh tools/test-memory-profiles.sh
 并用 ASan/UBSan 检查 RGB 队列复用、清理和启动失败路径。
 这些检查不代表 PSP-1000 真机兼容性或播放性能。
 
+## ME 桥故障检查
+
+```sh
+sh tools/test-me-bridge.sh
+```
+
+使用硬件调用替身与 ASan/UBSan 检查固件表选择、DMA 超时前的状态保存、
+任务超时后缓冲所有权、入口恢复和诊断环回绕。此检查不运行真实 ME 或 DMA。
+同一脚本还检查 Custom Core 的启动探针、连续播放、任务/停止超时和重试拒绝；
+SRAM 启动、缓存操作、电源锁及固件恢复仍需真机验证。
+发给真机测试者的完整安装包由 `make package` 生成；播放后收集的
+`diagnostics.txt` 及字段说明见 [播放器故障日志](../decoder/README.md#播放故障日志)。
+
 ## 热门视频性能数据集
 
 [`benchmarks/bilibili/`](../benchmarks/bilibili/README.md) 提供冻结的 20 个热门视频

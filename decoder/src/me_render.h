@@ -33,7 +33,11 @@ static int me_render_finish(void)
 {
     if (!me_pending) return 0;
     int ret = meLabWait();
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        if (!PSP_ME_RENDER_QUEUE) playback_diagnostic("me_task_wait_failed", ret);
+        return ret;
+    }
+    if (!PSP_ME_RENDER_QUEUE && !me_completed) playback_diagnostic("me_first_task_completed", ret);
 #if !PSP_ME_CACHE || !PSP_ME_DMA
     sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint32_t));
 #endif
@@ -78,12 +82,17 @@ static int me_render_start(void)
     me_total_lateness_us = 0;
     me_late_frames = me_max_lateness_us = 0;
 #endif
+#if PSP_ME_CUSTOM_CORE
+    int ret = meLabInit((unsigned)me_worker);
+#else
     int ret = meLabInit((unsigned)me_task);
+#endif
     if (ret < 0) return ret;
     meCoreSelectSystemTable(ret);
     sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));
 #if PSP_AUDIO && PSP_RGB_PACE
     if (ret >= 0) ret = rgb_start();
+    if (ret == AVERROR(EBUSY)) playback_diagnostic("rgb_buffer_retained_busy", ret);
 #endif
     return ret;
 }
@@ -121,6 +130,7 @@ static int me_render_submit(const AVFrame *frame)
 #endif
 #endif
     me_job.operation = 1;
+    me_job.value = 0; /* Do not report progress left over from the previous job. */
     me_job.width = frame->width;
     me_job.height = frame->height;
     for (int p = 0; p < 3; ++p) {
@@ -135,7 +145,9 @@ static int me_render_submit(const AVFrame *frame)
     sceKernelDcacheWritebackAll();
 #endif
     me_job.output = me_output;
+    if (!PSP_ME_RENDER_QUEUE && !me_submitted) playback_diagnostic("me_first_submit_begin", 0);
     ret = meLabSubmit(&me_job);
+    if (!PSP_ME_RENDER_QUEUE && (!me_submitted || ret < 0)) playback_diagnostic("me_submit_end", ret);
     if (ret < 0) {
 #if PSP_AUDIO && PSP_RGB_PACE
         sceKernelSignalSema(rgb_space, 1);

@@ -54,6 +54,11 @@ set(ROOT "${CMAKE_SOURCE_DIR}")
 set(PSPSDK "${PSPDEV}/psp/sdk")
 set(ME_MIST_ROOT "${ROOT}/third_party/psp-media-engine-mist")
 set(ME_CORE_ROOT "${ROOT}/third_party/psp-media-engine-custom-core")
+set(BILI_ME_BACKEND "mist" CACHE STRING "Native ME execution backend: mist or custom-core")
+set_property(CACHE BILI_ME_BACKEND PROPERTY STRINGS mist custom-core)
+if(NOT BILI_ME_BACKEND MATCHES "^(mist|custom-core)$")
+    message(FATAL_ERROR "BILI_ME_BACKEND must be mist or custom-core")
+endif()
 
 execute_process(
     COMMAND git describe --tags --always --dirty
@@ -66,6 +71,9 @@ if(NOT BILI_GIT_DESCRIBE_RESULT EQUAL 0 OR NOT BILI_BUILD_VERSION)
     set(BILI_BUILD_VERSION "local")
 endif()
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+string(TIMESTAMP BILI_BUILD_UTC "%Y-%m-%dT%H:%M:%SZ" UTC)
+configure_file("${ROOT}/cmake/build_diagnostics.h.in"
+    "${CMAKE_BINARY_DIR}/generated/build_diagnostics.h" @ONLY)
 configure_file("${ROOT}/cmake/build_info.hpp.in"
     "${CMAKE_BINARY_DIR}/generated/build_info.hpp" @ONLY)
 
@@ -95,7 +103,7 @@ file(CREATE_LINK "${ME_CORE_ROOT}" "${ME_INCLUDE_ROOT}/me-core-mapper" SYMBOLIC)
 
 set(DECODER_DEFINITIONS
     _POSIX_C_SOURCE=200809L
-    PSP_BUILD_ID=\"wili-mini-demo-01\"
+    PSP_BUILD_ID=\"${BILI_BUILD_VERSION}\"
     PSP_HEADLESS_BENCH=0
     PSP_BENCH_FULL=0
     PSP_PTS_PACE=1
@@ -149,12 +157,17 @@ add_library(pspvideo STATIC
     decoder/src/player.c
     decoder/src/vfpu_dsp.c
     decoder/src/audio_vfpu.c
-    decoder/me/me_entry.S
     decoder/me/me_lab.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
+if(BILI_ME_BACKEND STREQUAL "mist")
+    target_sources(pspvideo PRIVATE decoder/me/me_entry.S)
+else()
+    target_compile_definitions(pspvideo PRIVATE PSP_ME_CUSTOM_CORE=1)
+endif()
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/decoder/include"
     "${ROOT}/decoder/src"
     "${ROOT}/decoder/me"
@@ -176,14 +189,17 @@ add_custom_command(
     DEPENDS "${ROOT}/decoder/me/exports.exp" "${ROOT}/cmake/BuildExports.cmake"
     COMMENT "Generating ME bridge exports")
 
-add_executable(me_bridge
-    decoder/me/bridge.c
-    decoder/me/mist_backend.c
-    "${ME_EXPORTS_C}"
-    "${ME_MIST_ROOT}/me-mist-utils.c"
-    "${ME_CORE_ROOT}/me-core-mapping.c")
+add_executable(me_bridge "${ME_EXPORTS_C}" "${ME_CORE_ROOT}/me-core-mapping.c")
+if(BILI_ME_BACKEND STREQUAL "custom-core")
+    target_sources(me_bridge PRIVATE decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c
+        "${ME_CORE_ROOT}/me-lib.c")
+else()
+    target_sources(me_bridge PRIVATE decoder/me/bridge.c decoder/me/mist_backend.c
+        "${ME_MIST_ROOT}/me-mist-utils.c")
+endif()
 target_compile_options(me_bridge PRIVATE -ffunction-sections -fdata-sections)
 target_include_directories(me_bridge PRIVATE
+    "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/decoder/me"
     "${ME_MIST_ROOT}"
     "${ME_CORE_ROOT}"
@@ -193,6 +209,11 @@ target_link_options(me_bridge PRIVATE
     -nostartfiles
     "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
     -Wl,-zmax-page-size=128)
+if(BILI_ME_BACKEND STREQUAL "custom-core")
+    # Keep PSP export roots while discarding the upstream user-mode kcall loader.
+    target_link_options(me_bridge PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
+    target_link_libraries(me_bridge PRIVATE psppower)
+endif()
 target_link_libraries(me_bridge PRIVATE pspkernel pspsdk)
 set_target_properties(me_bridge PROPERTIES
     OUTPUT_NAME me_bridge
@@ -399,6 +420,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/build/curl-source/COPYING" "${PACKAGE_DIR}/licenses/curl.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_FFMPEG_SOURCE_DIR}/COPYING.LGPLv2.1" "${PACKAGE_DIR}/licenses/ffmpeg.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/decoder/me/LICENSE.MIST.txt" "${PACKAGE_DIR}/licenses/me-mist.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ME_CORE_ROOT}/LICENSE.md" "${PACKAGE_DIR}/licenses/me-custom-core.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/api/wiliwili/LICENSE" "${PACKAGE_DIR}/licenses/wiliwili.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/qrcodegen/LICENSE.txt" "${PACKAGE_DIR}/licenses/qrcodegen.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/third_party/pspsdk/LICENSE" "${PACKAGE_DIR}/licenses/pspsdk.txt"
@@ -409,6 +431,10 @@ add_custom_target(package
         --ffmpeg "${PSP_FFMPEG_PREFIX}"
         --ffmpeg-source "${BILI_FFMPEG_SOURCE_DIR}"
         --curl "${PSP_CURL_PREFIX}"
+        --version "${BILI_BUILD_VERSION}"
+        --compiled-utc "${BILI_BUILD_UTC}"
+        --build-type "${CMAKE_BUILD_TYPE}"
+        --me-backend "${BILI_ME_BACKEND}"
     DEPENDS wili_mini wili_mini_1000 me_bridge eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 

@@ -7,3 +7,4 @@ IMPORT_FUNC "me_lab",0x3CDFC6FA,meLabInit
 IMPORT_FUNC "me_lab",0x5D4EC738,meLabSubmit
 IMPORT_FUNC "me_lab",0x9C1A5445,meLabWait
 IMPORT_FUNC "me_lab",0x432E5043,meLabShutdown
+IMPORT_FUNC "me_lab",0x5B4CD9E2,meLabGetDiagnostics
