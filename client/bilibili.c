@@ -16,6 +16,7 @@
 #include <pspnet_apctl.h>
 #include <pspwlan.h>
 #include <curl/curl.h>
+#include "http_transport.h"
 #include <unistd.h>
 #include <pspiofilemgr.h>
 #endif
@@ -117,6 +118,7 @@ const char *network_progress_message(void) {
     }
 }
 static CURL *transport;
+static CURL *api_transport; /* Serialized JSON requests, separate from media/covers. */
 static char buvid3[33];
 static char session_cookies[4096];
 void bili_http_set_session(const char *cookies) {
@@ -243,7 +245,7 @@ int network_connect(void) {
     snprintf(network_error,sizeof(network_error),profile?"Wi-Fi connect request failed":"SELECT: choose a Wi-Fi connection");
     return -1;
 }
-void network_close(void){if(!initialized)return;curl_easy_cleanup(transport);transport=NULL;curl_global_cleanup();sceNetApctlDisconnect();sceNetApctlTerm();sceNetResolverTerm();sceNetInetTerm();sceNetTerm();initialized=0;}
+void network_close(void){if(!initialized)return;curl_easy_cleanup(api_transport);api_transport=NULL;curl_easy_cleanup(transport);transport=NULL;curl_global_cleanup();sceNetApctlDisconnect();sceNetApctlTerm();sceNetResolverTerm();sceNetInetTerm();sceNetTerm();initialized=0;}
 typedef struct {
     FILE *file;
     char *text;
@@ -275,6 +277,26 @@ static int progress(void *ctx,curl_off_t total,curl_off_t now,curl_off_t up,curl
     return s&&s->cancel?*s->cancel:transfer_cancel;
 }
 
+/* Timings are cumulative from transfer start, in milliseconds. Never log URLs,
+ * signed queries, credentials or response bodies. */
+static void http_timing(CURL *curl, const char *kind) {
+#ifdef BILI_NETWORK_DIAGNOSTICS
+    double dns=0,connect=0,tls=0,first=0,total=0;
+    long connections=0,status=0;
+    curl_easy_getinfo(curl,CURLINFO_NAMELOOKUP_TIME,&dns);
+    curl_easy_getinfo(curl,CURLINFO_CONNECT_TIME,&connect);
+    curl_easy_getinfo(curl,CURLINFO_APPCONNECT_TIME,&tls);
+    curl_easy_getinfo(curl,CURLINFO_STARTTRANSFER_TIME,&first);
+    curl_easy_getinfo(curl,CURLINFO_TOTAL_TIME,&total);
+    curl_easy_getinfo(curl,CURLINFO_NUM_CONNECTS,&connections);
+    curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
+    printf("HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f\n",
+           kind,status,connections,dns*1000,connect*1000,tls*1000,first*1000,total*1000);
+#else
+    (void)curl;(void)kind;
+#endif
+}
+
 static int request(const char *url,Sink *sink) {
     if (!sink->cancel) network_phase=playback_address_request(url)?NET_PLAYURL:strstr(url,"/x/web-interface/nav")?NET_SIGNING:
         strstr(url,"/wbi/index/top/feed/rcmd")?NET_RECOMMEND:
@@ -284,10 +306,10 @@ static int request(const char *url,Sink *sink) {
         strstr(url,"/pgc/view/pc/season") || strstr(url,"/x/player/pagelist")?NET_PARTS:
         strstr(url,"/reply/")?NET_COMMENTS:
         strstr(url,"/x/web-interface/archive/relation") || strstr(url,"/pgc/season/episode/web/info") || strstr(url,"/pgc/view/web/season/user/status")?NET_RELATION:NET_REQUEST;
-    CURL *c=sink->response?curl_easy_init():transport;
+    CURL *c=sink->response?bili_http_transport_acquire(&api_transport):transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
-    curl_easy_reset(c);
+    if(!sink->response)curl_easy_reset(c);
     transfer_kb=transfer_total_kb=0;
     curl_easy_setopt(c,CURLOPT_URL,url);
     if(sink->form){
@@ -348,18 +370,23 @@ static int request(const char *url,Sink *sink) {
     curl_easy_setopt(c,CURLOPT_TIMEOUT,(sink->file || sink->stream)?0L:playback_address_request(url)?45L:25L);
     CURLcode r=curl_easy_perform(c);
     long status=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&status);
-    if(headers)curl_slist_free_all(headers);
+    const char *kind = !sink->response ? "download" :
+        strstr(url,"/x/web-interface/view?") ? "detail" :
+        strstr(url,"/playurl?") ? "playurl" :
+        strstr(url,"/x/web-interface/nav") ? "nav" : "api";
+    http_timing(c,kind);
     if(sink->response){
         sink->response->status=(int)status;
         sink->response->transport_code=(int)r;
         if((sink->cancel&&*sink->cancel) || transfer_cancel)sink->response->failure=BILI_HTTP_CANCELLED;
         else if(r!=CURLE_OK)sink->response->failure=BILI_HTTP_TRANSPORT;
         else if(status!=200)sink->response->failure=BILI_HTTP_STATUS;
-        curl_easy_cleanup(c);
     }
 #if BILI_STREAM_PROFILE
     if(sink->stream)stream_profile_http(c,sink->stream);
 #endif
+    if(sink->response)bili_http_transport_release(c);
+    if(headers)curl_slist_free_all(headers);
     if(r!=CURLE_OK || status!=200){
         if (sink->cancel) return -1; /* Overlay failures stay local to their request. */
         if((sink->cancel&&*sink->cancel) || transfer_cancel)snprintf(network_error,sizeof(network_error),"Cancelled");
@@ -760,6 +787,7 @@ static int range_download_thread(SceSize args, void *argp) {
             curl_easy_setopt(curl, CURLOPT_XFERINFODATA, stream);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             CURLcode code = curl_easy_perform(curl);
+            http_timing(curl, stream->label);
             long status = 0;
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
             if (headers) curl_slist_free_all(headers);

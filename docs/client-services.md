@@ -30,6 +30,27 @@ its results are staged until the main thread joins the worker. Renderers read
 only main-thread state. Session credentials are applied between requests on this
 worker; the synchronous player finishes before another UI job can start.
 
+JSON requests reuse a dedicated curl easy handle with at most two idle
+connections. Resetting its request options preserves connection, DNS and TLS
+session caches. Request headers, callbacks and POST data are cleared after each
+request; curl's persistent cookie engine is not enabled. The handle is destroyed
+at network shutdown. Cover and media transfers do not borrow this handle.
+Reuse depends on the server keeping the connection open; curl reconnects when
+necessary. This does not eliminate the first TLS handshake to a new origin.
+
+DASH video and audio startup remain sequential: the current PSP DNS wrapper
+returns a shared static hostent. Concurrent initial resolution needs a separate
+thread-safety change before parallel startup can be enabled safely.
+
+For timing diagnostics, build with
+`CMAKE_ARGS=-DBILI_NETWORK_DIAGNOSTICS=ON make package`.
+`HTTP timing` lines contain the request class, status, new connection count and
+cumulative DNS/TCP/TLS/first-byte/total times in milliseconds. They omit URLs,
+queries, cookies and response bodies. A warm same-origin API request should
+normally show `new_connections=0`. DASH timings are emitted when a transfer
+ends, including cancellation; total time can include buffer backpressure.
+Use identical media, device and build settings for before/after comparisons.
+
 Search requests carry a keyword, page and generation. App rejects results from a
 different generation. A failed appended page leaves existing cards and the page
 to retry intact. Empty results and cancellation are not errors. Search history
@@ -108,6 +129,11 @@ UI thread reads JPEGs into display buffers. Completion invalidates the matching
 cover cache key, without replacing cards or clearing other decoded covers.
 
 ## Verification
+
+- `python3 tools/test-http-transport.py`: local HTTP/1.1 host check of production
+  handle reuse, POST/header reset, cookie isolation, server-close and
+  aborted-write recovery.
+  Requires a C compiler, Python and `curl-config`; it does not measure PSP TLS.
 
 - `sh scripts/test-services.sh`: production service code with injected transport;
   retry bounds, cancellation, WBI failure/refresh, schema errors, pagination,
