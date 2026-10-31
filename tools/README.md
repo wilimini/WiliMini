@@ -89,6 +89,16 @@ sh tools/test-memory-profiles.sh
 并用 ASan/UBSan 检查 RGB 队列复用、清理和启动失败路径。
 这些检查不代表 PSP-1000 真机兼容性或播放性能。
 
+## 日志主机检查
+
+```sh
+sh tools/test-logging.sh
+```
+
+用 ASan/UBSan 检查 `platform/src/wili_log.c` 的行格式、按通道过滤、级别配置串、
+环形缓冲、多线程写入和超长截断，并确认加载器使用的无环形缓冲配置能编译。
+该检查只在主机运行，不覆盖 PSP 构建或真机输出。
+
 ## ME 桥故障检查
 
 ```sh
