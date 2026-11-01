@@ -66,6 +66,7 @@ void App::changeSetting() {
     Preferences next = preferences_;
     switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
         case SettingItem::DarkTheme: next.darkTheme = !next.darkTheme; break;
+        case SettingItem::HomeStyle: next.tileHome = !next.tileHome; break;
         case SettingItem::BodySize: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
         case SettingItem::ShowCovers: next.showCovers = !next.showCovers; break;
         case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
@@ -98,6 +99,11 @@ void App::changeSetting() {
     }
     preferences_ = next;
     const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
+    if (changed == SettingItem::HomeStyle) {
+        // Settings sits above the root, so the hub shows once this page is popped.
+        hubOpen_ = preferences_.tileHome;
+        hubSelection_ = 0;
+    }
     if (changed == SettingItem::LogLevel || changed == SettingItem::LogFiles) applyLogPreferences(preferences_);
     const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)

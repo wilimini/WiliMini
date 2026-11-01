@@ -57,7 +57,11 @@ public:
     int tileSelection() const { return hubSelection_; }
     void tileMove(int dx, int dy);
     void tileActivate();
-    void toggleTileHome();
+    // Confirm starts a short launch animation; the destination opens when it ends (see poll()).
+    bool tileLaunching() const { return hubLaunchAt_ != 0; }
+    int tileLaunchMs() const;
+    void tileFinishLaunch();
+    bool tileLive(TileId tile, std::string& big, std::string& small) const;
     std::string tileSubtitle(TileId tile) const;
     void changeSetting();
     void updateStorage();
@@ -216,6 +220,7 @@ private:
     Preferences preferences_;
     bool hubOpen_ = false;
     int hubSelection_ = 0;
+    uint64_t hubLaunchAt_ = 0;  // system time (us) when the launch animation began; 0 = idle
     void openHub();
     int activeMeBackend_ = -1;
     size_t coverFiles_ = 0;

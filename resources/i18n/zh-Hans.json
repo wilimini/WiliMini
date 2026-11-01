@@ -110,7 +110,7 @@
   "hint_search_landing": "↑↓ 选择  {confirm} 确认  □ 输入  △ 刷新热搜  {back} 返回",
   "hint_search_results": "↑↓ 选择  {confirm} 打开  □ 修改关键词  △ 重试  {back} 返回",
   "hint_mine": "↑↓ 选择  {confirm} 打开  □ 云端内容  {back} 返回",
-  "hint_home": "方向键选择  {confirm} 打开  □ 搜索  L/R 分类  SELECT 磁贴",
+  "hint_home": "方向键选择  {confirm} 打开  □ 搜索  L/R 分类",
   "hint_search_keyboard": "按 {confirm} 打开系统键盘，支持中文输入",
   "hint_search_modify": "按 {confirm} 修改关键词",
   "hint_search_empty": "□ 输入关键词，或 {back} 返回查看热搜",
@@ -139,7 +139,9 @@
   "tile_mine": "我的",
   "tile_settings": "设置",
   "tile_mine_summary": "历史 {history} · 稍后看 {later}",
-  "tile_on": "磁贴主题已开启",
-  "tile_off": "磁贴主题已关闭",
-  "hint_tiles": "方向键选择  {confirm} 打开  SELECT 经典主题  START 退出"
+  "hint_tiles": "方向键选择  {confirm} 打开  SELECT Wi-Fi  START 退出",
+  "settings_home_style": "首页样式",
+  "value_home_classic": "经典",
+  "value_home_tiles": "磁贴",
+  "tile_live_loaded": "个推荐视频已载入"
 }

@@ -8,6 +8,7 @@
 #include <csetjmp>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -475,8 +476,51 @@ void drawFooter(const pspapp::App& app) {
     }
 }
 
-// Tile home screen: a Metro-style panorama. Layout comes from tile_layout.hpp; the sidebar
-// icon bitmaps are reused as white glyphs, tiles without an icon show their label only.
+// ---- Tile home screen -------------------------------------------------------------------
+// A Metro-style panorama. Layout and d-pad navigation come from tile_layout.hpp. Everything
+// is drawn on the CPU into the framebuffer, so effects are cheap 2D tricks: a tile "flips"
+// by squeezing its height about its centre line, and fades by blending with the background.
+// Animation is time based (not frame based) so it looks the same if a frame is dropped.
+
+// Blends d towards s; a is 0..256.
+uint32_t shadeMix(uint32_t d, uint32_t s, unsigned a) {
+    const uint32_t rb = ((((d & 0x00ff00ffu) * (256 - a)) + ((s & 0x00ff00ffu) * a)) >> 8) & 0x00ff00ffu;
+    const uint32_t g = ((((d & 0x0000ff00u) * (256 - a)) + ((s & 0x0000ff00u) * a)) >> 8) & 0x0000ff00u;
+    return 0xff000000u | rb | g;
+}
+
+// Fills a rectangle with `shade` at the given opacity (0..255), clipped to the screen.
+void blendRect(int x, int y, int width, int height, uint32_t shade, unsigned alpha) {
+    if (alpha >= 250) { fillRect(x, y, width, height, shade); return; }
+    if (!alpha || width <= 0 || height <= 0) return;
+    const int left = std::max(0, x), top = std::max(0, y);
+    const int right = std::min(kWidth, x + width), bottom = std::min(kHeight, y + height);
+    const unsigned a = alpha + (alpha >> 7);
+    uint32_t* destination = framebuffer();
+    for (int row = top; row < bottom; ++row) {
+        uint32_t* line = destination + row * 512;
+        for (int column = left; column < right; ++column) line[column] = shadeMix(line[column], shade, a);
+    }
+}
+
+// 16 px text drawn at double size (32 px) for the big numbers on live tiles.
+void drawBigText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
+    const int right = std::min(kWidth, x + maxWidth);
+    for (size_t pos = 0; pos < text.size();) {
+        const auto* glyph = bitmapGlyph(bitmapNext(text, pos), 16);
+        if (!glyph) continue;
+        if (x + glyph->advance * 2 > right) break;
+        for (int yy = 0; yy < glyph->height; ++yy)
+            for (int xx = 0; xx < glyph->width; ++xx) {
+                const int pixel = yy * glyph->width + xx;
+                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
+                for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
+                    blendPixel(x + xx * 2 + dx, y + yy * 2 + dy, shade, alpha);
+            }
+        x += glyph->advance * 2;
+    }
+}
+
 void drawIconGlyph(int icon, int x, int y, int size) {
     for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx) {
         const unsigned pixel = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];
@@ -484,7 +528,66 @@ void drawIconGlyph(int icon, int x, int y, int size) {
     }
 }
 
-void drawHub(const pspapp::App& app) {
+float clamp01(float v) { return v < 0.f ? 0.f : v > 1.f ? 1.f : v; }
+float easeOut(float t) { t = 1.f - clamp01(t); return 1.f - t * t * t; }
+float easeIn(float t) { t = clamp01(t); return t * t; }
+
+struct HubFx {
+    bool wasVisible = false;
+    int64_t enterMs = 0;        // when the tile screen last appeared
+    int64_t leaveMs = -100000;  // when it last disappeared (drives the fade into the next page)
+    bool ringReady = false;
+    float ring[4]{};            // focus ring rectangle in panorama coordinates
+    float pan = 0.f, panTarget = 0.f;
+};
+HubFx hubFx;
+
+constexpr int kFadeMs = 260;
+
+// Per-tile entrance (staggered left to right) and launch (the chosen tile leaves last).
+struct TileMotion { float scale = 1.f; float opacity = 1.f; bool back = false; bool settled = true; };
+
+TileMotion tileMotion(const pspapp::App& app, int index, bool live, int64_t now) {
+    using namespace pspapp;
+    TileMotion motion;
+    const TileSpec& tile = kTiles[index];
+    const int launch = app.tileLaunchMs();
+    if (launch >= 0) {
+        const int distance = std::abs(tile.col - kTiles[app.tileSelection()].col);
+        const bool chosen = index == app.tileSelection();
+        const float delay = chosen ? 130.f : distance * 18.f;
+        const float out = clamp01((launch - delay) / 220.f);
+        motion.scale = 1.f - easeIn(out);
+        motion.opacity = 1.f - out * 0.4f;
+        if (chosen && launch < 130) motion.scale = 1.f - 0.07f * easeOut(launch / 130.f);  // press
+        motion.settled = false;
+        return motion;
+    }
+    const float in = clamp01((now - hubFx.enterMs - (tile.col * 55 + tile.row * 28)) / 420.f);
+    if (in < 1.f) {
+        motion.scale = std::max(0.02f, easeOut(in));
+        motion.opacity = easeOut(in);
+        motion.settled = false;
+        return motion;
+    }
+    if (live) {
+        // Live tile: flip to the back face for a few seconds, then back again.
+        const int64_t period = 6200 + (index % 3) * 700;
+        const int64_t t = now - hubFx.enterMs - 2400 - index * 900;
+        if (t >= 0) {
+            const int m = static_cast<int>(t % period);
+            if (m < 330) { motion.scale = 1.f - easeIn(m / 330.f); }
+            else if (m < 660) { motion.back = true; motion.scale = easeOut((m - 330) / 330.f); }
+            else if (m < 3300) { motion.back = true; }
+            else if (m < 3630) { motion.back = true; motion.scale = 1.f - easeIn((m - 3300) / 330.f); }
+            else if (m < 3960) { motion.scale = easeOut((m - 3630) / 330.f); }
+            motion.scale = std::max(motion.scale, 0.02f);
+        }
+    }
+    return motion;
+}
+
+void drawHub(const pspapp::App& app, int64_t now) {
     using namespace pspapp;
     struct Look { TileId id; TextId label; int icon; uint32_t shade; };
     static const Look looks[] = {
@@ -499,22 +602,45 @@ void drawHub(const pspapp::App& app) {
     };
     const Locale locale = app.preferences().locale;
     const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
-    static int panTarget = 0, pan = 0;
-    panTarget = tilePan(app.tileSelection(), panTarget);
-    const int step = (panTarget - pan) / 4;
-    pan += step ? step : (panTarget > pan) - (panTarget < pan);
 
-    drawText(kTileOriginX, 6, 0.9f, kText, text(TextId::tile_title, locale), 300);
+    // Smooth scrolling toward the pan that keeps the selection on screen.
+    hubFx.panTarget = static_cast<float>(tilePan(app.tileSelection(), static_cast<int>(hubFx.panTarget)));
+    hubFx.pan += (hubFx.panTarget - hubFx.pan) * 0.22f;
+    if (std::fabs(hubFx.panTarget - hubFx.pan) < 0.4f) hubFx.pan = hubFx.panTarget;
+    const float pan = hubFx.pan;
+
+    // Title slides in on entrance and drifts slower than the tiles (parallax).
+    const float titleIn = easeOut((now - hubFx.enterMs) / 450.f);
+    drawText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 6, 0.9f,
+             shadeMix(kBackground, kText, static_cast<unsigned>(titleIn * 256.f)),
+             text(TextId::tile_title, locale), 300);
+
     for (int i = 0; i < kTileCount; ++i) {
         const TileSpec& tile = kTiles[i];
         const Look* look = nullptr;
         for (const Look& candidate : looks) if (candidate.id == tile.id) look = &candidate;
         if (!look) continue;
-        const int x = tileX(tile) - pan, y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
+        const int x = tileX(tile) - static_cast<int>(pan + 0.5f), y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
         if (x + w + 4 < 0 || x - 4 >= kWidth) continue;
-        fillRect(x, y, w, h, look->shade);
+
+        std::string big, small;
+        const bool live = app.tileLive(tile.id, big, small);
+        const TileMotion motion = tileMotion(app, i, live, now);
+
+        // Squeeze about the centre line (flip) and slightly in width (depth).
+        const int drawH = std::max(1, static_cast<int>(h * motion.scale));
+        const int drawW = static_cast<int>(w * (0.88f + 0.12f * motion.scale));
+        const int drawX = x + (w - drawW) / 2, drawY = y + (h - drawH) / 2;
+        const uint32_t face = motion.back ? shadeMix(look->shade, color(0, 0, 0), 56) : look->shade;
+        blendRect(drawX, drawY, drawW, drawH, face, static_cast<unsigned>(motion.opacity * 255.f));
+        if (motion.scale < 0.96f || motion.opacity < 0.96f) continue;  // content only on a flat face
+
         const char* label = text(look->label, locale);
-        if (tile.cols == 1) {
+        if (motion.back) {
+            drawBigText(x + 8, y + 6, white, big, w - 16);
+            if (tile.cols == 1) continue;
+            drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
+        } else if (tile.cols == 1) {
             if (look->icon >= 0) {
                 drawIconGlyph(look->icon, x + (w - 22) / 2, y + 10, 22);
                 drawText(x + 2, y + h - 18, 0.5f, white, label, w - 4, true);
@@ -528,12 +654,38 @@ void drawHub(const pspapp::App& app) {
             const std::string subtitle = app.tileSubtitle(tile.id);
             if (!subtitle.empty()) drawText(x + 8, y + h - 42, 0.5f, softWhite, subtitle, w - 16);
         }
-        if (i == app.tileSelection()) {
-            fillRect(x - 3, y - 3, w + 6, 2, kText);
-            fillRect(x - 3, y + h + 1, w + 6, 2, kText);
-            fillRect(x - 3, y - 3, 2, h + 6, kText);
-            fillRect(x + w + 1, y - 3, 2, h + 6, kText);
-        }
+    }
+
+    // Focus ring glides between tiles instead of jumping.
+    const TileSpec& selected = kTiles[app.tileSelection()];
+    const float target[4] = {static_cast<float>(tileX(selected)), static_cast<float>(tileY(selected)),
+                             static_cast<float>(tileWidth(selected)), static_cast<float>(tileHeight(selected))};
+    if (!hubFx.ringReady) { for (int k = 0; k < 4; ++k) hubFx.ring[k] = target[k]; hubFx.ringReady = true; }
+    for (int k = 0; k < 4; ++k) {
+        hubFx.ring[k] += (target[k] - hubFx.ring[k]) * 0.38f;
+        if (std::fabs(target[k] - hubFx.ring[k]) < 0.5f) hubFx.ring[k] = target[k];
+    }
+    const int launch = app.tileLaunchMs();
+    const bool entered = now - hubFx.enterMs > 700;
+    if (entered && (launch < 0 || launch < 90)) {
+        const int rx = static_cast<int>(hubFx.ring[0] - pan + 0.5f), ry = static_cast<int>(hubFx.ring[1] + 0.5f);
+        const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
+        fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
+        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);
+        fillRect(rx - 3, ry - 3, 2, rh + 6, kText);
+        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kText);
+    }
+}
+
+// Fades the page that follows a tile launch in from the background colour.
+void fadeFromBackground(int64_t now) {
+    const float t = (now - hubFx.leaveMs) / static_cast<float>(kFadeMs);
+    if (t >= 1.f) return;
+    const unsigned a = static_cast<unsigned>(256.f * (1.f - easeOut(t)));
+    uint32_t* destination = framebuffer();
+    for (int row = 0; row < 258; ++row) {
+        uint32_t* line = destination + row * 512;
+        for (int column = 0; column < kWidth; ++column) line[column] = shadeMix(line[column], kBackground, a);
     }
 }
 
@@ -813,7 +965,8 @@ void drawUtility(const pspapp::App& app) {
                  std::to_string(app.settingSelection() + 1) + " / " +
                      std::to_string(static_cast<size_t>(pspapp::SettingItem::Count)), 85);
         const pspapp::TextId labels[] = {
-            pspapp::TextId::settings_theme, pspapp::TextId::settings_body_size,
+            pspapp::TextId::settings_theme, pspapp::TextId::settings_home_style,
+            pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
@@ -830,6 +983,8 @@ void drawUtility(const pspapp::App& app) {
             app.activeMeBackend() != static_cast<int>(preferences.meBackend);
         const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
                                                                          : pspapp::TextId::value_light, locale),
+            pspapp::text(preferences.tileHome ? pspapp::TextId::value_home_tiles
+                                              : pspapp::TextId::value_home_classic, locale),
             std::to_string(preferences.bodySize) + " px",
             pspapp::text(preferences.showCovers ? pspapp::TextId::value_on_demand
                                                : pspapp::TextId::value_off, locale),
@@ -1248,6 +1403,11 @@ void ui_render(const pspapp::App& app) {
     }
     beginFrame();
     fillRect(0, 0, kWidth, kHeight, kBackground);
+    const int64_t nowMs = static_cast<int64_t>(sceKernelGetSystemTimeWide() / 1000);
+    const bool hub = app.tileHubVisible();
+    if (hub && !hubFx.wasVisible) hubFx.enterMs = nowMs;      // tiles flip in again
+    if (!hub && hubFx.wasVisible) hubFx.leaveMs = nowMs;      // next page fades in
+    hubFx.wasVisible = hub;
     if (app.screen() == pspapp::Screen::Browse && app.hasBrowse()) {
         drawBrowse(app);
     } else if (app.utilityPage()) {
@@ -1260,14 +1420,15 @@ void ui_render(const pspapp::App& app) {
         drawDetail(app);
     } else if (app.screen() == pspapp::Screen::Comments) {
         drawComments(app);
-    } else if (app.tileHubVisible()) {
-        drawHub(app);
+    } else if (hub) {
+        drawHub(app, nowMs);
     } else {
         drawHeader(app);
         if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) drawMine(app);
         else if (app.tab() == pspapp::Tab::Search) drawSearch(app);
         else drawCardGrid(app);
     }
+    if (!hub) fadeFromBackground(nowMs);
     drawFooter(app);
     presentFrame();
 }

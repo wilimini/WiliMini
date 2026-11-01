@@ -110,7 +110,7 @@
   "hint_search_landing": "↑↓ Select  {confirm} Choose  □ Input  △ Refresh hot searches  {back} Back",
   "hint_search_results": "↑↓ Select  {confirm} Open  □ Edit query  △ Retry  {back} Back",
   "hint_mine": "↑↓ Select  {confirm} Open  □ Cloud content  {back} Back",
-  "hint_home": "Directions Select  {confirm} Open  □ Search  L/R Categories  SELECT Tiles",
+  "hint_home": "Directions Select  {confirm} Open  □ Search  L/R Categories",
   "hint_search_keyboard": "Press {confirm} for the system keyboard; Chinese input is supported",
   "hint_search_modify": "Press {confirm} to edit the query",
   "hint_search_empty": "□ Enter a query, or press {back} to view hot searches",
@@ -139,7 +139,9 @@
   "tile_mine": "Mine",
   "tile_settings": "Settings",
   "tile_mine_summary": "History {history} · Later {later}",
-  "tile_on": "Tile theme on",
-  "tile_off": "Tile theme off",
-  "hint_tiles": "Directions Select  {confirm} Open  SELECT Classic theme  START Quit"
+  "hint_tiles": "Directions Select  {confirm} Open  SELECT Wi-Fi  START Quit",
+  "settings_home_style": "Home style",
+  "value_home_classic": "Classic",
+  "value_home_tiles": "Tiles",
+  "tile_live_loaded": "recommendations loaded"
 }

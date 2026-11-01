@@ -815,7 +815,19 @@ void App::tileMove(int dx, int dy) {
 }
 
 void App::tileActivate() {
-    if (busy() || playbackReady_ || !tileHubVisible() || hubSelection_ < 0 || hubSelection_ >= kTileCount) return;
+    if (busy() || playbackReady_ || !tileHubVisible() || tileLaunching() ||
+        hubSelection_ < 0 || hubSelection_ >= kTileCount) return;
+    hubLaunchAt_ = sceKernelGetSystemTimeWide();
+}
+
+int App::tileLaunchMs() const {
+    if (!tileLaunching()) return -1;
+    return static_cast<int>((sceKernelGetSystemTimeWide() - hubLaunchAt_) / 1000);
+}
+
+void App::tileFinishLaunch() {
+    hubLaunchAt_ = 0;
+    if (busy() || playbackReady_ || !tileHubVisible()) return;
     switch (kTiles[hubSelection_].id) {
         // Tabs replace the hub; child pages sit on top of it and pop back to it.
         case TileId::Recommend: hubOpen_ = false; setTab(Tab::Recommend); break;
@@ -829,23 +841,26 @@ void App::tileActivate() {
     }
 }
 
-void App::toggleTileHome() {
-    if (busy() || !atTabRoot()) return;
-    Preferences next = preferences_;
-    next.tileHome = !next.tileHome;
-    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
-        status_ = text(TextId::settings_save_failed, preferences_.locale);
-        return;
-    }
-    preferences_ = next;
-    if (next.tileHome) {
-        if (root().tab == Tab::Discover) setTab(Tab::Recommend);
-        hubSelection_ = 0;
-        openHub();
-        status_ = text(TextId::tile_on, preferences_.locale);
-    } else {
-        hubOpen_ = false;
-        status_ = text(TextId::tile_off, preferences_.locale);
+// Back face of a live tile, built from data already in memory (no network access).
+bool App::tileLive(TileId tile, std::string& big, std::string& small) const {
+    switch (tile) {
+        case TileId::Recommend:
+            if (recommend_.empty()) return false;
+            big = std::to_string(recommend_.size());
+            small = text(TextId::tile_live_loaded, preferences_.locale);
+            return true;
+        case TileId::Hots:
+            if (hots_.empty()) return false;
+            big = "#1";
+            small = hots_.front().title;
+            return true;
+        case TileId::Mine:
+            big = std::to_string(history_.size());
+            small = formatText(TextId::tile_mine_summary, preferences_.locale,
+                               {{"history", std::to_string(history_.size())},
+                                {"later", std::to_string(later_.size())}});
+            return true;
+        default: return false;
     }
 }
 
@@ -1192,6 +1207,7 @@ void App::startJob(Job job) {
 }
 
 void App::poll() {
+    if (tileLaunching() && tileLaunchMs() >= kTileLaunchMs) tileFinishLaunch();
     updateCoverQueue();
     if (coverActive_) {
         if (!jobFinished_) return;
