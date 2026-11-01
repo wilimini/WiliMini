@@ -744,13 +744,15 @@ void drawUtility(const pspapp::App& app) {
     using pspapp::Screen;
     const auto locale = app.preferences().locale;
     if (app.screen() == Screen::Settings) {
-        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::settings_header, locale), 428);
+        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::settings_header, locale), 340);
+        drawText(382, 31, 0.5f, kTextDim,
+                 std::to_string(app.settingSelection() + 1) + " / " +
+                     std::to_string(static_cast<size_t>(pspapp::SettingItem::Count)), 85);
         const pspapp::TextId labels[] = {
             pspapp::TextId::settings_theme, pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
-            pspapp::TextId::settings_me_backend,
-            pspapp::TextId::settings_confirm_button,
+            pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_log_level,
             pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
@@ -792,9 +794,11 @@ void drawUtility(const pspapp::App& app) {
             pspapp::text(pspapp::TextId::value_manage, locale),
             pspapp::text(pspapp::TextId::value_view, locale),
             pspapp::text(pspapp::TextId::value_view, locale)};
-        for (size_t i = 0; i < static_cast<size_t>(pspapp::SettingItem::Count); ++i) {
-            const int y = 44 + static_cast<int>(i) * 15;
-            if (app.settingSelection() == i) fillRect(33, y + 3, 2, 14, kPink);
+        const size_t end = std::min(static_cast<size_t>(pspapp::SettingItem::Count),
+                                    app.settingsScroll() + pspapp::settingsVisibleRows);
+        for (size_t i = app.settingsScroll(); i < end; ++i) {
+            const int y = 49 + static_cast<int>(i - app.settingsScroll()) * 18;
+            if (app.settingSelection() == i) fillRect(33, y + 2, 2, 13, kPink);
             drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
             drawText(300, y, 0.7f, app.settingSelection() == i ? kPink : kTextDim, values[i], 168);
         }

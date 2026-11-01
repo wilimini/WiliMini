@@ -58,6 +58,7 @@ public:
     int activeMeBackend() const { return activeMeBackend_; }
     void setActiveMeBackend(int backend) { activeMeBackend_ = backend; }
     size_t settingSelection() const { return navigation_.get<SettingsRoute>().selection; }
+    size_t settingsScroll() const { return navigation_.get<SettingsRoute>().scroll; }
     size_t licenseSelection() const { return navigation_.get<LicensesRoute>().selection; }
     const std::string& licenseText() const { return navigation_.get<LicenseTextRoute>().text; }
     int documentScroll() const { return navigation_.get<LicenseTextRoute>().scroll; }

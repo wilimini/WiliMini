@@ -1052,7 +1052,7 @@ static int range_wait(BiliRangeStream *stream, int64_t deadline, int64_t *size,
     if (!sized || transfer_cancel || stream->size <= 0 ||
         (unsigned long long)stream->size > STREAM_MAX_BYTES || stream->expected == 0) {
         if (transfer_cancel) stream->cancelled = 1;
-        snprintf(error, error_size, "range_wait media=%s reason=%s", stream->label,
+        snprintf(error, error_size, "range_wait media=%s reason=%.120s", stream->label,
                  transfer_cancel ? "cancelled" : stream->error[0] ? stream->error : "size_timeout");
         return -1;
     }
