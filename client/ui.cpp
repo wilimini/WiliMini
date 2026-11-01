@@ -924,7 +924,10 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
 // lowercase title with a pivot row, list rows with a small cover, a tinted selection that glides
 // between rows, and a flip-in transition whenever the page changes. Navigation and data stay in
 // App; this is drawing only.
-constexpr int kListTop = 66, kListBottom = 252, kListY0 = 70, kRowPitch = 36, kRowHeight = 34;
+constexpr int kListBottom = 252, kRowPitch = 36, kRowHeight = 34;
+// Top of the Metro list area; pages without a pivot row (such as an uploader's videos) start higher.
+struct ListBounds { int top = 66, y0 = 70; };
+ListBounds listBounds;
 const uint32_t kTilePalette[] = {color(0, 80, 239), color(216, 0, 115), color(96, 169, 23), color(250, 104, 0),
                                  color(0, 171, 169), color(162, 0, 37), color(106, 0, 255), color(100, 118, 135)};
 
@@ -978,11 +981,11 @@ void drawGlidingSelection(const float target[4]) {
     }
     drawSelection(static_cast<int>(pageFx.glide[0] + 0.5f), static_cast<int>(pageFx.glide[1] + 0.5f),
                   static_cast<int>(pageFx.glide[2] + 0.5f), static_cast<int>(pageFx.glide[3] + 0.5f),
-                  kListTop, kListBottom);
+                  listBounds.top, kListBottom);
 }
 
 void drawRow(int y, const TileItem& item, size_t index) {
-    const int top = std::max(y, kListTop), bottom = std::min(y + kRowHeight, kListBottom);
+    const int top = std::max(y, listBounds.top), bottom = std::min(y + kRowHeight, kListBottom);
     if (bottom <= top) return;
     drawCover(*item.bvid, 12, y + 2, 54, 30, false, top, bottom, kTilePalette[index % 8], false);
     drawText(74, y + 2, 0.7f, kText, *item.title, 388, false, top, bottom);
@@ -992,8 +995,8 @@ void drawRow(int y, const TileItem& item, size_t index) {
 // Draws `items` as list rows starting `topInset` pixels below the list origin.
 void drawRowList(const std::vector<TileItem>& items, int topInset, int scroll) {
     for (size_t i = 0; i < items.size(); ++i) {
-        const int y = kListY0 + topInset + static_cast<int>(i) * kRowPitch - scroll;
-        if (y >= kListBottom || y + kRowHeight <= kListTop) continue;
+        const int y = listBounds.y0 + topInset + static_cast<int>(i) * kRowPitch - scroll;
+        if (y >= kListBottom || y + kRowHeight <= listBounds.top) continue;
         drawRow(y, items[i], i);
     }
 }
@@ -1012,7 +1015,7 @@ void drawVideoGrid(const pspapp::App& app) {
     const int scroll = updateScroll(std::max(0.f, static_cast<float>((selected - 2) * kRowPitch)));
     drawRowList(items, 0, scroll);
     if (app.focusArea() == pspapp::FocusArea::Content) {
-        const float target[4] = {12.f, static_cast<float>(kListY0 + selected * kRowPitch - scroll), 456.f,
+        const float target[4] = {12.f, static_cast<float>(listBounds.y0 + selected * kRowPitch - scroll), 456.f,
                                  static_cast<float>(kRowHeight)};
         drawGlidingSelection(target);
     }
@@ -1026,11 +1029,11 @@ void drawMineTiles(const pspapp::App& app) {
     const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
 
     // Account row: accent square with a person icon, like a thumbnail.
-    const int ay = kListY0 - scroll;
-    if (ay + kRowHeight > kListTop) {
-        const int top = std::max(ay, kListTop), bottom = std::min(ay + kRowHeight, kListBottom);
+    const int ay = listBounds.y0 - scroll;
+    if (ay + kRowHeight > listBounds.top) {
+        const int top = std::max(ay, listBounds.top), bottom = std::min(ay + kRowHeight, kListBottom);
         fillRect(12, top, 54, bottom - top, kTilePalette[0]);
-        if (ay >= kListTop) drawLineIcon(IconUser, 12 + 16, ay + 6, 22, color(255, 255, 255));
+        if (ay >= listBounds.top) drawLineIcon(IconUser, 12 + 16, ay + 6, 22, color(255, 255, 255));
         drawText(74, ay + 2, 0.7f, kText,
                  signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
                  388, false, top, bottom);
@@ -1047,12 +1050,12 @@ void drawMineTiles(const pspapp::App& app) {
         items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author + " · " + formatDuration(entry.duration),
                          entry.duration});
     if (items.empty()) {
-        drawText(12, kListY0 + kRowPitch + 8, 0.7f, kText, "还没有本地记录", 440);
-        drawText(12, kListY0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
+        drawText(12, listBounds.y0 + kRowPitch + 8, 0.7f, kText, "还没有本地记录", 440);
+        drawText(12, listBounds.y0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
     }
     drawRowList(items, kRowPitch, scroll);
     if (app.focusArea() == FocusArea::Content) {
-        const float target[4] = {12.f, static_cast<float>(kListY0 + selection * kRowPitch - scroll), 456.f,
+        const float target[4] = {12.f, static_cast<float>(listBounds.y0 + selection * kRowPitch - scroll), 456.f,
                                  static_cast<float>(kRowHeight)};
         drawGlidingSelection(target);
     }
@@ -1173,10 +1176,10 @@ void drawMineGrid(const pspapp::App& app) {
 
 // One row of the Metro-style search page: coloured block (icon or rank), title, note.
 void drawInfoRow(int y, uint32_t block, int icon, const char* rank, const std::string& title, const std::string& note) {
-    const int top = std::max(y, kListTop), bottom = std::min(y + kRowHeight, kListBottom);
+    const int top = std::max(y, listBounds.top), bottom = std::min(y + kRowHeight, kListBottom);
     if (bottom <= top) return;
     fillRect(12, top, 54, bottom - top, block);
-    if (icon >= 0 && y >= kListTop && y + kRowHeight <= kListBottom)
+    if (icon >= 0 && y >= listBounds.top && y + kRowHeight <= kListBottom)
         drawLineIcon(icon, 12 + 16, y + 6, 22, color(255, 255, 255));
     if (rank) drawText(12, y + 8, 0.7f, color(255, 255, 255), rank, 54, true, top, bottom);
     drawText(74, y + (note.empty() ? 9 : 2), 0.7f, kText, title, 388, false, top, bottom);
@@ -1191,23 +1194,23 @@ void drawSearchMetro(const pspapp::App& app) {
     const int selection = static_cast<int>(app.selection());
     auto highlight = [&](int scroll, int inset) {
         if (!focus) return;
-        const float target[4] = {12.f, static_cast<float>(kListY0 + inset + selection * kRowPitch - scroll), 456.f,
+        const float target[4] = {12.f, static_cast<float>(listBounds.y0 + inset + selection * kRowPitch - scroll), 456.f,
                                  static_cast<float>(kRowHeight)};
         drawGlidingSelection(target);
     };
     if (app.searchView() == SearchView::History) {
         const auto& history = app.searchHistory();
-        drawText(12, kListY0 - 2, 0.42f, kTextDim, "最近搜索 · 仅保存在本机", 440);
+        drawText(12, listBounds.y0 - 2, 0.42f, kTextDim, "最近搜索 · 仅保存在本机", 440);
         constexpr int inset = 18;
         const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
         if (history.empty()) {
-            drawText(12, kListY0 + inset + 6, 0.7f, kText, "还没有搜索历史", 440);
-            drawText(12, kListY0 + inset + 30, 0.5f, kTextDim,
+            drawText(12, listBounds.y0 + inset + 6, 0.7f, kText, "还没有搜索历史", 440);
+            drawText(12, listBounds.y0 + inset + 30, 0.5f, kTextDim,
                      "□ 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 440);
             return;
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i)
-            drawInfoRow(kListY0 + inset + static_cast<int>(i) * kRowPitch - scroll, kTilePalette[3], IconClock, nullptr,
+            drawInfoRow(listBounds.y0 + inset + static_cast<int>(i) * kRowPitch - scroll, kTilePalette[3], IconClock, nullptr,
                         history[i], "");
         highlight(scroll, inset);
         return;
@@ -1220,31 +1223,98 @@ void drawSearchMetro(const pspapp::App& app) {
             if (!preview.empty()) preview += "  ·  ";
             preview += app.searchHistory()[i];
         }
-        drawInfoRow(kListY0 - scroll, kTilePalette[7], IconSearch, nullptr, "搜索视频", "按 " + confirm + " 输入关键词");
-        drawInfoRow(kListY0 + kRowPitch - scroll, kTilePalette[3], IconClock, nullptr, "历史",
+        drawInfoRow(listBounds.y0 - scroll, kTilePalette[7], IconSearch, nullptr, "搜索视频", "按 " + confirm + " 输入关键词");
+        drawInfoRow(listBounds.y0 + kRowPitch - scroll, kTilePalette[3], IconClock, nullptr, "历史",
                     preview.empty() ? "暂无记录 · " + confirm + " 查看" : preview);
         if (topics.empty()) {
-            const int y = kListY0 + 2 * kRowPitch - scroll;
-            drawText(12, y + 6, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 440, false, kListTop, kListBottom);
-            drawText(12, y + 28, 0.5f, kTextDim, "□ 仍可输入关键词搜索", 440, false, kListTop, kListBottom);
+            const int y = listBounds.y0 + 2 * kRowPitch - scroll;
+            drawText(12, y + 6, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 440, false, listBounds.top, kListBottom);
+            drawText(12, y + 28, 0.5f, kTextDim, "□ 仍可输入关键词搜索", 440, false, listBounds.top, kListBottom);
         }
         for (size_t i = 0; i < topics.size(); ++i) {
             char rank[16];
             std::snprintf(rank, sizeof(rank), "%02u", static_cast<unsigned>(i + 1));
-            drawInfoRow(kListY0 + static_cast<int>(i + 2) * kRowPitch - scroll, i < 3 ? kTilePalette[1] : kTilePalette[7],
+            drawInfoRow(listBounds.y0 + static_cast<int>(i + 2) * kRowPitch - scroll, i < 3 ? kTilePalette[1] : kTilePalette[7],
                         -1, rank, topics[i].title, "");
         }
         highlight(scroll, 0);
         return;
     }
     // Results with nothing to list: the keyword line plus the reason.
-    drawText(12, kListY0 - 2, 0.5f, app.searchError().empty() ? kTextDim : kPink,
+    drawText(12, listBounds.y0 - 2, 0.5f, app.searchError().empty() ? kTextDim : kPink,
              app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · △ 重试", 380);
-    drawText(12, kListY0 + 24, 0.7f, kText, app.busy() ? "正在搜索…" :
+    drawText(12, listBounds.y0 + 24, 0.7f, kText, app.busy() ? "正在搜索…" :
              app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 440);
-    drawWrapped(12, kListY0 + 50, 0.5f, kTextDim,
+    drawWrapped(12, listBounds.y0 + 50, 0.5f, kTextDim,
                 app.searchError().empty() ? "□ 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索"
                                           : app.searchError(), 440, 3, 16);
+}
+
+// ---- Video lists inside Browse pages (an uploader's videos, favourites, history, ...) ----------
+// These use the same row or tile design as the home and search lists of each style.
+std::string browseVideoMeta(const pspapp::BrowseItem& item) {
+    std::string meta = item.subtitle;
+    if (item.duration > 0) meta += (meta.empty() ? "" : "  ·  ") + formatDuration(item.duration);
+    return meta;
+}
+
+// Classic: cover on the left, two-line title, author and length, like the search results.
+void drawBrowseVideosClassic(const pspapp::App& app) {
+    const auto& page = app.browsePage();
+    drawText(12, 3, 0.9f, kText, page.title, 456);
+    fillRect(12, 26, 456, 1, kLine);
+    const size_t total = page.items.size() + (page.hasMore ? 1 : 0);
+    const size_t first = app.browseSelection() > 1 ? app.browseSelection() - 1 : 0;
+    for (size_t index = first; index < total; ++index) {
+        const int y = 35 + static_cast<int>(index - first) * 65;
+        if (y + 56 > 251) break;
+        const bool selected = index == app.browseSelection();
+        if (selected) fillRect(6, y + 2, 2, 52, kPink);
+        if (index == page.items.size()) {
+            drawText(12, y + 18, 0.7f, selected ? kPink : kText, "加载下一页", 456);
+            break;
+        }
+        const auto& item = page.items[index];
+        drawCover(item.bvid, 12, y, 100, 56);
+        drawWrapped(120, y, 0.7f, selected ? kPink : kText, item.title, 348, 2, 18);
+        drawText(120, y + 40, 0.5f, kTextDim, browseVideoMeta(item), 348);
+    }
+}
+
+std::vector<TileItem> browseTileItems(const pspapp::BrowsePage& page, const std::string& empty, const std::string& more) {
+    std::vector<TileItem> items;
+    items.reserve(page.items.size() + 1);
+    for (const auto& item : page.items) items.push_back({&item.bvid, &item.title, browseVideoMeta(item), item.duration});
+    if (page.hasMore) items.push_back({&empty, &more, "", 0});
+    return items;
+}
+
+// Tiles: the two-column cover grid of the home tab.
+void drawBrowseVideosTiles(const pspapp::App& app) {
+    const auto& page = app.browsePage();
+    drawText(12, 3, 0.9f, kText, page.title, 456);
+    fillRect(12, 26, 456, 1, kLine);
+    static const std::string none, more = "加载下一页";
+    const auto items = browseTileItems(page, none, more);
+    const int selected = static_cast<int>(app.browseSelection());
+    const int scroll = updateScroll(std::max(0.f, static_cast<float>(selected / 2 * kPitchY - 100)));
+    drawTileGrid(items, selected, 0, scroll);
+}
+
+// Metro: a title and the list rows of the home tabs.
+void drawBrowseVideosMetro(const pspapp::App& app) {
+    const auto& page = app.browsePage();
+    listBounds = {46, 50};
+    drawStatusBar();
+    drawTitleText(10, 5, kText, page.title, 400);
+    static const std::string none, more = "加载下一页";
+    const auto items = browseTileItems(page, none, more);
+    const int selected = static_cast<int>(app.browseSelection());
+    const int scroll = updateScroll(std::max(0.f, static_cast<float>((selected - 2) * kRowPitch)));
+    drawRowList(items, 0, scroll);
+    const float target[4] = {12.f, static_cast<float>(listBounds.y0 + selected * kRowPitch - scroll), 456.f,
+                             static_cast<float>(kRowHeight)};
+    drawGlidingSelection(target);
 }
 
 // Video detail as tiles: cover, title block, four action tiles and a strip of part tiles.
@@ -1892,6 +1962,12 @@ void drawBrowse(const pspapp::App& app) {
     if (!app.browseError() && !page.items.empty()) {
         if (pspapp::isPgcPosterPage(page.request.kind)) { drawPgcPosters(app); return; }
         if (page.request.kind == pspapp::BrowseKind::Season) { drawPgcEpisodes(app); return; }
+        if (pspapp::isVideoListPage(page)) {
+            if (app.preferences().metro()) drawBrowseVideosMetro(app);
+            else if (app.preferences().tileHome()) drawBrowseVideosTiles(app);
+            else drawBrowseVideosClassic(app);
+            return;
+        }
     }
     drawText(12, 3, 0.9f, kText, page.title, 456);
     fillRect(12, 26, 456, 1, kLine);
@@ -2118,6 +2194,7 @@ void ui_render(const pspapp::App& app) {
         pageFx.enterMs = nowMs;
     }
     const bool tile = app.preferences().tileHome();
+    listBounds = ListBounds{};
     if (app.screen() == pspapp::Screen::Browse && app.hasBrowse()) {
         drawBrowse(app);
     } else if (app.utilityPage()) {

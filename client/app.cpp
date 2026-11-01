@@ -1082,7 +1082,9 @@ void App::updateCoverQueue() {
                                 ? browseState().selection : root().selection;
     const bool posters = hasBrowse() &&
                          isPgcPosterPage(browseState().page.request.kind);
-    const bool grid = screen() == Screen::Home && root().tab != Tab::Search && !preferences_.metro();
+    const bool videoGrid = hasBrowse() && preferences_.homeStyle == HomeStyle::Tiles &&
+                           isVideoListPage(browseState().page);
+    const bool grid = (screen() == Screen::Home && root().tab != Tab::Search && !preferences_.metro()) || videoGrid;
     // Include the preceding row while the selected row scrolls into view.
     const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
                                                           : (selected > 2 ? selected - 2 : 0);
@@ -1125,6 +1127,11 @@ void App::updateCoverQueue() {
         for (size_t i = first; i < items.size() && i < first + (posters ? 4 : kPageSize); ++i) {
             const auto &item = items[i];
             if (item.picture.empty()) continue;
+            if (item.next.kind == BrowseKind::Video && !item.bvid.empty()) {
+                // Video rows share the home feed's cover files.
+                enqueue(item.bvid, normalizePicture(item.picture, true));
+                continue;
+            }
             auto url = normalizePicture(item.picture, false);
             const auto suffix = url.find('@');
             if (suffix != std::string::npos) url.resize(suffix);

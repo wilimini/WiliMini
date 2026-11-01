@@ -116,5 +116,8 @@ const char *browseTitle(BrowseKind kind);
 bool browseNeedsLogin(BrowseKind kind);
 void updateCommentVote(int &likes, int &action, bool like, bool undo);
 bool isPgcPosterPage(BrowseKind kind);
+// True when every item of the page is a video (uploader videos, favourites, history, ...), so the
+// page can be drawn like the home and search lists.
+bool isVideoListPage(const BrowsePage &page);
 std::string pgcCoverKey(const BrowseItem &item);
 } // namespace pspapp

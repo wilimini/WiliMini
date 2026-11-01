@@ -29,7 +29,7 @@ for locale in ('zh-Hans', 'en-US'):
     for key in TITLE_KEYS:
         codepoints.update(ord(c) for c in catalog[key])
 font = ImageFont.truetype(str(a.font), SIZE, layout_engine=ImageFont.Layout.BASIC)
-width, height = SIZE + 2, SIZE + 4
+width, height = SIZE + 2, SIZE + 10  # room for descenders at this size
 records, pixels = [], bytearray()
 for cp in sorted(codepoints):
     im = Image.new('L', (width, height))

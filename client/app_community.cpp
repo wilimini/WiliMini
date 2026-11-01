@@ -82,7 +82,10 @@ void App::browseMove(int dx, int dy) {
         return;
       }
   }
-  const int movement = isPgcPosterPage(frame.page.request.kind) ? dx + dy * 4 : dy;
+  const bool videoGrid =
+      preferences_.homeStyle == HomeStyle::Tiles && isVideoListPage(frame.page);
+  const int movement =
+      isPgcPosterPage(frame.page.request.kind) ? dx + dy * 4 : videoGrid ? dx + dy * 2 : dy;
   if (!movement)
     return;
   const size_t count = frame.page.items.size();
