@@ -282,14 +282,16 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     if (audio.error) return audio.error;
     if (quit_requested || !audio.produced) return -103;
 #if PSP_AUDIO_VERIFY
-    char pcm_path[192];
-    snprintf(pcm_path, sizeof(pcm_path), "%s/audio-first.pcm", run_path);
-    FILE *pcm = fopen(pcm_path, "wb");
-    if (!pcm) return -106;
-    size_t count = 8 * AUDIO_SAMPLES * 2;
-    size_t written = fwrite(audio.pcm, sizeof(int16_t), count, pcm);
-    fclose(pcm);
-    if (written != count) return -107;
+    if (run_path[0]) { /* empty when results are off */
+        char pcm_path[192];
+        snprintf(pcm_path, sizeof(pcm_path), "%s/audio-first.pcm", run_path);
+        FILE *pcm = fopen(pcm_path, "wb");
+        if (!pcm) return -106;
+        size_t count = 8 * AUDIO_SAMPLES * 2;
+        size_t written = fwrite(audio.pcm, sizeof(int16_t), count, pcm);
+        fclose(pcm);
+        if (written != count) return -107;
+    }
 #endif
     audio.epoch_us = playback_now_us() + 1000000;
 #if PSP_RGB_PACE

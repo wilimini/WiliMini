@@ -4,6 +4,7 @@
 // This entry is absent from normal client builds.
 int bilibiliBenchmark(FILE* configFile) {
     using nlohmann::json;
+    wili_log_set_files(1); // a benchmark exists to produce results/run-NNN, so always save them
     FILE* index = nullptr;
     int status = -1;
     try {

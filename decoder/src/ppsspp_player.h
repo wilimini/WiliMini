@@ -155,7 +155,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     ret = select_run_dir(run_path, sizeof(run_path));
     if (ret < 0) return ret;
     video_stage = PSP_VIDEO_STAGE_SOURCE;
-    printf("PLAYER backend=ppsspp-sceMpeg\n");
+    WLOG_I(WLC_PLAYER, "backend=ppsspp-sceMpeg");
     ret = source_open(&mux.format, SOURCE, video_io_source, &input);
     if (ret < 0) goto done;
     ret = avformat_find_stream_info(mux.format, NULL);

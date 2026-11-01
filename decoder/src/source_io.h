@@ -1,8 +1,9 @@
 #ifndef PSP_VIDEO_SOURCE_IO_H
 #define PSP_VIDEO_SOURCE_IO_H
+#include <wili_log.h>
 static void source_memory(const char *phase) {
     const struct mallinfo heap = mallinfo();
-    printf("MEM %s heap_used=%u system_free=%u system_max=%u\n", phase,
+    WLOG_I(WLC_MEM, "%s heap_used=%u system_free=%u system_max=%u", phase,
            (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
 }
 typedef struct {

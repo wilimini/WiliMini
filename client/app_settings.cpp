@@ -7,6 +7,7 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <pspiofilemgr.h>
+#include <wili_log.h>
 
 namespace pspapp {
 namespace {
@@ -33,6 +34,24 @@ bool coverEntry(const SceIoDirent& entry) {
 }
 } // namespace
 
+void applyLogPreferences(const Preferences& preferences) {
+    // Set the base level first so a channel override is not reset by it.
+    wili_log_set_files(preferences.saveLogFiles);
+    if (preferences.saveLogFiles) {
+        // Whole-session log, kept as wili.log and wili.log.1 (about 256 KiB each at most).
+        sceIoMkdir(CLIENT_PATH("/logs"), 0777);
+        wili_log_sink_start(WILI_LOG_SINK_SESSION, CLIENT_PATH("/logs/wili.log"), 0, 256 * 1024);
+    } else {
+        wili_log_sink_stop(WILI_LOG_SINK_SESSION);
+        wili_log_sink_stop(WILI_LOG_SINK_RUN);
+    }
+    wili_log_set_all(static_cast<WiliLogLevel>(preferences.logLevel));
+    if (!preferences.logChannels.empty()) wili_log_configure(preferences.logChannels.c_str());
+    WLOG_I(WLC_CLIENT, "log_level=%s channels=%s files=%s", logVerbosityCode(preferences.logLevel),
+           preferences.logChannels.empty() ? "-" : preferences.logChannels.c_str(),
+           preferences.saveLogFiles ? "on" : "off");
+}
+
 void App::openSettings() {
     if (busy()) return;
     navigation_.push<SettingsRoute>();
@@ -55,6 +74,12 @@ void App::changeSetting() {
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;
+        case SettingItem::LogLevel:
+            next.logLevel = next.logLevel == LogVerbosity::Error ? LogVerbosity::Warn
+                          : next.logLevel == LogVerbosity::Warn ? LogVerbosity::Info
+                          : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
+            break;
+        case SettingItem::LogFiles: next.saveLogFiles = !next.saveLogFiles; break;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
@@ -66,6 +91,8 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
+    const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
+    if (changed == SettingItem::LogLevel || changed == SettingItem::LogFiles) applyLogPreferences(preferences_);
     const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)

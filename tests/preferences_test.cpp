@@ -39,6 +39,40 @@ int main(int argc, char** argv) {
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"me_backend":1})";
     assert(!pspapp::loadPreferences(path, value));
+    // Files saved before the log settings existed keep the normal level and no overrides.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value));
+    assert(value.logLevel == pspapp::LogVerbosity::Info && value.logChannels.empty());
+    for (auto level : {pspapp::LogVerbosity::Error, pspapp::LogVerbosity::Warn,
+                       pspapp::LogVerbosity::Info, pspapp::LogVerbosity::Debug}) {
+        value.logLevel = level;
+        value.logChannels = "net=debug, player=warn";
+        assert(pspapp::savePreferences(path, value));
+        pspapp::Preferences restored;
+        assert(pspapp::loadPreferences(path, restored));
+        assert(restored.logLevel == level && restored.logChannels == "net=debug, player=warn");
+    }
+    // Log files are off by default, round-trip when on, and must be a real boolean.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && !value.saveLogFiles);
+    value.saveLogFiles = true;
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences filesRestored;
+    assert(pspapp::loadPreferences(path, filesRestored) && filesRestored.saveLogFiles);
+    value.saveLogFiles = false;
+    assert(pspapp::savePreferences(path, value));
+    assert(pspapp::loadPreferences(path, filesRestored) && !filesRestored.saveLogFiles);
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_files":"yes"})";
+    assert(!pspapp::loadPreferences(path, value));
+    // Channel overrides are plain words only; quotes, long text and unknown levels are rejected.
+    value.logChannels = "net=\"me_backend\"";
+    assert(!pspapp::savePreferences(path, value));
+    value.logChannels = std::string(97, 'a');
+    assert(!pspapp::savePreferences(path, value));
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_level":"loud"})";
+    assert(!pspapp::loadPreferences(path, value));
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_channels":"a;b"})";
+    assert(!pspapp::loadPreferences(path, value));
     std::remove(path);
-    std::puts("Preference migration, round trips and invalid buffers: passed");
+    std::puts("Preference migration, round trips, invalid buffers and log settings: passed");
 }

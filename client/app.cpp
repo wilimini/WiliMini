@@ -327,6 +327,7 @@ int App::workerEntry(SceSize, void*) {
 
 void App::init() {
     const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
+    applyLogPreferences(preferences_);
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
     history_ = loadLocal(CLIENT_PATH("/history.json"));
     later_ = loadLocal(CLIENT_PATH("/later.json"));

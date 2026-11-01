@@ -10,6 +10,7 @@
 #include "storage_paths.h"
 #include <psp_device.h>
 #include <psp_runtime.h>
+#include <wili_log.h>
 #include "me_backend_select.h"
 PSP_MODULE_INFO("WiliMini loader",PSP_MODULE_USER,0,1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
@@ -63,18 +64,18 @@ int main(int argc,char **argv){
         int backend=saved_me_backend(root);
         r=start_bridge(root,backend);
         if(r<0 && backend!=WILI_ME_BACKEND_MIST){
-            printf("LOADER me_backend=%s failed=0x%08x; falling back to mist\n",wili_me_backend_name(backend),r);
+            WLOG_W(WLC_LOADER,"me_backend=%s failed=0x%08x; falling back to mist",wili_me_backend_name(backend),r);
             backend=WILI_ME_BACKEND_MIST;
             r=start_bridge(root,backend);
         }
         if(r<0)goto failed;
-        printf("LOADER me_backend=%s\n",wili_me_backend_name(backend));
+        WLOG_I(WLC_LOADER,"me_backend=%s",wili_me_backend_name(backend));
     }
-    printf("LOADER player=%s\n",sce_mpeg?"ppsspp-sceMpeg":"psp-me");
+    WLOG_I(WLC_LOADER,"player=%s",sce_mpeg?"ppsspp-sceMpeg":"psp-me");
     const PspDeviceInfo device=psp_device_query();
     const int extended=psp_device_use_extended_client(device);
     snprintf(path,sizeof(path),"%s/%s",root,extended?"wili_mini.prx":"wili_mini_1000.prx");
-    printf("LOADER model=%d max_free=%u profile=%s root=%s\n",
+    WLOG_I(WLC_LOADER,"model=%d max_free=%u profile=%s root=%s",
            device.model,device.max_free_memory,extended?"extended":"psp1000",root);
     r=start(path);if(r<0)goto failed;
     sceKernelExitDeleteThread(0);return 0;
