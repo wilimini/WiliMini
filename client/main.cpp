@@ -35,6 +35,9 @@ const char *client_storage_device = nullptr;
 namespace {
 
 volatile int exiting = 0;
+// Set while psp_video_play owns the main thread. Its cleanup can wait on a
+// stalled decoder/audio/ME worker, so a cooperative HOME exit would never run.
+volatile int playbackActive = 0;
 
 void logMemory(const char* phase) {
     const auto heap = mallinfo();
@@ -47,6 +50,10 @@ int exitCallback(int, int, void*) {
     exiting = 1;
     transfer_cancel = 1;
     psp_video_stop();
+    // This callback runs on its own thread and survives a hung playback. Exit
+    // directly: the Media Engine restore in meLabShutdown is skipped (see
+    // docs/playback-controls.md); reboot if the next playback fails.
+    if (playbackActive) sceKernelExitGame();
     return 0;
 }
 
@@ -203,7 +210,9 @@ int main(int argc, char** argv) {
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
             options.settings = &settings;
             PspVideoResult result{};
+            playbackActive = 1;
             const int error = psp_video_play(&options, &result);
+            playbackActive = 0;
             logMemory("after_playback");
             ui_resume();
             osd.reset();
