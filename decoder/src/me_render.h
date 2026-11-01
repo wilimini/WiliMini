@@ -16,10 +16,10 @@ static uint64_t me_warmup_presented_us, me_last_presented_us;
 #endif
 static MeJob me_job;
 #if PSP_AUDIO && PSP_RGB_PACE
-static uint16_t *me_output;
+static void *me_output;
 static int64_t me_rgb_pts;
 #else
-static uint16_t me_output[512 * 272] __attribute__((aligned(64)));
+static uint32_t me_output[512 * 272] __attribute__((aligned(64)));
 #endif
 static AVFrame *me_frame;
 static int me_pending;
@@ -39,20 +39,24 @@ static int me_render_finish(void)
     }
     if (!PSP_ME_RENDER_QUEUE && !me_completed) playback_diagnostic("me_first_task_completed", ret);
 #if !PSP_ME_CACHE || !PSP_ME_DMA
-    sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint16_t));
+    sceKernelDcacheInvalidateRange(me_output, 512 * 272 * rgb_pixel_bytes);
 #endif
 #if PSP_AUDIO && PSP_RGB_PACE
     rgb_publish(me_rgb_pts);
 #else
-    uint16_t *dst = (void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u);
+    uint8_t *dst = (void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u);
 #if PSP_PTS_PACE
     wait_presentation(me_presentation_deadline);
 #endif
 #if PSP_ME_DMA
-    ret = sceDmacMemcpy(dst + 512, me_output + 512, 512 * 270 * 2);
+    ret = sceDmacMemcpy(dst + 512 * rgb_pixel_bytes,
+                        (uint8_t *)me_output + 512 * rgb_pixel_bytes,
+                        512 * 270 * rgb_pixel_bytes);
     if (ret < 0) return ret;
 #else
-    memcpy(dst + 512, me_output + 512, 512 * 270 * 2);
+    memcpy(dst + 512 * rgb_pixel_bytes,
+           (uint8_t *)me_output + 512 * rgb_pixel_bytes,
+           512 * 270 * rgb_pixel_bytes);
 #endif
 #if PSP_PTS_PACE
     uint64_t presented = sceKernelGetSystemTimeWide();
@@ -105,7 +109,7 @@ static int me_render_submit(const AVFrame *frame)
 #if PSP_AUDIO && PSP_RGB_PACE
     int slot = rgb_acquire();
     if (slot < 0) return slot;
-    me_output = rgb_pixels[slot];
+    me_output = rgb_slot_pixels((unsigned)slot);
 #if PSP_ME_RENDER_QUEUE
     me_rgb_pts = queue_worker_pts;
 #else
@@ -146,6 +150,7 @@ static int me_render_submit(const AVFrame *frame)
     sceKernelDcacheWritebackAll();
 #endif
     me_job.output = me_output;
+    me_job.output_format = (uint32_t)output_pixel_format;
     if (!PSP_ME_RENDER_QUEUE && !me_submitted) playback_diagnostic("me_first_submit_begin", 0);
     ret = meLabSubmit(&me_job);
     if (!PSP_ME_RENDER_QUEUE && (!me_submitted || ret < 0)) playback_diagnostic("me_submit_end", ret);

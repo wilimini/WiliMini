@@ -14,6 +14,8 @@ int main(int argc, char** argv) {
     std::ofstream(path) << R"({"version":1,"dark_theme":true,"body_size":16,"show_covers":false,"slow_repeat":true})";
     assert(pspapp::loadPreferences(path, value));
     assert(value.playbackBufferFrames == defaultFrames && value.darkTheme && value.bodySize == 16);
+    assert(value.playbackPixelFormat == pspapp::PlaybackPixelFormat::Auto);
+    assert(pspapp::playbackUsesRgb565(value.playbackPixelFormat) == (defaultFrames == 2));
     // Files saved before the ME backend setting existed use the Custom Core default.
     assert(value.meBackend == pspapp::MeBackend::CustomCore);
     for (auto backend : {pspapp::MeBackend::Mist, pspapp::MeBackend::CustomCore}) {
@@ -29,6 +31,17 @@ int main(int argc, char** argv) {
         assert(pspapp::loadPreferences(path, restored));
         assert(restored.playbackBufferFrames == frames && restored.darkTheme);
     }
+    for (auto format : {pspapp::PlaybackPixelFormat::Auto,
+                        pspapp::PlaybackPixelFormat::Rgb565,
+                        pspapp::PlaybackPixelFormat::Rgba8888}) {
+        value.playbackPixelFormat = format;
+        assert(pspapp::savePreferences(path, value));
+        pspapp::Preferences restored;
+        assert(pspapp::loadPreferences(path, restored));
+        assert(restored.playbackPixelFormat == format);
+    }
+    value.playbackPixelFormat = static_cast<pspapp::PlaybackPixelFormat>(3);
+    assert(!pspapp::savePreferences(path, value));
     value.playbackBufferFrames = 3;
     assert(!pspapp::savePreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"playback_buffer_frames":3})";
@@ -36,6 +49,8 @@ int main(int argc, char** argv) {
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"playback_buffer_frames":"8"})";
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"me_backend":"unknown"})";
+    assert(!pspapp::loadPreferences(path, value));
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"playback_pixel_format":"unknown"})";
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"me_backend":1})";
     assert(!pspapp::loadPreferences(path, value));

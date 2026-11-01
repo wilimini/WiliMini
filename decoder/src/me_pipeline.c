@@ -87,7 +87,7 @@ unsigned me_pipeline_failure_mb, me_pipeline_failure_pixel, me_pipeline_failure_
 unsigned me_pipeline_filters, me_pipeline_filter_rows;
 unsigned me_pipeline_trace[4];
 static YuvRgbTables tables __attribute__((aligned(64)));
-static uint16_t rgba[512 * 272] __attribute__((aligned(64)));
+static uint32_t rgba[512 * 272] __attribute__((aligned(64)));
 static AVFrame *render_frame;
 static unsigned render_sequence;
 unsigned me_decode_render_submitted, me_decode_render_completed;
@@ -244,12 +244,15 @@ int __attribute__((noinline)) me_worker(int index, void *param)
             for (unsigned p = 0; p < 3; ++p)
                 planes[p] = (void *)((unsigned)batch->planes[p] | 0x80000000u);
             const YuvRgbTables *t = (void *)((unsigned)&tables | 0x80000000u);
-            uint16_t *out = (void *)((unsigned)rgba | 0x80000000u);
+            void *out = (void *)((unsigned)rgba | 0x80000000u);
             meCoreDcacheInvalidateRange((void *)t, sizeof(tables));
             for (unsigned p = 0; p < 3; ++p)
                 meCoreDcacheInvalidateRange((void *)planes[p], batch->stride[p] * (p ? 180 : 360));
-            full_render_planes(planes, batch->stride, out, t);
-            meCoreDcacheWritebackRange(out, sizeof(rgba));
+            if (j->output_format == 0)
+                full_render_planes_565(planes, batch->stride, out, t);
+            else
+                full_render_planes_8888(planes, batch->stride, out, t);
+            meCoreDcacheWritebackRange(out, 512 * 272 * (j->output_format == 0 ? 2 : 4));
         } else if (batch->operation == 3) {
             meCoreDcacheInvalidateRange(batch->filters, cache_span(batch->count * sizeof(Filter)));
             for (unsigned i = 0; i < batch->count; ++i) {
@@ -734,8 +737,10 @@ int me_decode_render_finish(void)
 {
     if (!render_frame) return 0;
     if (wait_sequence(render_sequence) < 0) return me_decode_error;
-    uint16_t *dst = (void *)((unsigned)sceGeEdramGetAddr() | 0x40000000u);
-    int ret = sceDmacMemcpy(dst + 512, rgba + 512, 512 * 270 * 2);
+    uint8_t *dst = (void *)((unsigned)sceGeEdramGetAddr() | 0x40000000u);
+    int ret = sceDmacMemcpy(dst + 512 * rgb_pixel_bytes,
+                            (uint8_t *)rgba + 512 * rgb_pixel_bytes,
+                            512 * 270 * rgb_pixel_bytes);
     if (ret < 0) return ret;
     av_frame_free(&render_frame);
     ++me_decode_render_completed;

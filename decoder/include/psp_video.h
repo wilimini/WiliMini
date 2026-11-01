@@ -13,6 +13,10 @@ typedef enum {
     PSP_VIDEO_CANCEL_CIRCLE = 0,
     PSP_VIDEO_CANCEL_CROSS = 1
 } PspVideoCancelButton;
+typedef enum {
+    PSP_VIDEO_PIXEL_FORMAT_RGB565 = 0,
+    PSP_VIDEO_PIXEL_FORMAT_RGBA8888 = 1
+} PspVideoPixelFormat;
 typedef struct {
     void *opaque;
     int64_t size; /* -1 denotes a live, non-seekable source. */
@@ -45,7 +49,8 @@ typedef struct {
      * frame. NULL pixels means redraw the last clean frame (pause/OSD).
      * Copy pixels before returning; never retain a queue slot. This callback
      * owns DMA, GE completion and scanout switching. No network or disk I/O. */
-    int (*present)(void *opaque, const uint16_t *pixels, const PspVideoStatus *status);
+    int (*present)(void *opaque, const void *pixels, PspVideoPixelFormat format,
+                   const PspVideoStatus *status);
     void (*update_settings)(void *opaque, PspVideoSettings *settings);
 } PspVideoPresenter;
 typedef struct {
@@ -58,6 +63,7 @@ typedef struct {
     const PspVideoSource *audio_source;
     int64_t start_ms; /* VOD resume position; live sources must start at zero. */
     int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
+    PspVideoPixelFormat rgb_pixel_format; /* RGB565 or RGBA8888; zero defaults to RGB565. */
     PspVideoBackend backend;
     PspVideoCancelButton cancel_button; /* 0 keeps Circle as the default. */
     int diagnostic_profile; /* Nonzero enables sampled H.264 timings; adds overhead. */

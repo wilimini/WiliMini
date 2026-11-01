@@ -35,7 +35,8 @@ typedef struct __attribute__((aligned(64))) {
     const uint8_t *planes[3];
     int plane_stride[3];
     const YuvRgbTables *tables;
-    uint16_t *rgba;
+    void *rgba;
+    uint32_t output_format;
     unsigned destination_offset, padding[2];
     unsigned offsets[16], nonzero[16];
     int16_t coefficients[256] __attribute__((aligned(64)));
@@ -61,7 +62,7 @@ static unsigned edge_begin, edge_end;
 static unsigned decode_ready;
 #if PSP_ME_DECODE_RENDER
 static YuvRgbTables render_tables __attribute__((aligned(64)));
-static uint16_t render_output[512 * 272] __attribute__((aligned(64)));
+static uint32_t render_output[512 * 272] __attribute__((aligned(64)));
 static AVFrame *render_frame;
 static unsigned render_sequence;
 unsigned me_decode_render_submitted, me_decode_render_completed;
@@ -159,10 +160,13 @@ int __attribute__((noinline)) me_worker(int index, void *param)
                 meCoreDcacheInvalidateRange((void *)planes[plane], p->plane_stride[plane] * (plane ? 180 : 360));
             }
             const YuvRgbTables *tables = (void *)((unsigned)p->tables | 0x80000000u);
-            uint16_t *out = (void *)((unsigned)p->rgba | 0x80000000u);
+            void *out = (void *)((unsigned)p->rgba | 0x80000000u);
             meCoreDcacheInvalidateRange((void *)tables, sizeof(*tables));
-            full_render_planes(planes, p->plane_stride, out, tables);
-            meCoreDcacheWritebackRange(out, sizeof(render_output));
+            if (p->output_format == 0)
+                full_render_planes_565(planes, p->plane_stride, out, tables);
+            else
+                full_render_planes_8888(planes, p->plane_stride, out, tables);
+            meCoreDcacheWritebackRange(out, 512 * 272 * (p->output_format == 0 ? 2 : 4));
         }
 #endif
         else {
@@ -472,8 +476,10 @@ int me_decode_render_finish(void)
         if (sceKernelGetSystemTimeLow() - begin > 500000) return -205;
         sceKernelDelayThread(10);
     }
-    uint16_t *dst = (void *)((unsigned)sceGeEdramGetAddr() | 0x40000000u);
-    int ret = sceDmacMemcpy(dst + 512, render_output + 512, 512 * 270 * 2);
+    uint8_t *dst = (void *)((unsigned)sceGeEdramGetAddr() | 0x40000000u);
+    int ret = sceDmacMemcpy(dst + 512 * rgb_pixel_bytes,
+                            (uint8_t *)render_output + 512 * rgb_pixel_bytes,
+                            512 * 270 * rgb_pixel_bytes);
     if (ret < 0) return ret;
     av_frame_free(&render_frame);
     ++me_decode_render_completed;
@@ -493,6 +499,7 @@ int me_decode_render(const AVFrame *frame)
     p->operation = 4;
     p->tables = &render_tables;
     p->rgba = render_output;
+    p->output_format = (uint32_t)output_pixel_format;
     for (unsigned plane = 0; plane < 3; ++plane) {
         p->planes[plane] = frame->data[plane];
         p->plane_stride[plane] = frame->linesize[plane];

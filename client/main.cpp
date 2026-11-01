@@ -187,6 +187,8 @@ int main(int argc, char** argv) {
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
             options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
+            options.rgb_pixel_format = pspapp::playbackUsesRgb565(app.preferences().playbackPixelFormat)
+                ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
             options.cancel_button = app.preferences().confirmWithCircle
                 ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
             options.backend = BILI_PPSSPP_SCE_MPEG &&

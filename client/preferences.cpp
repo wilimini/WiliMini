@@ -5,6 +5,11 @@
 #include <nlohmann/json.hpp>
 
 namespace pspapp {
+bool playbackUsesRgb565(PlaybackPixelFormat format) {
+    return format == PlaybackPixelFormat::Rgb565 ||
+           (format == PlaybackPixelFormat::Auto && defaultPlaybackRgb565());
+}
+
 const char* meBackendCode(MeBackend backend) {
     return backend == MeBackend::CustomCore ? "custom-core" : "mist";
 }
@@ -55,6 +60,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
+        const std::string pixelFormat = root.value("playback_pixel_format", std::string("auto"));
+        if (pixelFormat == "auto") loaded.playbackPixelFormat = PlaybackPixelFormat::Auto;
+        else if (pixelFormat == "rgb565") loaded.playbackPixelFormat = PlaybackPixelFormat::Rgb565;
+        else if (pixelFormat == "rgba8888") loaded.playbackPixelFormat = PlaybackPixelFormat::Rgba8888;
+        else return false;
         const std::string meBackend = root.value("me_backend", std::string("custom-core"));
         if (meBackend == "mist") loaded.meBackend = MeBackend::Mist;
         else if (meBackend == "custom-core") loaded.meBackend = MeBackend::CustomCore;
@@ -98,12 +108,17 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     if (preferences.bodySize != 14 && preferences.bodySize != 16) return false;
     if (preferences.playbackBufferFrames != 2 && preferences.playbackBufferFrames != 4 &&
         preferences.playbackBufferFrames != 8) return false;
+    if (preferences.playbackPixelFormat != PlaybackPixelFormat::Auto &&
+        preferences.playbackPixelFormat != PlaybackPixelFormat::Rgb565 &&
+        preferences.playbackPixelFormat != PlaybackPixelFormat::Rgba8888) return false;
     if (preferences.locale != Locale::ZhHans && preferences.locale != Locale::EnUs) return false;
     if (!validLogChannels(preferences.logChannels)) return false;
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
+        {"playback_pixel_format", preferences.playbackPixelFormat == PlaybackPixelFormat::Auto ? "auto" :
+             preferences.playbackPixelFormat == PlaybackPixelFormat::Rgb565 ? "rgb565" : "rgba8888"},
         {"me_backend", meBackendCode(preferences.meBackend)},
         {"confirm_with_circle", preferences.confirmWithCircle},
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},

@@ -318,7 +318,7 @@ static void audio_close(int drain)
             if (!playback_is_paused()) active_wait += 100000;
             if (active_wait >= 10000000) { audio.error = -104; break; }
             // Native presentation has joined before final audio draining.
-            if (presenter) present_video(NULL);
+            if (presenter) present_video(NULL, output_pixel_format);
         }
     }
     audio.stop = 1;
