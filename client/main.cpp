@@ -38,6 +38,7 @@ volatile int exiting = 0;
 // Set while psp_video_play owns the main thread. Its cleanup can wait on a
 // stalled decoder/audio/ME worker, so a cooperative HOME exit would never run.
 volatile int playbackActive = 0;
+constexpr uint64_t kForcedExitWaitUs = 5000000;  // unmeasured first guess
 
 void logMemory(const char* phase) {
     const auto heap = mallinfo();
@@ -50,10 +51,21 @@ int exitCallback(int, int, void*) {
     exiting = 1;
     transfer_cancel = 1;
     psp_video_stop();
-    // This callback runs on its own thread and survives a hung playback. Exit
-    // directly: the Media Engine restore in meLabShutdown is skipped (see
-    // docs/playback-controls.md); reboot if the next playback fails.
-    if (playbackActive) sceKernelExitGame();
+    if (!playbackActive) return 0;
+    // This callback runs on its own thread and survives a hung playback. Give
+    // the cooperative teardown (which restores the Media Engine) a chance to
+    // finish, then force the exit. The limit is unmeasured; see the log line
+    // and docs/playback-controls.md.
+    const uint64_t begin = sceKernelGetSystemTimeWide();
+    while (playbackActive && sceKernelGetSystemTimeWide() - begin < kForcedExitWaitUs)
+        sceKernelDelayThread(10000);
+    const unsigned waitedMs = static_cast<unsigned>((sceKernelGetSystemTimeWide() - begin) / 1000);
+    if (!playbackActive) {
+        WLOG_I(WLC_CLIENT, "home_exit playback_teardown_ms=%u", waitedMs);
+        return 0;
+    }
+    WLOG_E(WLC_CLIENT, "home_exit forced after %u ms; playback teardown did not finish", waitedMs);
+    sceKernelExitGame();
     return 0;
 }
 
