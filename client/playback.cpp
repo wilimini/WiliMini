@@ -96,7 +96,8 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
     bilibili::VideoUrlResult result;
     try { result = response.value.data.get<bilibili::VideoUrlResult>(); }
     catch (...) {
-        if (typedError) *typedError = {ErrorDomain::Api, ErrorKind::InvalidResponse, ErrorOperation::PreparePlayback};
+        if (typedError) *typedError = {ErrorDomain::Api, ErrorKind::InvalidResponse,
+                                       ErrorOperation::PreparePlayback, 0, 0, "playurl_parse_failed"};
         error = "播放地址响应无法识别"; return -1;
     }
     {
@@ -114,7 +115,7 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
                          videoMedia->id, videoMedia->codecid, audioMedia->id);
 #endif
             const int rangeResult = bili_prepare_range_playback(&video, &videoUrl, &audioUrl, &playback);
-            liveLog("range result=%d error=%s", rangeResult, network_error);
+            liveLog("range result=%d", rangeResult);
             if (rangeResult == 0) {
                 if (!transfer_cancel) { fillQuality(playback, result, videoMedia->id); return 0; }
                 bili_finish_playback(&playback);
@@ -128,9 +129,11 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
         error = "Cancelled";
         return -1;
     }
-    if (network_error[0]) error = network_error;
+    if (network_error[0]) error = "视频源请求失败";
     else error = "没有可播放的 H.264 / AAC DASH 视频流";
-    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown, ErrorOperation::PreparePlayback, -1, 0, network_error[0] ? "video_source" : "dash_unavailable"};
+    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown,
+                                   ErrorOperation::PreparePlayback, -1, 0,
+                                   network_error[0] ? network_error : "dash_unavailable"};
 
     return -1;
 }
@@ -155,7 +158,9 @@ int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlaybac
         }
         error = network_error[0] ? network_error : "没有可播放的 H.264 / AAC 视频流";
     } catch (const std::exception&) { error = "服务器响应无法识别"; }
-    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown, ErrorOperation::PreparePlayback, -1, 0, network_error[0] ? "video_source" : "dash_unavailable"};
+    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown,
+                                   ErrorOperation::PreparePlayback, -1, 0,
+                                   network_error[0] ? network_error : "dash_unavailable"};
     return -1;
 }
 

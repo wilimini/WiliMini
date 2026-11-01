@@ -856,9 +856,10 @@ static int range_download_thread(SceSize args, void *argp) {
                          (code == CURLE_OK || status == 416);
             if (!successful && !moved && !transfer_cancel && !stream->cancelled &&
                 code != CURLE_WRITE_ERROR) {
-                if (status) snprintf(stream->error, sizeof(stream->error), "%s HTTP %ld", stream->label, status);
-                else snprintf(stream->error, sizeof(stream->error), "%s: %s", stream->label,
-                              curl_error[0] ? curl_error : curl_easy_strerror(code));
+                snprintf(stream->error, sizeof(stream->error),
+                         "range_download media=%s source=%d/%d curl=%d http=%ld offset=%u",
+                         stream->label, url_index + 1, stream->url_count, (int)code, status, start);
+                WLOG_E(WLC_NET, "%s", stream->error);
             }
             sceKernelSignalSema(stream->lock, 1);
             if (!successful && !moved) {
@@ -985,14 +986,14 @@ static void range_destroy(BiliRangeStream *stream) {
  * learns the media size in the background; range_wait() collects the result. */
 static int range_start(const BiliMediaUrl *media, const char *label,
                        BiliRangeStream **out, char *error, size_t error_size) {
-    if (!media || !media->url || !out) return -1;
+    if (!media || !media->url || !out) { snprintf(error, error_size, "range_start_invalid_args"); return -1; }
     if (transfer_cancel) {
-        snprintf(error, error_size, "Cancelled");
+        snprintf(error, error_size, "range_start_cancelled");
         return -1;
     }
     BiliRangeStream *stream = calloc(1, sizeof(*stream));
     if (!stream) {
-        snprintf(error, error_size, "Cannot allocate media stream");
+        snprintf(error, error_size, "range_start_alloc_stream");
         return -1;
     }
     snprintf(stream->label, sizeof(stream->label), "%s", label ? label : "media");
@@ -1000,7 +1001,7 @@ static int range_start(const BiliMediaUrl *media, const char *label,
     stream->capacity = BILI_RANGE_CACHE_BYTES;
     stream->ring = malloc(stream->capacity);
     if (!stream->ring) {
-        snprintf(error, error_size, "Cannot allocate media buffer");
+        snprintf(error, error_size, "range_start_alloc_buffer");
         goto fail;
     }
     stream->url_count = 1 + (media->backup_count > 0 ? media->backup_count : 0);
@@ -1013,19 +1014,19 @@ static int range_start(const BiliMediaUrl *media, const char *label,
     stream->space = sceKernelCreateSema("bili_range_space", 0, 1, 1, NULL);
     stream->sized = sceKernelCreateSema("bili_range_size", 0, 0, 1, NULL);
     if (stream->lock < 0 || stream->wake < 0 || stream->space < 0 || stream->sized < 0) {
-        snprintf(error, error_size, "Cannot create media synchronization");
+        snprintf(error, error_size, "range_start_create_sync");
         goto fail;
     }
     stream->thread = sceKernelCreateThread("bili_range", range_download_thread, 0x28,
                                             BILI_RANGE_THREAD_STACK, PSP_THREAD_ATTR_USER, NULL);
     if (stream->thread < 0) {
-        snprintf(error, error_size, "Cannot create media thread");
+        snprintf(error, error_size, "range_start_create_thread code=%d", stream->thread);
         goto fail;
     }
     if (sceKernelStartThread(stream->thread, sizeof(stream), &stream) < 0) {
         sceKernelDeleteThread(stream->thread);
         stream->thread = -1;
-        snprintf(error, error_size, "Cannot start media thread");
+        snprintf(error, error_size, "range_start_thread_start_failed");
         goto fail;
     }
     *out = stream;
@@ -1051,8 +1052,8 @@ static int range_wait(BiliRangeStream *stream, int64_t deadline, int64_t *size,
     if (!sized || transfer_cancel || stream->size <= 0 ||
         (unsigned long long)stream->size > STREAM_MAX_BYTES || stream->expected == 0) {
         if (transfer_cancel) stream->cancelled = 1;
-        snprintf(error, error_size, "%s", transfer_cancel ? "Cancelled" :
-                 stream->error[0] ? stream->error : "Media size timeout");
+        snprintf(error, error_size, "range_wait media=%s reason=%s", stream->label,
+                 transfer_cancel ? "cancelled" : stream->error[0] ? stream->error : "size_timeout");
         return -1;
     }
     stream->source = (PspVideoSource){stream, stream->size, range_read_at, range_cancel, NULL, range_interrupt_reads};

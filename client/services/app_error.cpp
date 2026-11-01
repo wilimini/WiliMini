@@ -3,6 +3,16 @@
 #include <wili_log.h>
 
 namespace pspapp {
+static const char *safeDetail(const std::string &detail) {
+    if (detail.empty()) return "none";
+    if (detail.size() > 120) return "redacted";
+    for (unsigned char c : detail) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' ||
+              c == '=' || c == '.' || c == ' ')) return "redacted";
+    }
+    return detail.c_str();
+}
 const char *operationName(ErrorOperation op) {
     switch (op) {
     case ErrorOperation::ConnectWifi:
@@ -119,14 +129,14 @@ bool mayRetry(const AppError &e) {
 void logError(const std::string &path, const AppError &e) {
     if (!e || e.cancelled())
         return;
-    // Typed fields only, as in the file below: no URLs, cookies or response bodies.
-    WLOG_E(WLC_CLIENT, "error operation=%s domain=%d kind=%d raw_code=%d http_status=%d",
-           operationName(e.operation), int(e.domain), int(e.kind), e.rawCode, e.httpStatus);
+    const char *detail = safeDetail(e.detail);
+    WLOG_E(WLC_CLIENT, "error operation=%s domain=%d kind=%d raw_code=%d http_status=%d detail=%s",
+           operationName(e.operation), int(e.domain), int(e.kind), e.rawCode, e.httpStatus, detail);
     if (FILE *out = std::fopen(path.c_str(), "w")) {
         std::fprintf(out,
-                     "operation=%s\ndomain=%d\nkind=%d\nraw_code=%d\nhttp_status=%d\nmessage=%s\n",
+                     "operation=%s\ndomain=%d\nkind=%d\nraw_code=%d\nhttp_status=%d\ndetail=%s\nmessage=%s\n",
                      operationName(e.operation), int(e.domain), int(e.kind), e.rawCode,
-                     e.httpStatus, errorMessage(e).c_str());
+                     e.httpStatus, detail, errorMessage(e).c_str());
         // The newest log lines (including the error above) show what led up to it, but only
         // when log files are enabled in Settings.
         if (wili_log_files()) {

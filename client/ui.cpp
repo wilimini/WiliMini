@@ -784,10 +784,9 @@ void drawUtility(const pspapp::App& app) {
                 {{"button", preferences.confirmButton()}}),
             pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
                                                           : pspapp::TextId::value_language_en, locale),
-            pspapp::text(preferences.logLevel == pspapp::LogVerbosity::Error ? pspapp::TextId::value_log_error
-                         : preferences.logLevel == pspapp::LogVerbosity::Warn ? pspapp::TextId::value_log_warn
-                         : preferences.logLevel == pspapp::LogVerbosity::Debug ? pspapp::TextId::value_log_debug
-                                                                               : pspapp::TextId::value_log_info, locale),
+            preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
+                : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
+                : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
             pspapp::text(preferences.saveLogFiles ? pspapp::TextId::value_log_files_on : pspapp::TextId::value_off, locale),
             pspapp::text(pspapp::TextId::value_system_connect, locale),
             pspapp::text(pspapp::TextId::value_manage, locale),
