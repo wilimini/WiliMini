@@ -52,6 +52,18 @@ int main(int argc, char** argv) {
         assert(pspapp::loadPreferences(path, restored));
         assert(restored.logLevel == level && restored.logChannels == "net=debug, player=warn");
     }
+    // Log files are off by default, round-trip when on, and must be a real boolean.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && !value.saveLogFiles);
+    value.saveLogFiles = true;
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences filesRestored;
+    assert(pspapp::loadPreferences(path, filesRestored) && filesRestored.saveLogFiles);
+    value.saveLogFiles = false;
+    assert(pspapp::savePreferences(path, value));
+    assert(pspapp::loadPreferences(path, filesRestored) && !filesRestored.saveLogFiles);
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_files":"yes"})";
+    assert(!pspapp::loadPreferences(path, value));
     // Channel overrides are plain words only; quotes, long text and unknown levels are rejected.
     value.logChannels = "net=\"me_backend\"";
     assert(!pspapp::savePreferences(path, value));

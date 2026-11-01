@@ -1,6 +1,7 @@
 #pragma once
 
 // Diagnostic entry point used only by BILI_DEVICE_PLAYBACK_TEST builds.
+#include <wili_log.h>
 #include <nlohmann/json.hpp>
 #include "playback_osd.hpp"
 #include <memory>
@@ -94,6 +95,7 @@ int controlledPlaybackTest() {
             PspVideoOptions options{};
             options.path = video.c_str();
             options.log_root = CLIENT_ROOT;
+            wili_log_set_files(config.value("log_files", false)); // off unless a test asks
             // Match main.cpp: PPSSPP builds with the sceMpeg backend must not fall back to native ME.
             options.backend = BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG

@@ -127,10 +127,13 @@ void logError(const std::string &path, const AppError &e) {
                      "operation=%s\ndomain=%d\nkind=%d\nraw_code=%d\nhttp_status=%d\nmessage=%s\n",
                      operationName(e.operation), int(e.domain), int(e.kind), e.rawCode,
                      e.httpStatus, errorMessage(e).c_str());
-        // The newest log lines (including the error above) show what led up to it.
-        std::fputs("recent_log_begin\n", out);
-        const int lines = wili_log_dump(out);
-        std::fprintf(out, "recent_log_end lines=%d\n", lines);
+        // The newest log lines (including the error above) show what led up to it, but only
+        // when log files are enabled in Settings.
+        if (wili_log_files()) {
+            std::fputs("recent_log_begin\n", out);
+            const int lines = wili_log_dump(out);
+            std::fprintf(out, "recent_log_end lines=%d\n", lines);
+        }
         std::fclose(out);
     }
 }

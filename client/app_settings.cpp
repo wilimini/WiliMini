@@ -36,10 +36,12 @@ bool coverEntry(const SceIoDirent& entry) {
 
 void applyLogPreferences(const Preferences& preferences) {
     // Set the base level first so a channel override is not reset by it.
+    wili_log_set_files(preferences.saveLogFiles);
     wili_log_set_all(static_cast<WiliLogLevel>(preferences.logLevel));
     if (!preferences.logChannels.empty()) wili_log_configure(preferences.logChannels.c_str());
-    WLOG_I(WLC_CLIENT, "log_level=%s channels=%s", logVerbosityCode(preferences.logLevel),
-           preferences.logChannels.empty() ? "-" : preferences.logChannels.c_str());
+    WLOG_I(WLC_CLIENT, "log_level=%s channels=%s files=%s", logVerbosityCode(preferences.logLevel),
+           preferences.logChannels.empty() ? "-" : preferences.logChannels.c_str(),
+           preferences.saveLogFiles ? "on" : "off");
 }
 
 void App::openSettings() {
@@ -69,6 +71,7 @@ void App::changeSetting() {
                           : next.logLevel == LogVerbosity::Warn ? LogVerbosity::Info
                           : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
             break;
+        case SettingItem::LogFiles: next.saveLogFiles = !next.saveLogFiles; break;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
@@ -80,8 +83,8 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
-    if (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection) == SettingItem::LogLevel)
-        applyLogPreferences(preferences_);
+    const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
+    if (changed == SettingItem::LogLevel || changed == SettingItem::LogFiles) applyLogPreferences(preferences_);
     const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)

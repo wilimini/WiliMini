@@ -33,16 +33,19 @@ message, so searches for `LOADER root=`, `CLIENT root=` or `MEM rgb_start` still
   An unknown `log_level` or a bad `log_channels` makes the whole file unreadable, like other
   invalid settings: defaults are used and the file is not rewritten.
 - `WILI_LOG_MAX_LEVEL` (default `DEBUG`) removes higher levels at compile time.
-- The last 64 lines are kept in RAM and written to files at fixed points. Nothing is
-  written as it happens, so a crash or hang loses the lines not yet saved:
+- The last 64 lines are kept in RAM. **Log files are off by default**, so nothing is written
+  to the Memory Stick for logging unless you turn on Settings > Save logs to file
+  (`"log_files": true` in `settings.json`); console output is unaffected. When on, the ring
+  is written to files at fixed points only, so a crash or hang loses the lines not yet saved:
   - `results/run-NNN/log.txt`: the lines logged during one playback, written when it
     ends, on both the native and sceMpeg backends. If more than 64 lines were logged it
     starts with `log_lines_overwritten=N`.
   - `logs/last-run.log`: the newest lines of the whole session, written on a normal quit
     (START). It starts at the client's first line; the loader keeps no ring buffer.
   - `last-error.txt`: the newest lines between `recent_log_begin` and `recent_log_end`,
-    written when an error is recorded.
-  Lines longer than 384 bytes are truncated.
+    added when an error is recorded. The error fields themselves are always written.
+  Lines longer than 384 bytes are truncated. The controlled playback test enables files
+  per run with `"log_files": true` in `playback-test.json`.
 - Converted so far: `main.cpp`, the loader, `bilibili.c` network/stream reports,
   and the player (`PLAYER`, `MEM`, `VIDEO` lines). `HTTP timing`, `STREAM` and
   `LIVE` lines now appear as `NET` lines. Not converted: `memory_profile.c` (`ALLOC`,
@@ -67,8 +70,9 @@ Emulator screenshots do not replace hardware validation.
 
 ## Playback result folders
 
-Each playback creates `results/run-NNN/` on the Memory Stick (`summary.json`, `log.txt`,
-and for native playback `diagnostics.txt` and CSV files).
+Each playback creates `results/run-NNN/` on the Memory Stick (`summary.json`, `log.txt`
+only when log files are on, and for native playback `diagnostics.txt` and CSV files).
+These result files are written regardless of the log file setting.
 
 - The number is the highest existing one plus one, so numbers are not reused when old
   folders are deleted. Names are matched ignoring case because FAT lists them in uppercase.

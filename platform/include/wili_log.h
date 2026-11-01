@@ -90,8 +90,12 @@ int wili_log_dump(FILE *out);
  * lost as "log_lines_overwritten=N". Returns the number of log lines written. */
 unsigned wili_log_mark(void);
 int wili_log_dump_since(unsigned mark, FILE *out);
-/* Creates or replaces `path` with the lines since `mark`. Returns the line count, or -1 if the
- * file could not be written. */
+/* Log files are off by default so nothing is written to the Memory Stick unless asked
+ * (set from the "Save logs to file" setting). Console output is unaffected. */
+void wili_log_set_files(int enabled);
+int wili_log_files(void);
+/* Creates or replaces `path` with the lines since `mark`. Returns the line count, -1 if the
+ * file could not be written, or -2 without touching the Memory Stick when log files are off. */
 int wili_log_save_since(const char *path, unsigned mark);
 /* Number of lines currently held, and the capacity (0 when the ring is disabled). */
 int wili_log_ring_count(void);

@@ -239,7 +239,12 @@ int wili_log_dump(FILE *out) {
 #endif
 }
 
+static volatile int files_enabled; /* off until the setting turns it on */
+void wili_log_set_files(int enabled) { files_enabled = enabled != 0; }
+int wili_log_files(void) { return files_enabled; }
+
 int wili_log_save_since(const char *path, unsigned mark) {
+    if (!files_enabled) return -2;
     FILE *out = path ? fopen(path, "w") : NULL;
     if (!out) return -1;
     const int lines = wili_log_dump_since(mark, out);

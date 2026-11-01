@@ -114,13 +114,21 @@ int main(void) {
     fclose(lf);
     assert(n == WILI_LOG_LINE_MAX - 1 && line[n - 1] == '\n');
 
-    /* A mark selects only the lines logged after it (one playback), and a file save works. */
+    /* Log files are off by default: nothing is created, console and ring still work. */
     wili_log_set_all(WILI_LOG_INFO);
     snprintf(path, sizeof(path), "%s/mark.txt", tmp);
+    assert(!wili_log_files());
     assert(freopen("/dev/null", "w", stdout));
     WLOG_I(WLC_CLIENT, "before mark");
     const unsigned mark = wili_log_mark();
     for (int i = 0; i < 5; ++i) WLOG_I(WLC_PLAYER, "after mark %d", i);
+    assert(wili_log_save_since(path, mark) == -2);
+    assert(access(path, F_OK) != 0);
+    assert(wili_log_ring_count() > 0);
+
+    /* A mark selects only the lines logged after it (one playback), and a file save works. */
+    wili_log_set_files(1);
+    assert(wili_log_files());
     assert(wili_log_save_since(path, mark) == 5);
     FILE *mf = fopen(path, "r");
     assert(mf);
@@ -147,6 +155,9 @@ int main(void) {
     /* A mark from the future or an up-to-date mark writes nothing. */
     assert(wili_log_save_since(path, wili_log_mark()) == 0);
     assert(wili_log_save_since(path, wili_log_mark() + 50) == 0);
+    /* Turning it off again stops writing and leaves the last file untouched. */
+    wili_log_set_files(0);
+    assert(wili_log_save_since("/nonexistent-dir/x.log", mark) == -2);
 
     wili_log_shutdown();
     fprintf(stderr, "Leveled logger (format, filtering, spec, ring, threads, truncation, marks): passed\n");

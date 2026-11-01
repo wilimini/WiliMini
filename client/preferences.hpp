@@ -15,6 +15,7 @@ enum class SettingItem : std::size_t {
     ConfirmWithCircle,
     Language,
     LogLevel,
+    LogFiles,
     Wifi,
     CoverCache,
     Help,
@@ -42,6 +43,8 @@ struct Preferences {
     bool confirmWithCircle = false;
     Locale locale = Locale::ZhHans;
     LogVerbosity logLevel = LogVerbosity::Info;
+    // Off by default: no log text is written to the Memory Stick unless this is on.
+    bool saveLogFiles = false;
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
     // settings.json and preserved on save; see wili_log_configure().
     std::string logChannels;

@@ -77,6 +77,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         else if (logLevel == "info") loaded.logLevel = LogVerbosity::Info;
         else if (logLevel == "debug") loaded.logLevel = LogVerbosity::Debug;
         else return false;
+        const auto files = root.find("log_files");
+        if (files != root.end()) {
+            if (!files->is_boolean()) return false;
+            loaded.saveLogFiles = files->get<bool>();
+        }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -104,6 +109,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
         {"locale", localeCode(preferences.locale)},
         {"log_level", logVerbosityCode(preferences.logLevel)},
+        {"log_files", preferences.saveLogFiles},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
