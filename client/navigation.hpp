@@ -96,6 +96,7 @@ struct LoginRoute { static constexpr Screen kind = Screen::Login; };
 struct SettingsRoute {
     static constexpr Screen kind = Screen::Settings;
     size_t selection = 0;
+    size_t scroll = 0;
 };
 struct StorageRoute {
     static constexpr Screen kind = Screen::Storage;

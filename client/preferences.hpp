@@ -23,6 +23,7 @@ enum class SettingItem : std::size_t {
     About,
     Count
 };
+inline constexpr std::size_t settingsVisibleRows = 11;
 
 // Values match ME_BACKEND_* in decoder/me/me_bridge.h and client/me_backend_select.h.
 // The bootstrap loads the matching bridge PRX, so a change applies on next launch.
