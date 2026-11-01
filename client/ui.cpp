@@ -748,7 +748,8 @@ void drawUtility(const pspapp::App& app) {
         const pspapp::TextId labels[] = {
             pspapp::TextId::settings_theme, pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
-            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_me_backend,
+            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
+            pspapp::TextId::settings_me_backend,
             pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_log_level,
             pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
@@ -770,7 +771,13 @@ void drawUtility(const pspapp::App& app) {
                                                 : pspapp::TextId::value_standard, locale),
             pspapp::formatText(pspapp::TextId::value_buffer, locale,
                 {{"frames", std::to_string(preferences.playbackBufferFrames)},
-                 {"memory", std::to_string(preferences.playbackBufferFrames * 544)}}),
+                 {"memory", std::to_string(preferences.playbackBufferFrames *
+                     (pspapp::playbackUsesRgb565(preferences.playbackPixelFormat) ? 272 : 544))}}),
+            pspapp::text(preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Auto
+                    ? (pspapp::defaultPlaybackRgb565() ? pspapp::TextId::value_pixel_auto_565
+                                                       : pspapp::TextId::value_pixel_auto_rgba8888)
+                : preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Rgb565
+                    ? pspapp::TextId::value_pixel_565 : pspapp::TextId::value_pixel_rgba8888, locale),
             meRestart ? pspapp::formatText(pspapp::TextId::value_me_restart, locale, {{"backend", meBackend}})
                       : meBackend,
             pspapp::formatText(pspapp::TextId::value_confirm, locale,

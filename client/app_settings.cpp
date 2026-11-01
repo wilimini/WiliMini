@@ -71,6 +71,12 @@ void App::changeSetting() {
         case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
         case SettingItem::PlaybackBufferFrames: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
+        case SettingItem::PlaybackPixelFormat:
+            next.playbackPixelFormat = next.playbackPixelFormat == PlaybackPixelFormat::Auto
+                ? PlaybackPixelFormat::Rgb565
+                : next.playbackPixelFormat == PlaybackPixelFormat::Rgb565
+                    ? PlaybackPixelFormat::Rgba8888 : PlaybackPixelFormat::Auto;
+            break;
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;

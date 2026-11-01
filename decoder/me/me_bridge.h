@@ -5,7 +5,8 @@ typedef struct __attribute__((aligned(64))) {
     uint32_t operation;
     const uint8_t *planes[3];
     int strides[3];
-    uint32_t *output;
+    void *output;
+    uint32_t output_format;
     volatile uint32_t done;
     volatile uint32_t value;
     int width, height;

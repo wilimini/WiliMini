@@ -11,7 +11,7 @@ static unsigned rgb_slots = RGB_SLOTS;
 static int64_t audio_clock_us(void);
 static int audio_playback_failed(void);
 // Playback owns these buffers until the ME and presentation worker have stopped.
-static uint32_t (*rgb_pixels)[512 * 272];
+static void *rgb_pixels;
 static int64_t rgb_pts[RGB_SLOTS], presentation_pts_us;
 static SceUID rgb_space = -1, rgb_ready = -1, rgb_thread = -1;
 static volatile unsigned rgb_produced, rgb_consumed;
@@ -25,6 +25,11 @@ static unsigned rgb_generation;
 typedef struct { int64_t pts, audio, target; uint64_t wall; int dropped; } RgbRecord;
 static RgbRecord rgb_records[6000];
 
+static void *rgb_slot_pixels(unsigned slot)
+{
+    return (uint8_t *)rgb_pixels + slot * 512 * 272 * rgb_pixel_bytes;
+}
+
 static int rgb_worker(SceSize size, void *arg)
 {
     (void)size; (void)arg;
@@ -35,7 +40,7 @@ static int rgb_worker(SceSize size, void *arg)
         int ready = sceKernelWaitSema(rgb_ready, 1, presenter ? &refresh_timeout : NULL);
         if (ready < 0) {
             if (rgb_stop) return 0;
-            if (presenter && !quit_requested && present_video(NULL) < 0) rgb_error = -113;
+            if (presenter && !quit_requested && present_video(NULL, output_pixel_format) < 0) rgb_error = -113;
             continue;
         }
         if (rgb_stop && rgb_consumed == rgb_produced) return 0;
@@ -54,7 +59,7 @@ static int rgb_worker(SceSize size, void *arg)
             int64_t delta = target - audio_clock_us();
             int paused = playback_is_paused();
             if ((!paused && delta <= 0) || (presenter && paused && (!rgb_presented || rgb_seek_preview))) break;
-            if (presenter && present_video(NULL) < 0) { rgb_error = -113; drop = 1; break; }
+            if (presenter && present_video(NULL, output_pixel_format) < 0) { rgb_error = -113; drop = 1; break; }
             sceKernelDelayThread(delta > 2000 || paused ? 2000 : (unsigned)delta);
             if (audio_playback_failed()) drop = 1;
         }
@@ -66,8 +71,11 @@ static int rgb_worker(SceSize size, void *arg)
             if (audio_clock_us() >= (rgb_pts[slot] + next_pts) / 2) drop = 1;
         }
         if (!drop && !quit_requested) {
-            int ret = presenter ? present_video(rgb_pixels[slot]) :
-                sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 4);
+            void *pixels = rgb_slot_pixels(slot);
+            int ret = presenter ? present_video(pixels, output_pixel_format) :
+                sceDmacMemcpy((void *)(0x44000000 + 512 * rgb_pixel_bytes),
+                              (uint8_t *)pixels + 512 * rgb_pixel_bytes,
+                              512 * 270 * rgb_pixel_bytes);
             if (ret < 0) rgb_error = ret;
             else {
                 late = audio_clock_us() - target;
@@ -97,12 +105,12 @@ static int rgb_start(void)
     rgb_max_late_us = rgb_total_late_us = 0;
     rgb_warmup_us = rgb_last_us = 0;
     const uint64_t setup_start = sceKernelGetSystemTimeWide();
-    rgb_pixels = memalign(64, rgb_slots * sizeof(*rgb_pixels));
+    rgb_pixels = memalign(64, rgb_slots * 512 * 272 * rgb_pixel_bytes);
     if (!rgb_pixels) return AVERROR(ENOMEM);
-    memset(rgb_pixels, 0, rgb_slots * sizeof(*rgb_pixels));
-    sceKernelDcacheWritebackInvalidateRange(rgb_pixels, rgb_slots * sizeof(*rgb_pixels));
+    memset(rgb_pixels, 0, rgb_slots * 512 * 272 * rgb_pixel_bytes);
+    sceKernelDcacheWritebackInvalidateRange(rgb_pixels, rgb_slots * 512 * 272 * rgb_pixel_bytes);
     WLOG_I(WLC_MEM, "rgb_start frames=%u bytes=%u setup_us=%u", rgb_slots,
-           (unsigned)(rgb_slots * sizeof(*rgb_pixels)),
+           (unsigned)(rgb_slots * 512 * 272 * rgb_pixel_bytes),
            (unsigned)(sceKernelGetSystemTimeWide() - setup_start));
     rgb_space = sceKernelCreateSema("rgb_space", 0, rgb_slots, rgb_slots, NULL);
     rgb_ready = sceKernelCreateSema("rgb_ready", 0, 0, rgb_slots + 1, NULL);

@@ -31,16 +31,22 @@ int __attribute__((noinline)) me_worker(int index, void *param)
         meCoreDcacheInvalidateRange(&me_tables, sizeof(me_tables));
 #endif
         j->value = 5;
-        uint32_t *out = (void *)((unsigned)j->output | 0x80000000u);
-        if (j->width == 640 && j->height == 360)
-            full_render_planes(data, j->strides, out, &me_tables);
-        else
-            full_render_scaled(data, j->strides, j->width, j->height, out, &me_tables);
+        void *out = (void *)((unsigned)j->output | 0x80000000u);
+        if (j->output_format == 0) {
+            if (j->width == 640 && j->height == 360)
+                full_render_planes_565(data, j->strides, out, &me_tables);
+            else
+                full_render_scaled_565(data, j->strides, j->width, j->height, out, &me_tables);
+        } else if (j->width == 640 && j->height == 360) {
+            full_render_planes_8888(data, j->strides, out, &me_tables);
+        } else {
+            full_render_scaled_8888(data, j->strides, j->width, j->height, out, &me_tables);
+        }
         j->value = 6;
 #if PSP_ME_FULL_CACHE
         meCoreDcacheWritebackInvalidateAll();
 #else
-        meCoreDcacheWritebackRange(out, 512 * 272 * 4);
+        meCoreDcacheWritebackRange(out, 512 * 272 * (j->output_format == 0 ? 2 : 4));
 #endif
     }
     j->value = 0x4d450001;

@@ -71,6 +71,6 @@ private:
     void text(int x, int y, std::string_view text, unsigned color, int right = 464, int size = 16);
     void rectangle(int x, int y, int w, int h, unsigned color);
     void gradient(int y, int height, unsigned topAlpha, unsigned bottomAlpha);
-    int draw(const uint32_t* pixels, const PspVideoStatus& status);
+    int draw(const void* pixels, PspVideoPixelFormat format, const PspVideoStatus& status);
 };
 }

@@ -39,6 +39,8 @@ static volatile int quit_requested;
 static PlaybackControls controls;
 static SceUID controls_lock = -1;
 static const PspVideoPresenter *presenter;
+static PspVideoPixelFormat output_pixel_format = PSP_VIDEO_PIXEL_FORMAT_RGB565;
+static size_t rgb_pixel_bytes = 2;
 static int seek_requested;
 static volatile int playback_seeking;
 static unsigned playback_seeks;
@@ -62,7 +64,7 @@ static int playback_is_paused(void) {
     sceKernelSignalSema(controls_lock, 1);
     return value;
 }
-static int present_video(const uint32_t *pixels);
+static int present_video(const void *pixels, PspVideoPixelFormat format);
 static void playback_metadata(int64_t duration_ms, int seekable) {
     if (controls_lock < 0) return;
     sceKernelWaitSema(controls_lock, 1, NULL);
@@ -212,7 +214,7 @@ static void begin_playback_seek(void) {
     controls.visible = 1;
     sceKernelSignalSema(controls_lock, 1);
 }
-static int present_video(const uint32_t *pixels) {
+static int present_video(const void *pixels, PspVideoPixelFormat format) {
     if (!presenter || !presenter->present) return 0;
     int64_t position = playback_start_ms;
 #if PSP_AUDIO
@@ -229,7 +231,7 @@ static int present_video(const uint32_t *pixels) {
         controls.settings.quality_count > 0 ? controls.settings.qualities[controls.quality_index] : 0,
         controls.settings, video_stage, controls.menu_value};
     sceKernelSignalSema(controls_lock, 1);
-    return presenter->present(presenter->opaque, pixels, &status);
+    return presenter->present(presenter->opaque, pixels, format, &status);
 }
 static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
                            AVPacket *packet, AVFrame *frame, const char *run_path) {
@@ -881,11 +883,8 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
             s->media_boundary_pts = frame->best_effort_timestamp;
         }
         ++*output_count;
-        if (*output_count == WARMUP_FRAMES) {
-            const struct mallinfo heap = mallinfo();
-            WLOG_I(WLC_MEM, "decode heap_used=%u system_free=%u system_max=%u",
-                   (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
-        }
+        if (*output_count == 1) source_memory("video_first_frame");
+        if (*output_count == WARMUP_FRAMES) source_memory("decode");
         av_frame_unref(frame);
         if (*output_count == WARMUP_FRAMES) {
 #if PSP_ME_RENDER && !PSP_ME_RENDER_QUEUE
@@ -1009,6 +1008,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     diagnostic_audio_valid = 1;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
     ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, run_path);
+    source_memory("audio_init_end");
     playback_diagnostic("audio_init_end", ret);
     if (ret < 0) goto done;
 #endif
@@ -1020,14 +1020,18 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
                0, DISPLAY_STRIDE * DISPLAY_HEIGHT * sizeof(uint32_t));
 #endif
         sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
-                              PSP_DISPLAY_PIXEL_FORMAT_8888, PSP_DISPLAY_SETBUF_IMMEDIATE);
+                              output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
+                                  ? PSP_DISPLAY_PIXEL_FORMAT_565 : PSP_DISPLAY_PIXEL_FORMAT_8888,
+                              PSP_DISPLAY_SETBUF_IMMEDIATE);
     }
 
     video_stage = PSP_VIDEO_STAGE_PLAY;
 decode_again:
     while (!quit_requested) {
         if (playback_seeking) {
+            source_memory("seek_begin");
             ret = seek_in_session(format, codec, packet, frame, run_path);
+            source_memory("seek_end");
             if (ret < 0) goto done;
             catchup_to_key = 0;
             stats->eof = 0;
@@ -1121,6 +1125,7 @@ decode_again:
 
 done:
     if (playback_seeking && !quit_requested && ret >= 0) goto decode_again;
+    source_memory("cleanup_begin");
     playback_diagnostic("cleanup_begin", ret);
 #if PSP_ME_DECODE
     {
@@ -1181,6 +1186,7 @@ done:
     if (audio_started) {
         const int64_t audio_origin = audio.format ? source_origin_us(audio.format) : 0;
         audio_close(stats->eof && ret >= 0);
+        source_memory("audio_closed");
         if (output_count && (quit_requested || !stats->eof) &&
             audio.first_pts_us != AV_NOPTS_VALUE && audio.rate > 0) {
             int64_t played = audio_clock_us() - audio_origin;
@@ -1196,7 +1202,9 @@ done:
     if (packet) av_packet_free(&packet);
     if (frame) av_frame_free(&frame);
     if (codec) avcodec_free_context(&codec);
+    source_memory("video_codec_closed");
     source_close(&format, &input_io);
+    source_memory("video_source_closed");
     stats->total_frames = output_count;
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
     playback_diagnostic(psp_video_stage_name(video_stage), ret);
@@ -1300,12 +1308,16 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     if (!options || !options->log_root || (!options->source && !options->path) ||
         (options->rgb_buffer_frames != 0 && options->rgb_buffer_frames != 2 &&
          options->rgb_buffer_frames != 4 && options->rgb_buffer_frames != 8) ||
+        (options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGB565 &&
+         options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGBA8888) ||
         (options->cancel_button != PSP_VIDEO_CANCEL_CIRCLE &&
          options->cancel_button != PSP_VIDEO_CANCEL_CROSS) ||
         (options->path && strlen(options->path)>1017) ||
         (options->source && (!options->source->read_at || (options->source->size==0 || options->source->size < -1))) ||
         (options->audio_source && (!options->audio_source->read_at || (options->audio_source->size==0 || options->audio_source->size < -1)))) return -1;
     presenter = options->presenter && options->presenter->present ? options->presenter : NULL;
+    output_pixel_format = options->rgb_pixel_format;
+    rgb_pixel_bytes = output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565 ? 2 : 4;
     seek_requested = seek_paused = 0;
     playback_seeking = 0; playback_seeks = 0;
     quality_requested = 0;

@@ -145,7 +145,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     SceMpegStream *stream = NULL;
     SceMpegAu au __attribute__((aligned(64)));
     void *state = NULL, *ring_data = NULL, *es = NULL;
-    uint32_t *rgb = NULL;
+    void *rgb = NULL;
     VideoSourceIO input = {0};
     EmuMux mux = {0};
     uint8_t header[2048] __attribute__((aligned(64))) = {0};
@@ -185,7 +185,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(EMU_RING_PACKETS);
     if (state_size <= 0 || ring_size <= 0) { ret = -1; goto done; }
     state = memalign(64, state_size); ring_data = memalign(64, ring_size);
-    rgb = memalign(64, stride * ((height + 15) & ~15) * 4);
+    rgb = memalign(64, stride * ((height + 15) & ~15) * rgb_pixel_bytes);
     if (!state || !ring_data || !rgb) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegRingbufferConstruct(&ring, EMU_RING_PACKETS, ring_data, ring_size, emu_ring_read, &mux);
     if (ret < 0) goto done;
@@ -209,7 +209,8 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     if (!es) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegInitAu(&mpeg,es,&au);
     if (ret < 0) goto done;
-    SceMpegAvcMode mode = {-1,SCE_MPEG_AVC_FORMAT_8888};
+    SceMpegAvcMode mode = {-1,output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
+                                   ? SCE_MPEG_AVC_FORMAT_5650 : SCE_MPEG_AVC_FORMAT_8888};
     ret = sceMpegAvcDecodeMode(&mpeg,&mode);
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
@@ -256,26 +257,35 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
             int paused = playback_is_paused();
             if ((!paused && pts_us <= clock - source_origin_us(audio.format)) ||
                 (presenter && paused && !stats->total_frames)) break;
-            if (presenter && present_video(NULL) < 0) { ret = -113; break; }
+            if (presenter && present_video(NULL, output_pixel_format) < 0) { ret = -113; break; }
             sceKernelDelayThreadCB(2000);
         }
         if (quit_requested) break;
         if (audio.error) { ret = audio.error; break; }
-        uint32_t *vram = (uint32_t *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * 4);
-        memset(vram,0,512*272*4);
+        void *vram = (void *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * rgb_pixel_bytes);
+        memset(vram,0,512*272*rgb_pixel_bytes);
         int w=480, h=(int)((int64_t)height*480/width);
         if (h>272) { h=272; w=(int)((int64_t)width*272/height); }
         for (int y=0;y<h;++y) {
-            uint32_t *dst=vram+(y+(272-h)/2)*512+(480-w)/2;
-            const uint32_t *src=rgb+(y*height/h)*stride;
-            for (int x=0;x<w;++x) dst[x]=src[x*width/w];
+            if (output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565) {
+                uint16_t *dst=(uint16_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
+                const uint16_t *src=(const uint16_t *)rgb+(y*height/h)*stride;
+                for (int x=0;x<w;++x) dst[x]=src[x*width/w];
+            } else {
+                uint32_t *dst=(uint32_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
+                const uint32_t *src=(const uint32_t *)rgb+(y*height/h)*stride;
+                for (int x=0;x<w;++x) dst[x]=src[x*width/w];
+            }
         }
         if (presenter) {
-            ret = present_video(vram);
+            ret = present_video(vram, output_pixel_format);
             if (ret < 0) break;
         } else {
             sceDisplayWaitVblankStart();
-            sceDisplaySetFrameBuf(vram,512,PSP_DISPLAY_PIXEL_FORMAT_8888,PSP_DISPLAY_SETBUF_IMMEDIATE);
+            sceDisplaySetFrameBuf(vram,512,
+                output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
+                    ? PSP_DISPLAY_PIXEL_FORMAT_565 : PSP_DISPLAY_PIXEL_FORMAT_8888,
+                PSP_DISPLAY_SETBUF_IMMEDIATE);
         }
         page ^= 1;
         ++stats->total_frames;

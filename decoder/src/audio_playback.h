@@ -252,6 +252,7 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     audio.codec->thread_count = 1;
     ret = avcodec_open2(audio.codec, decoder, NULL);
     if (ret < 0) return ret;
+    source_memory("audio_codec");
     audio.rate = audio.codec->sample_rate;
     audio.channels = audio.codec->ch_layout.nb_channels;
     WLOG_I(WLC_PLAYER, "AUDIO codec=%s rate=%d channels=%d output_channels=2",
@@ -278,12 +279,14 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     audio.output_thread = sceKernelCreateThread("pcm_output", audio_output_thread,
                            0x10, 16 * 1024, PSP_THREAD_ATTR_USER, NULL);
     if (audio.decoder_thread < 0 || audio.output_thread < 0) return -102;
+    source_memory("audio_workers_created");
     ret = sceKernelStartThread(audio.decoder_thread, 0, NULL);
     if (ret < 0) return ret;
     ret = sceKernelStartThread(audio.output_thread, 0, NULL);
     if (ret < 0) return ret;
     while (audio.produced < AUDIO_PREFILL && !audio.eof && !audio.error && !quit_requested)
         sceKernelDelayThreadCB(10000);
+    source_memory("audio_prefill");
     if (audio.error) return audio.error;
     if (quit_requested || !audio.produced) return -103;
 #if PSP_AUDIO_VERIFY
@@ -315,7 +318,7 @@ static void audio_close(int drain)
             if (!playback_is_paused()) active_wait += 100000;
             if (active_wait >= 10000000) { audio.error = -104; break; }
             // Native presentation has joined before final audio draining.
-            if (presenter) present_video(NULL);
+            if (presenter) present_video(NULL, output_pixel_format);
         }
     }
     audio.stop = 1;
