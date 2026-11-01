@@ -252,7 +252,8 @@ int main(int argc, char** argv) {
             // Repeat navigation only; held confirm/back must never activate twice.
             const bool adjustingSetting = app.screen() == pspapp::Screen::Settings &&
                 app.settingSelection() < static_cast<size_t>(pspapp::SettingItem::Wifi);
-            pressed |= adjustingSetting ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
+            // Settings values and comment like/replies must not fire repeatedly while held.
+            pressed |= (adjustingSetting || app.commentPage()) ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
             repeatAt = now + (app.preferences().slowRepeat ? 180000 : 90000);
         }
         previous = pad.Buttons;
@@ -324,7 +325,23 @@ int main(int argc, char** argv) {
             if (app.playbackFailed() && (pressed & (confirmButton | PSP_CTRL_TRIANGLE))) app.retry();
             else if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
             else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);
-            else if (app.screen() == pspapp::Screen::Browse) {
+            else if (app.commentPage()) {
+                // Comments and reply threads: up/down move between comments, confirm expands one
+                // in place, triangle opens the action card, left/right are like and reply list.
+                if (app.commentMenuOpen()) {
+                    if (pressed & (backButton | PSP_CTRL_TRIANGLE)) app.commentMenuClose();
+                    else if (pressed & confirmButton) app.commentMenuActivate();
+                    else if (pressed & PSP_CTRL_LEFT) app.commentMenuMove(-1);
+                    else if (pressed & PSP_CTRL_RIGHT) app.commentMenuMove(1);
+                } else if (pressed & backButton) app.back();
+                else if (pressed & confirmButton) app.commentToggle();
+                else if (pressed & PSP_CTRL_TRIANGLE) app.commentOpenMenu();
+                else if (pressed & PSP_CTRL_SQUARE) app.beginComment();
+                else if (pressed & PSP_CTRL_LEFT) app.commentQuickLike();
+                else if (pressed & PSP_CTRL_RIGHT) app.commentQuickReplies();
+                else if (pressed & PSP_CTRL_UP) ui_comment_move(app, -1);
+                else if (pressed & PSP_CTRL_DOWN) ui_comment_move(app, 1);
+            } else if (app.screen() == pspapp::Screen::Browse) {
                 if (pressed & backButton) app.back();
                 else if (pressed & confirmButton) app.activate();
                 else if (pressed & PSP_CTRL_TRIANGLE) app.browseRefresh();
@@ -344,14 +361,6 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_DOWN) app.moveSelection(0, 1);
                 else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
                 else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
-            } else if (app.screen() == pspapp::Screen::Comments) {
-                if (pressed & backButton) app.back();
-                else if (pressed & confirmButton) app.commentActions();
-                else if (pressed & PSP_CTRL_SQUARE) app.beginComment();
-                else if (pressed & PSP_CTRL_LEFT) ui_select_comment(app, -1);
-                else if (pressed & PSP_CTRL_RIGHT) ui_select_comment(app, 1);
-                else if (pressed & PSP_CTRL_UP) ui_scroll_comments(app, -1);
-                else if (pressed & PSP_CTRL_DOWN) ui_scroll_comments(app, 1);
             } else if (app.screen() == pspapp::Screen::Mine) {
                 if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
                 else if (pressed & backButton) app.back();

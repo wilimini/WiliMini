@@ -12,7 +12,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 TITLE_KEYS = ('tile_title', 'tile_recommend', 'tile_hots', 'tile_search', 'tile_discover',
-              'tile_dynamic', 'tile_inbox', 'tile_mine', 'tile_settings')
+              'tile_dynamic', 'tile_inbox', 'tile_mine', 'tile_settings', 'comments_title',
+              'comments_replies_title')
 SIZE = 32
 GAMMA = 1.25  # lowers coverage a little so the strokes read as light, not bold
 

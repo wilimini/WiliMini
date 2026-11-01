@@ -502,4 +502,274 @@ void App::commitCommunityWrite() {
   }
   status_ = "操作成功";
 }
+
+// ---- Comment lists ---------------------------------------------------------------------------
+// Video comments and reply threads: up/down move between comments, confirm expands the selected
+// one in place, the menu is a card over the list, and left/right are quick like / reply list.
+CommentUi *App::commentUi() {
+  if (screen() == Screen::Comments)
+    return &commentsState().ui;
+  if (hasBrowse()) {
+    const auto kind = browseState().page.request.kind;
+    if (kind == BrowseKind::Comments || kind == BrowseKind::Replies)
+      return &browseState().ui;
+  }
+  return nullptr;
+}
+const CommentUi *App::commentUi() const {
+  return const_cast<App *>(this)->commentUi();
+}
+bool App::commentPage() const { return commentUi() != nullptr; }
+int App::commentSelectedRow() const {
+  if (screen() == Screen::Comments)
+    return static_cast<int>(commentsState().selected);
+  return static_cast<int>(browseState().selection);
+}
+size_t App::commentRowCount() const {
+  if (screen() == Screen::Comments)
+    return commentsState().items.size();
+  return browseState().page.items.size() + (browseState().page.hasMore ? 1 : 0);
+}
+bool App::commentExpanded() const {
+  const auto *ui = commentUi();
+  return ui && ui->expanded;
+}
+int App::commentInner() const {
+  const auto *ui = commentUi();
+  return ui ? ui->inner : 0;
+}
+void App::commentSetInner(int line) {
+  if (auto *ui = commentUi())
+    ui->inner = std::max(0, line);
+}
+bool App::commentMenuOpen() const {
+  const auto *ui = commentUi();
+  return ui && ui->menuOpen;
+}
+int App::commentMenuIndex() const {
+  const auto *ui = commentUi();
+  return ui ? ui->menuIndex : 0;
+}
+bool App::selectedCommentData(CommunityComment &comment, BrowseItem &item) const {
+  if (screen() == Screen::Comments) {
+    const auto &items = commentsState().items;
+    if (items.empty())
+      return false;
+    const auto &c = items[std::min(commentsState().selected, items.size() - 1)];
+    comment = {std::to_string(c.id), c.root, c.parent, c.mid, c.author,
+               c.message, c.like, c.replies, c.action};
+    item = {};
+    item.comment = comment;
+    item.next = {BrowseKind::CommentActions, std::to_string(c.id),
+                 std::to_string(detailState().detail.card.aid), {}, "评论操作"};
+    return true;
+  }
+  if (!commentUi())
+    return false;
+  const auto &frame = browseState();
+  if (frame.selection >= frame.page.items.size() ||
+      frame.page.items[frame.selection].comment.id.empty())
+    return false;
+  item = frame.page.items[frame.selection];
+  comment = item.comment;
+  return true;
+}
+std::vector<App::CommentTile> App::commentMenuTiles() const {
+  std::vector<CommentTile> tiles = {CommentTile::Reply, CommentTile::Like};
+  CommunityComment c;
+  BrowseItem item;
+  const bool thread = hasBrowse() && browseState().page.request.kind == BrowseKind::Replies;
+  if (selectedCommentData(c, item) && c.replies > 0 && !thread)
+    tiles.push_back(CommentTile::Replies);
+  tiles.push_back(CommentTile::More);
+  return tiles;
+}
+void App::commentMoveSelection(int dy) {
+  auto *ui = commentUi();
+  if (!ui)
+    return;
+  *ui = {};
+  if (screen() == Screen::Comments) {
+    auto &state = commentsState();
+    if (state.items.empty())
+      return;
+    const int last = static_cast<int>(state.items.size()) - 1;
+    const int value = std::max(0, std::min(last, static_cast<int>(state.selected) + dy));
+    state.selected = static_cast<size_t>(value);
+    // Reaching the last comment fetches the next page, so there is no separate button for it.
+    if (dy > 0 && value == last)
+      loadMoreComments();
+  } else {
+    browseMove(0, dy);
+  }
+}
+void App::commentToggle() {
+  auto *ui = commentUi();
+  if (!ui || busy())
+    return;
+  if (screen() == Screen::Browse && browseState().selection >= browseState().page.items.size()) {
+    browseMore();
+    return;
+  }
+  CommunityComment c;
+  BrowseItem item;
+  if (!selectedCommentData(c, item))
+    return;
+  ui->expanded = !ui->expanded;
+  ui->inner = 0;
+}
+void App::commentOpenMenu() {
+  auto *ui = commentUi();
+  CommunityComment c;
+  BrowseItem item;
+  if (!ui || busy() || !selectedCommentData(c, item))
+    return;
+  ui->menuOpen = true;
+  ui->menuIndex = 0;
+}
+void App::commentMenuMove(int dx) {
+  auto *ui = commentUi();
+  if (!ui || !ui->menuOpen)
+    return;
+  const int count = static_cast<int>(commentMenuTiles().size());
+  ui->menuIndex = std::max(0, std::min(count - 1, ui->menuIndex + dx));
+}
+void App::commentMenuClose() {
+  if (auto *ui = commentUi())
+    ui->menuOpen = false;
+}
+void App::commentReply(const CommunityComment &c, const BrowseRequest &request) {
+  inputWrite_ = {};
+  inputWrite_.action = CommunityAction::AddComment;
+  inputWrite_.oid = request.aux;
+  inputWrite_.type = request.type;
+  inputWrite_.parent = c.id;
+  inputWrite_.root = c.root.empty() || c.root == "0" ? c.id : c.root;
+  if (!sessions_.current().valid()) {
+    communityLoginPending_ = true;
+    openLogin();
+    return;
+  }
+  communityInputPending_ = true;
+}
+void App::commentVote(const CommunityComment &c, const BrowseRequest &request) {
+  CommunityWrite w;
+  w.action = CommunityAction::LikeComment;
+  w.oid = request.aux;
+  w.id = c.id;
+  w.type = request.type;
+  w.undo = c.action == 1;
+  communityWrite(w);
+}
+void App::commentOpenReplies(const CommunityComment &c, const BrowseRequest &request) {
+  auto r = BrowseRequest{BrowseKind::Replies, request.aux,
+                         c.root.empty() || c.root == "0" ? c.id : c.root, {}, "评论回复"};
+  r.type = request.type;
+  openBrowse(r);
+}
+void App::commentMenuActivate() {
+  auto *ui = commentUi();
+  if (!ui || !ui->menuOpen || busy())
+    return;
+  const auto tiles = commentMenuTiles();
+  CommunityComment c;
+  BrowseItem item;
+  if (!selectedCommentData(c, item) || tiles.empty())
+    return;
+  const auto tile = tiles[static_cast<size_t>(std::min<int>(ui->menuIndex, static_cast<int>(tiles.size()) - 1))];
+  ui->menuOpen = false;
+  switch (tile) {
+  case CommentTile::Reply: commentReply(c, item.next); break;
+  case CommentTile::Like: commentVote(c, item.next); break;
+  case CommentTile::Replies: commentOpenReplies(c, item.next); break;
+  case CommentTile::More: pushCommentActions(item); break;
+  }
+}
+void App::commentQuickLike() {
+  CommunityComment c;
+  BrowseItem item;
+  if (!busy() && commentPage() && selectedCommentData(c, item))
+    commentVote(c, item.next);
+}
+void App::commentQuickReplies() {
+  CommunityComment c;
+  BrowseItem item;
+  const bool thread = hasBrowse() && browseState().page.request.kind == BrowseKind::Replies;
+  if (!busy() && commentPage() && !thread && selectedCommentData(c, item) && c.replies > 0)
+    commentOpenReplies(c, item.next);
+}
+
+#ifdef BILI_UI_FIXTURE
+// Diagnostic build only (-DBILI_UI_FIXTURE=ON): start on a comment page filled with sample data so
+// the layouts can be captured in the emulator without an account or network. The file
+// ui-fixture.txt in the package directory selects "comments" or "replies".
+void App::loadUiFixture() {
+  char mode[16]{};
+  if (FILE *file = std::fopen(CLIENT_PATH("/ui-fixture.txt"), "rb")) {
+    std::fread(mode, 1, sizeof(mode) - 1, file);
+    std::fclose(file);
+  }
+  const bool replies = std::string(mode).rfind("replies", 0) == 0;
+  if (!replies && std::string(mode).rfind("comments", 0) != 0)
+    return;
+  DetailRoute detail;
+  detail.loaded = true;
+  detail.detail.card.bvid = "BV1fixture00";
+  detail.detail.card.aid = 1001;
+  detail.detail.card.title = "Building a Bilibili client for 32 MB of RAM";
+  detail.detail.card.author = "TinyCircuits Lab";
+  navigation_.push(std::move(detail));
+  struct Sample { const char *author, *time, *text; int like, replies; };
+  static const Sample samples[] = {
+      {"像素老炮", "2小时前", "这个 PSP 播放器真的做出来了，480×272 的小屏幕上还能放弹幕，当年想都不敢想。", 12034, 3},
+      {"Synth_Lin", "5小时前", "看了三遍。网络、界面渲染、解码全部跑在掌机上，不是串流，这一点最厉害。作者能不能再讲讲 Media Engine 的缓存一致性问题，那一段我没完全看懂，特别是 DMA 和 VFPU 状态怎么处理。", 3481, 12},
+      {"小林同学", "昨天", "磁贴界面太好看了，一下回到 Windows Phone 的年代。", 864, 0},
+      {"Retro_Bench", "昨天", "3000 上很流畅。", 207, 1},
+      {"掌机考古学家", "2天前", "第一次在 PSP 上看到这么顺的列表滚动，焦点环的滑动很舒服，希望以后能支持自定义强调色。", 95, 0},
+      {"Dot_Painter", "3天前", "封面加载速度不错，缓存策略有写文档吗？", 41, 2},
+  };
+  if (replies) {
+    BrowseRoute thread;
+    thread.page.request = BrowseRequest{BrowseKind::Replies, "1001", "5001", {}, "评论回复"};
+    thread.page.title = "评论回复";
+    for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+      BrowseItem item;
+      item.title = samples[i].author;
+      item.text = samples[i].text;
+      item.next = {BrowseKind::CommentActions, std::to_string(7000 + i), "1001", {}, "评论操作"};
+      item.comment = {std::to_string(7000 + i), "5001", "5001", "1", samples[i].author, samples[i].text,
+                      samples[i].like, 0, 0};
+      thread.page.items.push_back(std::move(item));
+    }
+    thread.page.hasMore = true;
+    pushBrowse(std::move(thread));
+    return;
+  }
+  CommentsRoute list;
+  list.end = false;
+  list.next = 2;
+  for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+    CommentItem item;
+    item.id = 5000 + i;
+    item.author = samples[i].author;
+    item.time = samples[i].time;
+    item.message = samples[i].text;
+    item.like = samples[i].like;
+    item.replies = samples[i].replies;
+    item.top = i == 0;
+    item.uploader = i == 1;
+    item.mid = std::to_string(100 + i);
+    item.root = "0";
+    item.parent = "0";
+    if (i == 1) {
+      item.preview.push_back({"掌机考古学家", "Media Engine 的部分在文档里写了，缓存刷新是关键。"});
+      item.preview.push_back({"像素老炮", "同问，求作者展开讲讲。"});
+    }
+    list.items.push_back(std::move(item));
+  }
+  list.selected = 1;
+  navigation_.push(std::move(list));
+}
+#endif
+
 } // namespace pspapp

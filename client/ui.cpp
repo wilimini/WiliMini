@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include "bitmap_font.hpp"
 #include "title_font.hpp"
+#include "comment_layout.hpp"
 #include "assets/wiliwili/sidebar.hpp"
 #include "settings_pages.hpp"
 
@@ -415,6 +416,12 @@ void drawFooter(const pspapp::App& app) {
                       {{"progress", progress[0] ? progress : app.status()}, {"back", back}});
     } else if (app.tileHubVisible()) {
         hint = uiText(app, pspapp::TextId::hint_tiles, {{"confirm", confirm}});
+    } else if (app.commentPage()) {
+        const bool thread = app.screen() == pspapp::Screen::Browse &&
+                            app.browsePage().request.kind == pspapp::BrowseKind::Replies;
+        hint = uiText(app, app.commentMenuOpen() ? pspapp::TextId::hint_comment_menu
+                           : thread ? pspapp::TextId::hint_reply_list : pspapp::TextId::hint_comment_list,
+                      {{"confirm", confirm}, {"back", back}});
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
         hint = uiText(app, pspapp::TextId::hint_navigation, {{"confirm", confirm}});
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
@@ -572,7 +579,8 @@ void drawIconGlyph(int icon, int x, int y, int size) {
 }
 
 // ---- Line icons: small vector shapes (32x32 grid) rendered with antialiasing and cached.
-enum IconId { IconHome, IconFire, IconUser, IconSearch, IconClock, IconMail, IconGear, IconCompass, IconCount };
+enum IconId { IconHome, IconFire, IconUser, IconSearch, IconClock, IconMail, IconGear, IconCompass, IconReply,
+              IconHeart, IconList, IconMore, IconCount };
 struct IconSeg { float x1, y1, x2, y2; };
 struct IconCircle { float cx, cy, r; };
 struct IconShape { std::vector<IconSeg> segs; std::vector<IconCircle> circles; };
@@ -620,6 +628,18 @@ IconShape buildIcon(int id) {
         case IconCompass:
             s.circles.push_back({16, 16, 12});
             iconPoly(s, {21, 11, 18, 18, 11, 21, 14, 14}, true);
+            break;
+        case IconReply:
+            iconPoly(s, {4, 6, 28, 6, 28, 21, 15, 21, 9, 27, 9, 21, 4, 21}, true);
+            break;
+        case IconHeart:
+            iconPoly(s, {16, 27, 6, 17, 4, 12, 6, 7, 11, 5.5f, 15, 8, 16, 10, 17, 8, 21, 5.5f, 26, 7, 28, 12, 26, 17, 16, 27});
+            break;
+        case IconList:
+            iconPoly(s, {5, 9, 27, 9}); iconPoly(s, {5, 16, 27, 16}); iconPoly(s, {5, 23, 20, 23});
+            break;
+        case IconMore:
+            s.circles.push_back({8, 16, 1.6f}); s.circles.push_back({16, 16, 1.6f}); s.circles.push_back({24, 16, 1.6f});
             break;
     }
     return s;
@@ -1317,6 +1337,287 @@ void drawBrowseVideosMetro(const pspapp::App& app) {
     drawGlidingSelection(target);
 }
 
+// ---- Comment lists --------------------------------------------------------------------------
+// Video comments and reply threads in all three home styles. Rows are collapsed to two lines;
+// the selected one expands in place (see comment_layout.hpp) and shows reply previews. The action
+// menu is a card over the list. Navigation and data stay in App; this is drawing and layout only.
+enum class CommentStyle { Classic, Tiles, Metro };
+
+CommentStyle commentStyle(const pspapp::App& app) {
+    return app.preferences().metro() ? CommentStyle::Metro
+         : app.preferences().tileHome() ? CommentStyle::Tiles : CommentStyle::Classic;
+}
+
+struct CommentView {
+    std::string author, time, message;
+    int like = 0, replies = 0;
+    bool liked = false, top = false, uploader = false;
+    std::vector<pspapp::ReplyPreview> preview;
+};
+
+std::vector<CommentView> commentViews(const pspapp::App& app) {
+    std::vector<CommentView> views;
+    if (app.screen() == pspapp::Screen::Comments) {
+        for (const auto& c : app.comments()) {
+            CommentView v;
+            v.author = c.author; v.time = c.time; v.message = c.message; v.like = c.like;
+            v.replies = c.replies; v.liked = c.action == 1; v.top = c.top; v.uploader = c.uploader;
+            v.preview = c.preview;
+            views.push_back(std::move(v));
+        }
+    } else {
+        for (const auto& item : app.browsePage().items) {
+            CommentView v;
+            v.author = item.comment.author.empty() ? item.title : item.comment.author;
+            v.message = item.comment.message.empty() ? item.text : item.comment.message;
+            v.like = item.comment.likes;
+            v.replies = app.browsePage().request.kind == pspapp::BrowseKind::Replies ? 0 : item.comment.replies;
+            v.liked = item.comment.action == 1;
+            views.push_back(std::move(v));
+        }
+    }
+    return views;
+}
+
+struct CommentGeom { int top, bottom, x, width; };
+
+CommentGeom commentGeom(const pspapp::App& app) {
+    const bool thread = app.screen() == pspapp::Screen::Browse;
+    switch (commentStyle(app)) {
+        case CommentStyle::Metro: return {thread ? 50 : 70, 252, 50, 412};
+        case CommentStyle::Tiles: return {32, 252, 20, 440};
+        default: return {thread ? 34 : 48, 252, 12, 450};
+    }
+}
+
+struct CommentLayoutInfo {
+    pspapp::CommentLayout layout;
+    bool loadMoreRow = false;
+    size_t rows = 0;
+};
+
+CommentLayoutInfo commentLayoutFor(const pspapp::App& app, const std::vector<CommentView>& views, const CommentGeom& geom) {
+    CommentLayoutInfo info;
+    std::vector<pspapp::CommentRowSpec> specs;
+    const int bodySize = app.preferences().bodySize;
+    for (const auto& v : views)
+        specs.push_back({std::max<int>(1, static_cast<int>(textLines(v.message, bodySize, geom.width).size())),
+                         static_cast<int>(std::min<size_t>(v.preview.size(), 2)), v.replies});
+    if (app.screen() == pspapp::Screen::Browse && app.browsePage().hasMore) {
+        specs.push_back({1, 0, 0});
+        info.loadMoreRow = true;
+    }
+    info.rows = specs.size();
+    pspapp::CommentLayoutParams params;
+    params.lineHeight = bodySize + 4;
+    params.viewportHeight = geom.bottom - geom.top;
+    params.selected = specs.empty() ? 0 : std::min<int>(app.commentSelectedRow(), static_cast<int>(specs.size()) - 1);
+    params.expanded = app.commentExpanded() && params.selected < static_cast<int>(views.size());
+    params.inner = app.commentInner();
+    info.layout = pspapp::layoutComments(specs, params);
+    return info;
+}
+
+std::string withEllipsis(std::string line) {
+    size_t n = line.size();
+    while (n > 0 && (static_cast<unsigned char>(line[n - 1]) & 0xC0) == 0x80) --n;
+    if (n > 0) --n;
+    line.resize(n);
+    return line + "…";
+}
+
+uint32_t avatarShade(const std::string& name) {
+    unsigned hash = 7;
+    for (unsigned char c : name) hash = hash * 31 + c;
+    return kTilePalette[hash % 8];
+}
+
+void drawCommentHeader(const pspapp::App& app, CommentStyle style) {
+    using namespace pspapp;
+    const bool thread = app.screen() == Screen::Browse;
+    const Locale locale = app.preferences().locale;
+    const std::string title = thread && app.browsePage().request.kind == BrowseKind::Replies
+        ? text(TextId::comments_replies_title, locale) : text(TextId::comments_title, locale);
+    if (style == CommentStyle::Metro) {
+        drawStatusBar();
+        drawTitleText(10, 5, kText, lowered(title), 400);
+        if (!thread) {
+            drawText(12, 46, 0.9f, kText, "热门", 80);
+            fillRect(12, 63, bitmapMeasure("热门", 16), 1, kPink);
+            drawText(64, 50, 0.5f, kTextDim, app.detail().card.title, 400);
+        }
+    } else if (style == CommentStyle::Tiles) {
+        drawText(12, 4, 0.9f, kText, title, 200);
+        fillRect(12, 24, bitmapMeasure(title, 16), 1, kPink);
+        if (!thread) drawText(24 + bitmapMeasure(title, 16), 8, 0.5f, kTextDim, app.detail().card.title, 380);
+    } else {
+        drawText(12, 3, 0.9f, kText, thread ? app.browsePage().title : "视频 / 评论", 350);
+        fillRect(12, 26, 456, 1, kLine);
+        if (!thread) {
+            drawText(12, 30, 0.5f, kPink, "热门", 48);
+            drawText(75, 30, 0.5f, kTextDim, app.detail().card.title, 390);
+        }
+    }
+}
+
+void drawCommentRow(const pspapp::App& app, CommentStyle style, const CommentView& view, int y, int height,
+                    bool selected, bool open, int visibleBody, int inner, int maxInner, const CommentGeom& g) {
+    using namespace pspapp;
+    const int top = std::max(y, g.top), bottom = std::min(y + height, g.bottom);
+    if (bottom <= top) return;
+    const uint32_t white = color(255, 255, 255), soft = color(214, 224, 252);
+    const bool filled = style == CommentStyle::Tiles && selected;
+    const int bodySize = app.preferences().bodySize, lineHeight = bodySize + 4;
+    if (style == CommentStyle::Tiles) fillClipped(12, y + 1, 456, height - 2, filled ? kTilePalette[0] : kPanelRaised);
+    if (style == CommentStyle::Classic) {
+        if (selected) fillClipped(6, y + 2, 2, height - 6, kPink);
+        if (y + height - 3 >= g.top && y + height - 3 < g.bottom) fillRect(12, y + height - 3, 456, 1, kLine);
+    }
+    if (style == CommentStyle::Metro && y + 2 >= g.top && y + 32 <= g.bottom) {
+        fillRect(12, y + 2, 30, 30, avatarShade(view.author));
+        size_t pos = 0;
+        const uint32_t cp = bitmapNext(view.author, pos);
+        std::string initial;
+        if (cp < 0x80) initial = std::string(1, static_cast<char>(cp));
+        else initial = view.author.substr(0, pos);
+        drawText(12, y + 8, 0.9f, white, initial, 30, true);
+    }
+    const uint32_t dim = filled ? soft : kTextDim;
+    const uint32_t author = view.uploader ? (filled ? white : kPink) : (filled || style == CommentStyle::Metro ? (filled ? white : kText) : kTextDim);
+    const std::string name = (view.top ? std::string(text(TextId::comment_pinned, app.preferences().locale)) + " · " : std::string()) + view.author;
+    const int nameWidth = bitmapMeasure(name, 12);
+    drawText(g.x, y + kCommentPadTop - 2, 0.42f, author, name, 200, false, top, bottom);
+    std::string meta = view.time;
+    if (view.replies > 0 && !open)
+        meta += (meta.empty() ? "" : "  ·  ") + formatText(TextId::comment_replies_count, app.preferences().locale,
+                                                           {{"count", std::to_string(view.replies)}});
+    drawText(g.x + std::min(nameWidth, 160) + 12, y + kCommentPadTop - 2, 0.42f, dim, meta, 200, false, top, bottom);
+    const std::string likes = "♥ " + formatCount(static_cast<uint64_t>(std::max(0, view.like)));
+    drawText(468 - bitmapMeasure(likes, 12) - 6, y + kCommentPadTop - 2, 0.42f,
+             view.liked ? (filled ? white : kPink) : dim, likes, 80, false, top, bottom);
+
+    const auto lines = textLines(view.message, bodySize, g.width);
+    const int bodyY = y + kCommentPadTop + kCommentHeader;
+    const uint32_t bodyShade = filled ? white : kText;
+    int drawn = 0;
+    if (open) {
+        for (int i = 0; i < visibleBody && inner + i < static_cast<int>(lines.size()); ++i, ++drawn)
+            drawText(g.x, bodyY + i * lineHeight, 0.7f, bodyShade, lines[inner + i], g.width, false, top, bottom);
+        if (maxInner > 0) {  // scroll position inside a long comment
+            const int track = visibleBody * lineHeight;
+            const int thumb = std::max(8, track * visibleBody / static_cast<int>(lines.size()));
+            const int at = maxInner ? (track - thumb) * inner / maxInner : 0;
+            fillClipped(472, bodyY, 2, track, filled ? soft : kLine);
+            fillClipped(472, bodyY + at, 2, thumb, filled ? white : kPink);
+        }
+    } else {
+        for (int i = 0; i < 2 && i < static_cast<int>(lines.size()); ++i, ++drawn) {
+            const bool cut = i == 1 && lines.size() > 2;
+            drawText(g.x, bodyY + i * lineHeight, 0.7f, bodyShade, cut ? withEllipsis(lines[i]) : lines[i], g.width, false, top, bottom);
+        }
+    }
+    if (open && (!view.preview.empty() || view.replies > 0)) {
+        int ey = bodyY + std::max(1, drawn) * lineHeight + 2;
+        const int previews = static_cast<int>(std::min<size_t>(view.preview.size(), 2));
+        if (previews) fillClipped(g.x, ey, 2, previews * kCommentPreviewLine, dim);
+        for (int i = 0; i < previews; ++i)
+            drawText(g.x + 8, ey + i * kCommentPreviewLine, 0.42f, dim,
+                     view.preview[i].author + "：" + view.preview[i].message, g.width - 10, false, top, bottom);
+        if (view.replies > 0)
+            drawText(g.x + 8, ey + previews * kCommentPreviewLine + 1, 0.42f, filled ? white : kPink,
+                     formatText(TextId::comment_view_replies, app.preferences().locale,
+                                {{"count", std::to_string(view.replies)}}), g.width - 10, false, top, bottom);
+    }
+}
+
+// Action card over the list: reply, like, replies, more.
+void drawCommentMenu(const pspapp::App& app, CommentStyle style, const CommentView& view) {
+    using namespace pspapp;
+    const Locale locale = app.preferences().locale;
+    const uint32_t white = color(255, 255, 255);
+    blendRect(0, 0, kWidth, 258, color(0, 0, 0), 170);
+    const int cardX = 40, cardY = 60, cardW = 400, cardH = 132;
+    fillRect(cardX, cardY, cardW, cardH, style == CommentStyle::Classic ? kPanel : kPanelRaised);
+    if (style == CommentStyle::Classic) {
+        fillRect(cardX, cardY, cardW, 1, kLine); fillRect(cardX, cardY + cardH - 1, cardW, 1, kLine);
+        fillRect(cardX, cardY, 1, cardH, kLine); fillRect(cardX + cardW - 1, cardY, 1, cardH, kLine);
+    }
+    fillRect(cardX, cardY, cardW, 2, kPink);
+    fillRect(cardX + 12, cardY + 12, 30, 30, avatarShade(view.author));
+    size_t pos = 0;
+    const uint32_t cp = bitmapNext(view.author, pos);
+    drawText(cardX + 12, cardY + 18, 0.9f, white, cp < 0x80 ? std::string(1, static_cast<char>(cp)) : view.author.substr(0, pos), 30, true);
+    drawText(cardX + 50, cardY + 11, 0.5f, kText, view.author, 330);
+    drawText(cardX + 50, cardY + 27, 0.42f, kTextDim, view.message, 330);
+
+    const auto tiles = app.commentMenuTiles();
+    const int gap = 4, count = static_cast<int>(tiles.size());
+    const int tileW = (cardW - 24 - gap * (count - 1)) / count, tileY = cardY + 58, tileH = 62;
+    for (int i = 0; i < count; ++i) {
+        const int x = cardX + 12 + i * (tileW + gap);
+        int icon = IconReply;
+        uint32_t shade = kTilePalette[0];
+        const char* label = text(TextId::comment_tile_reply, locale);
+        switch (tiles[i]) {
+            case App::CommentTile::Reply: break;
+            case App::CommentTile::Like:
+                icon = IconHeart; shade = kTilePalette[1];
+                label = text(view.liked ? TextId::comment_tile_unlike : TextId::comment_tile_like, locale);
+                break;
+            case App::CommentTile::Replies: icon = IconList; shade = kTilePalette[4]; label = text(TextId::comment_tile_replies, locale); break;
+            case App::CommentTile::More: icon = IconMore; shade = kTilePalette[7]; label = text(TextId::comment_tile_more, locale); break;
+        }
+        fillRect(x, tileY, tileW, tileH, shade);
+        drawLineIcon(icon, x + (tileW - 26) / 2, tileY + 8, 26, white);
+        drawText(x + 2, tileY + 40, 0.5f, white, label, tileW - 4, true);
+        if (i == app.commentMenuIndex()) {
+            fillRect(x - 3, tileY - 3, tileW + 6, 2, white); fillRect(x - 3, tileY + tileH + 1, tileW + 6, 2, white);
+            fillRect(x - 3, tileY - 3, 2, tileH + 6, white); fillRect(x + tileW + 1, tileY - 3, 2, tileH + 6, white);
+        }
+    }
+}
+
+void drawCommentList(const pspapp::App& app) {
+    using namespace pspapp;
+    const CommentStyle style = commentStyle(app);
+    drawCommentHeader(app, style);
+    const auto views = commentViews(app);
+    const CommentGeom geom = commentGeom(app);
+    const Locale locale = app.preferences().locale;
+    listBounds.top = geom.top;
+    if (views.empty() && !(app.screen() == Screen::Browse && app.browsePage().hasMore)) {
+        const bool failed = app.screen() == Screen::Browse && app.browseError();
+        drawText(geom.x, geom.top + 20, 0.7f, kTextDim,
+                 app.busy() ? text(TextId::comment_loading, locale)
+                 : failed ? errorMessage(app.browseError()) : text(TextId::comment_empty, locale), 440);
+        return;
+    }
+    const CommentLayoutInfo info = commentLayoutFor(app, views, geom);
+    const int scroll = updateScroll(static_cast<float>(info.layout.scrollTarget));
+    const int selected = info.rows ? std::min<int>(app.commentSelectedRow(), static_cast<int>(info.rows) - 1) : 0;
+    const bool focus = app.focusArea() == FocusArea::Content;
+    if (style == CommentStyle::Metro && focus && info.rows) {  // behind the rows, so the avatar keeps its colour
+        const float target[4] = {12.f, static_cast<float>(geom.top + info.layout.top[selected] - scroll), 456.f,
+                                 static_cast<float>(info.layout.height[selected])};
+        drawGlidingSelection(target);
+    }
+    for (size_t i = 0; i < info.rows; ++i) {
+        const int y = geom.top + info.layout.top[i] - scroll, height = info.layout.height[i];
+        if (y >= geom.bottom || y + height <= geom.top) continue;
+        const bool isSelected = focus && static_cast<int>(i) == selected;
+        if (i >= views.size()) {  // "load more" row of a reply thread
+            const uint32_t shade = style == CommentStyle::Tiles && isSelected ? color(255, 255, 255) : kPink;
+            if (style == CommentStyle::Tiles) fillClipped(12, y + 1, 456, height - 2, isSelected ? kTilePalette[0] : kPanelRaised);
+            drawText(geom.x, y + 12, 0.7f, shade, text(TextId::comment_load_more, locale), 400, false, geom.top, geom.bottom);
+            continue;
+        }
+        const bool open = isSelected && app.commentExpanded();
+        drawCommentRow(app, style, views[i], y, height, isSelected, open, info.layout.visibleBody, app.commentInner(),
+                       info.layout.maxInner, geom);
+    }
+    if (app.commentMenuOpen() && static_cast<size_t>(selected) < views.size()) drawCommentMenu(app, style, views[selected]);
+}
+
 // Video detail as tiles: cover, title block, four action tiles and a strip of part tiles.
 void drawDetailTiles(const pspapp::App& app) {
     using namespace pspapp;
@@ -1869,13 +2170,6 @@ void drawLicenseText(const pspapp::App& app) {
     }
 }
 
-int commentsHeight(const pspapp::App& app) {
-    int height = 0;
-    for (const auto& item : app.comments())
-        height += 29 + static_cast<int>(textLines(item.message, app.preferences().bodySize, 456).size()) * (app.preferences().bodySize + 4);
-    return height;
-}
-
 void drawPgcPosters(const pspapp::App& app) {
     const auto& page = app.browsePage();
     drawText(12, 7, 0.9f, kPink, page.title, 360);
@@ -1958,6 +2252,7 @@ void drawPgcEpisodes(const pspapp::App& app) {
 }
 
 void drawBrowse(const pspapp::App& app) {
+    if (app.commentPage()) { drawCommentList(app); return; }
     const auto& page = app.browsePage();
     if (!app.browseError() && !page.items.empty()) {
         if (pspapp::isPgcPosterPage(page.request.kind)) { drawPgcPosters(app); return; }
@@ -2039,41 +2334,6 @@ void drawBrowse(const pspapp::App& app) {
     }
 }
 
-void drawComments(const pspapp::App& app) {
-    drawText(12, 3, 0.9f, kText, "视频 / 评论", 350);
-    fillRect(12, 26, 456, 1, kLine);
-    drawText(12, 30, 0.5f, kPink, "热门", 48);
-    drawText(75, 30, 0.5f, kTextDim, app.detail().card.title, 390);
-    const auto& comments = app.comments();
-    if (comments.empty()) {
-        drawEmpty("评论区为空", std::string(app.preferences().backButton()) + " 返回视频详情");
-        return;
-    }
-    int y = 52 - app.commentScroll();
-    const int lineHeight = app.preferences().bodySize + 4;
-    size_t commentIndex = 0;
-    for (const auto& item : comments) {
-        const auto lines = textLines(item.message, app.preferences().bodySize, 456);
-        const int height = 29 + static_cast<int>(lines.size()) * lineHeight;
-        if (y + height > 49 && y < 251) {
-            if (commentIndex == app.selectedComment()) fillRect(6, std::max(y, 49), 2, std::min(y + height, 251) - std::max(y, 49), kPink);
-            drawText(12, y, 0.5f, item.uploader ? kPink : kTextDim,
-                     std::string(item.top ? "置顶 · " : "") + item.author, 235, false, 49, 251);
-            drawText(253, y, 0.5f, kTextDim, item.time, 135, false, 49, 251);
-            drawText(400, y, 0.5f, kTextDim, formatCount(static_cast<uint64_t>(item.like)) + " 赞", 68, false, 49, 251);
-            for (size_t line = 0; line < lines.size(); ++line) {
-                const int lineY = y + 17 + static_cast<int>(line) * lineHeight;
-                if (lineY + lineHeight <= 49 || lineY >= 251) continue;
-                drawText(12, lineY, 0.7f, kText, lines[line], 456, false, 49, 251);
-            }
-            if (y + height - 5 >= 49 && y + height - 5 < 251)
-                fillRect(12, y + height - 5, 456, 1, kLine);
-        }
-        y += height;
-        ++commentIndex;
-    }
-}
-
 }  // namespace
 
 void ui_scroll_browse(pspapp::App& app, int direction) {
@@ -2083,17 +2343,17 @@ void ui_scroll_browse(pspapp::App& app, int direction) {
     }
     app.browseMove(0, direction);
 }
-void ui_select_comment(pspapp::App& app, int direction) {
-    app.selectComment(direction);
-    int offset = 0;
-    for (size_t i = 0; i < app.selectedComment() && i < app.comments().size(); ++i)
-        offset += 29 + static_cast<int>(textLines(app.comments()[i].message, app.preferences().bodySize, 456).size()) * (app.preferences().bodySize + 4);
-    app.setCommentScrollLimit(std::max(0, commentsHeight(app) - 199));
-    app.scrollComments(offset - app.commentScroll());
-}
-void ui_scroll_comments(pspapp::App& app, int direction) {
-    app.setCommentScrollLimit(std::max(0, commentsHeight(app) - 199));
-    app.scrollComments(direction * (app.preferences().bodySize + 4));
+void ui_comment_move(pspapp::App& app, int direction) {
+    if (!app.commentPage()) return;
+    if (app.commentExpanded()) {
+        // A long expanded comment scrolls inside its row before the selection moves on.
+        const auto views = commentViews(app);
+        const CommentLayoutInfo info = commentLayoutFor(app, views, commentGeom(app));
+        const int inner = app.commentInner();
+        if (direction > 0 && inner < info.layout.maxInner) { app.commentSetInner(std::min(info.layout.maxInner, inner + 2)); return; }
+        if (direction < 0 && inner > 0) { app.commentSetInner(std::max(0, inner - 2)); return; }
+    }
+    app.commentMoveSelection(direction);
 }
 
 void ui_scroll_document(pspapp::App& app, int direction) {
@@ -2206,7 +2466,7 @@ void ui_render(const pspapp::App& app) {
     } else if (app.screen() == pspapp::Screen::Detail) {
         if (tile) drawDetailTiles(app); else drawDetail(app);
     } else if (app.screen() == pspapp::Screen::Comments) {
-        drawComments(app);
+        drawCommentList(app);
     } else if (hub) {
         if (app.preferences().metro()) drawHub(app, nowMs); else drawHubTiles(app, nowMs);
     } else {

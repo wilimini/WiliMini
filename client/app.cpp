@@ -343,6 +343,9 @@ void App::init() {
     }
     loadCachedCards();
     status_ = recommend_.empty() ? "推荐 · 按 □ 搜索，△ 刷新" : "缓存首页 · 联网后自动刷新";
+#ifdef BILI_UI_FIXTURE
+    loadUiFixture();
+#endif
     if (!preferencesLoaded) status_ = "设置文件无法读取 · 已使用默认设置";
 }
 
@@ -1721,6 +1724,11 @@ void App::runJob() {
                         char buffer[32]{};
                         std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", std::localtime(&stamp));
                         item.time = buffer;
+                    }
+                    for (const auto& nested : reply.replies) {
+                        if (item.preview.size() >= 2) break;
+                        ReplyPreview preview{nested.member.uname, trim(decodeEntities(nested.content.message))};
+                        if (!preview.author.empty() && !preview.message.empty()) item.preview.push_back(std::move(preview));
                     }
                     item.like = static_cast<int>(reply.like);
                     item.top = top;

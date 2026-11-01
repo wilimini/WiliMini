@@ -98,6 +98,25 @@ public:
     void commentActions();
     void selectComment(int direction);
     void beginComment();
+    // Comment lists: video comments and reply threads share one design and one set of controls.
+    enum class CommentTile { Reply, Like, Replies, More };
+    bool commentPage() const;
+    int commentSelectedRow() const;
+    size_t commentRowCount() const;
+    bool commentExpanded() const;
+    int commentInner() const;
+    void commentSetInner(int line);
+    bool commentMenuOpen() const;
+    int commentMenuIndex() const;
+    std::vector<CommentTile> commentMenuTiles() const;
+    void commentMoveSelection(int dy);
+    void commentToggle();
+    void commentOpenMenu();
+    void commentMenuMove(int dx);
+    void commentMenuClose();
+    void commentMenuActivate();
+    void commentQuickLike();
+    void commentQuickReplies();
     void beginMessage();
     void submitCommunityInput(const std::string &text);
     bool communityInputPending() const { return communityInputPending_; }
@@ -264,6 +283,15 @@ private:
     const CommentsRoute &commentsState() const { return navigation_.get<CommentsRoute>(); }
     BrowseRoute &browseState() { return navigation_.get<BrowseRoute>(); }
     const BrowseRoute &browseState() const { return navigation_.get<BrowseRoute>(); }
+    CommentUi* commentUi();
+    const CommentUi* commentUi() const;
+    bool selectedCommentData(CommunityComment& comment, BrowseItem& item) const;
+    void commentReply(const CommunityComment& comment, const BrowseRequest& request);
+    void commentVote(const CommunityComment& comment, const BrowseRequest& request);
+    void commentOpenReplies(const CommunityComment& comment, const BrowseRequest& request);
+#ifdef BILI_UI_FIXTURE
+    void loadUiFixture();
+#endif
     void pushBrowse(BrowseRoute page);
     void pushCommentActions(const BrowseItem &item);
     void clearAccountPages();
