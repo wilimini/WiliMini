@@ -63,6 +63,13 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 该模式不加载 native ME bridge，但 Headless 仍需使用启用了 FFmpeg 的构建。
 `BILI_HEADLESS_PLAYER` 必须是 `psp-native` 或 `ppsspp-sceMpeg`。
 
+### UI 夹具
+
+`tools/ppsspp/seed-ui-fixture.py MEMSTICK [--tiles] [--dark]` 向隔离的 memstick 写入离线夹具：
+缓存的首页数据、生成的封面、本地历史和稍后观看，以及可选的 `settings.json`（`--tiles` 开启磁贴主页）。
+数据为合成数据，用于在没有账号和网络时检查 UI。按键回放的 MASK 是十六进制 sceCtrl 掩码，
+例如 `0x4000`（×）、`0x2000`（○）、`0x10`/`0x40`/`0x80`/`0x20`（上/下/左/右）。
+
 ### 输出和诊断
 
 - `BILI_HEADLESS_SCREENSHOT`：指定截图路径。

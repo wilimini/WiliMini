@@ -55,6 +55,11 @@ public:
     // been entered; child pages opened from it return to it when popped.
     bool tileHubVisible() const { return preferences_.tileHome && hubOpen_ && navigation_.size() == 1; }
     int tileSelection() const { return hubSelection_; }
+    // Changes whenever the visible page changes (route, tab or search view); drives page transitions.
+    uint64_t pageKey() const {
+        return navigation_.current().id * 64 + static_cast<uint64_t>(root().tab) * 8 +
+               static_cast<uint64_t>(root().searchView);
+    }
     void tileMove(int dx, int dy);
     void tileActivate();
     // Confirm starts a short launch animation; the destination opens when it ends (see poll()).
