@@ -386,7 +386,9 @@ set(LOADER_EBOOT_PBP "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP")
 set(ICON0_PNG "${ROOT}/assets/ICON0.png")
 add_custom_command(OUTPUT "${LOADER_EBOOT_PBP}"
     BYPRODUCTS "${LOADER_PARAM_SFO}"
-    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=1 -s APP_VER="${BILI_BUILD_VERSION}" "WiliMini ${BILI_BUILD_VERSION}" "${LOADER_PARAM_SFO}"
+    # APP_VER accepts a numeric PSP version, not git-describe suffixes.
+    # Keep the full build identifier in TITLE and the build manifest instead.
+    COMMAND "${PSPDEV}/bin/mksfoex" -d MEMSIZE=1 "WiliMini ${BILI_BUILD_VERSION}" "${LOADER_PARAM_SFO}"
     COMMAND "${PSPDEV}/bin/pack-pbp"
         "${LOADER_EBOOT_PBP}"
         "${LOADER_PARAM_SFO}"
