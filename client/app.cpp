@@ -574,7 +574,8 @@ void App::moveSelection(int dx, int dy) {
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
-        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 && root().selection < kGridColumns) {
+        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 &&
+            root().selection < (preferences_.tileHome ? 1 : kGridColumns)) {
             navigation_.current().focus = FocusArea::Categories;
             return;
         }
@@ -583,15 +584,10 @@ void App::moveSelection(int dx, int dy) {
         const size_t total = root().searchView == SearchView::Landing ? 2 + root().searchTopics.size() :
                              root().searchView == SearchView::History ? searchHistory_.size() : search_.size();
         if (!total) return;
-        // Tile theme: search results are a two-column grid like the home tab.
-        const bool grid = preferences_.tileHome && root().searchView == SearchView::Results;
-        int value = static_cast<int>(root().selection) + (grid ? dx + dy * static_cast<int>(kGridColumns) : dy);
-        if (grid && dx > 0 && root().selection % kGridColumns == kGridColumns - 1) value = static_cast<int>(root().selection);
-        if (grid && dx < 0 && root().selection % kGridColumns == 0) value = static_cast<int>(root().selection);
+        int value = static_cast<int>(root().selection) + dy;
         value = std::max(0, std::min(value, static_cast<int>(total) - 1));
         root().selection = static_cast<size_t>(value);
-        if (root().searchView == SearchView::Results && dy > 0 &&
-            root().selection + (grid ? kGridColumns : 1) >= total && hasMore()) loadNextPage();
+        if (root().searchView == SearchView::Results && dy > 0 && root().selection + 1 == total && hasMore()) loadNextPage();
         return;
     }
     if (screen() == Screen::Comments) {
@@ -609,18 +605,6 @@ void App::moveSelection(int dx, int dy) {
     if (screen() == Screen::Mine) {
         size_t total = 1 + history_.size() + later_.size();
         if (!total) return;
-        if (preferences_.tileHome) {
-            // Tile theme: the account tile is row 0, local records follow in a two-column grid.
-            const int at = static_cast<int>(root().selection), last = static_cast<int>(total) - 1;
-            int value = at;
-            if (at == 0) { if (dy > 0 || dx > 0) value = 1; }
-            else if (dx < 0 && (at - 1) % 2 == 1) value = at - 1;
-            else if (dx > 0 && (at - 1) % 2 == 0) value = at + 1 <= last ? at + 1 : at;
-            else if (dy < 0) value = at - 1 < 2 ? 0 : at - 2;
-            else if (dy > 0) value = at + 2 <= last ? at + 2 : at;
-            root().selection = static_cast<size_t>(std::max(0, std::min(value, last)));
-            return;
-        }
         int value = static_cast<int>(root().selection) + dx + dy;
         if (value < 0) value = 0;
         if (value >= static_cast<int>(total)) value = static_cast<int>(total) - 1;
@@ -629,13 +613,15 @@ void App::moveSelection(int dx, int dy) {
     }
     const auto& list = activeCards();
     if (list.empty()) return;
+    // The tile theme shows the home tabs as a single-column list.
+    const int columns = preferences_.tileHome ? 1 : static_cast<int>(kGridColumns);
     int value = static_cast<int>(root().selection);
-    if (dx < 0 && value % static_cast<int>(kGridColumns) != 0) --value;
-    if (dx > 0 && value % static_cast<int>(kGridColumns) != static_cast<int>(kGridColumns) - 1 && value + 1 < static_cast<int>(list.size())) ++value;
-    if (dy < 0 && value >= static_cast<int>(kGridColumns)) value -= static_cast<int>(kGridColumns);
-    if (dy > 0 && value + static_cast<int>(kGridColumns) < static_cast<int>(list.size())) value += static_cast<int>(kGridColumns);
+    if (dx < 0 && value % columns != 0) --value;
+    if (dx > 0 && value % columns != columns - 1 && value + 1 < static_cast<int>(list.size())) ++value;
+    if (dy < 0 && value >= columns) value -= columns;
+    if (dy > 0 && value + columns < static_cast<int>(list.size())) value += columns;
     root().selection = static_cast<size_t>(value);
-    if (dy > 0 && value + static_cast<int>(kGridColumns) >= static_cast<int>(list.size()) && hasMore())
+    if (dy > 0 && value + columns >= static_cast<int>(list.size()) && hasMore())
         loadNextPage();
 }
 
@@ -1079,7 +1065,7 @@ void App::updateCoverQueue() {
                                 ? browseState().selection : root().selection;
     const bool posters = hasBrowse() &&
                          isPgcPosterPage(browseState().page.request.kind);
-    const bool grid = screen() == Screen::Home && root().tab != Tab::Search;
+    const bool grid = screen() == Screen::Home && root().tab != Tab::Search && !preferences_.tileHome;
     // Include the preceding row while the selected row scrolls into view.
     const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
                                                           : (selected > 2 ? selected - 2 : 0);
@@ -1113,7 +1099,7 @@ void App::updateCoverQueue() {
             enqueue(list[i].bvid, normalizePicture(list[i].picture, true));
     } else if (screen() == Screen::Mine) {
         const size_t total = history_.size() + later_.size();
-        for (size_t i = first; i < total && i < first + 2; ++i) {
+        for (size_t i = first; i < total && i < first + (preferences_.tileHome ? kPageSize : 2); ++i) {
             const auto &card = i < history_.size() ? history_[i] : later_[i - history_.size()];
             enqueue(card.bvid, normalizePicture(card.picture, true));
         }

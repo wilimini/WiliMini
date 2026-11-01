@@ -19,6 +19,8 @@
 #include <pspdisplay.h>
 #include <pspgu.h>
 #include <pspkernel.h>
+#include <psppower.h>
+#include <psprtc.h>
 #include <psputility.h>
 #include <psputility_osk.h>
 
@@ -519,29 +521,144 @@ void blendRect(int x, int y, int width, int height, uint32_t shade, unsigned alp
     }
 }
 
-// 16 px text drawn at double size (32 px) for the big numbers on live tiles.
-void drawBigText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
+// 16 px bitmap glyphs enlarged to 32 px with bilinear smoothing: large page titles and the big
+// numbers on live tiles. The bitmap font has no larger size, so this is the thin "light" look.
+void drawSmoothText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
     const int right = std::min(kWidth, x + maxWidth);
     for (size_t pos = 0; pos < text.size();) {
         const auto* glyph = bitmapGlyph(bitmapNext(text, pos), 16);
         if (!glyph) continue;
-        if (x + glyph->advance * 2 > right) break;
-        for (int yy = 0; yy < glyph->height; ++yy)
-            for (int xx = 0; xx < glyph->width; ++xx) {
-                const int pixel = yy * glyph->width + xx;
-                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
-                for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
-                    blendPixel(x + xx * 2 + dx, y + yy * 2 + dy, shade, alpha);
+        const int advance = glyph->advance * 2;
+        if (x + advance > right) break;
+        const int gw = glyph->width, gh = glyph->height;
+        auto sample = [&](int px, int py) -> float {
+            if (px < 0 || py < 0 || px >= gw || py >= gh) return 0.f;
+            const int i = py * gw + px;
+            return static_cast<float>(((glyph->alpha[i / 2] >> ((i % 2) * 4)) & 15) * 17);
+        };
+        for (int oy = -1; oy <= gh * 2; ++oy) {
+            const float v = oy * 0.5f - 0.25f;
+            const int y0 = static_cast<int>(std::floor(v));
+            const float fy = v - y0;
+            for (int ox = -1; ox <= gw * 2; ++ox) {
+                const float u = ox * 0.5f - 0.25f;
+                const int x0 = static_cast<int>(std::floor(u));
+                const float fx = u - x0;
+                const float top = sample(x0, y0) * (1 - fx) + sample(x0 + 1, y0) * fx;
+                const float bottom = sample(x0, y0 + 1) * (1 - fx) + sample(x0 + 1, y0 + 1) * fx;
+                const unsigned alpha = static_cast<unsigned>(top * (1 - fy) + bottom * fy);
+                if (alpha > 3) blendPixel(x + ox, y + oy, shade, alpha);
             }
-        x += glyph->advance * 2;
+        }
+        x += advance;
     }
 }
 
-void drawIconGlyph(int icon, int x, int y, int size) {
-    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx) {
-        const unsigned pixel = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];
-        blendPixel(x + xx, y + yy, color(255, 255, 255), ((pixel >> 12) & 15) * 17);
+// ---- Line icons: small vector shapes (32x32 grid) rendered with antialiasing and cached.
+enum IconId { IconHome, IconFire, IconUser, IconSearch, IconClock, IconMail, IconGear, IconCompass, IconCount };
+struct IconSeg { float x1, y1, x2, y2; };
+struct IconCircle { float cx, cy, r; };
+struct IconShape { std::vector<IconSeg> segs; std::vector<IconCircle> circles; };
+
+void iconPoly(IconShape& shape, std::initializer_list<float> points, bool closed = false) {
+    const float* p = points.begin();
+    const size_t count = points.size() / 2;
+    for (size_t i = 0; i + 1 < count; ++i) shape.segs.push_back({p[i * 2], p[i * 2 + 1], p[i * 2 + 2], p[i * 2 + 3]});
+    if (closed && count > 2) shape.segs.push_back({p[count * 2 - 2], p[count * 2 - 1], p[0], p[1]});
+}
+
+IconShape buildIcon(int id) {
+    IconShape s;
+    switch (id) {
+        case IconHome:
+            iconPoly(s, {4, 15, 16, 4, 28, 15});
+            iconPoly(s, {7, 13, 7, 28, 13, 28, 13, 19, 19, 19, 19, 28, 25, 28, 25, 13});
+            break;
+        case IconFire:
+            iconPoly(s, {16, 3, 18, 8, 22, 11, 24, 16, 24, 19, 23, 23, 20, 26.5f, 16, 27.5f, 12, 26.5f, 9, 23, 8, 19,
+                         9, 15, 11, 11, 13, 14, 15, 14, 16, 10, 16, 3});
+            break;
+        case IconUser:
+            s.circles.push_back({16, 11, 6});
+            iconPoly(s, {4, 29, 5, 24.5f, 8.5f, 21, 12, 19.5f, 16, 19, 20, 19.5f, 23.5f, 21, 27, 24.5f, 28, 29});
+            break;
+        case IconSearch:
+            s.circles.push_back({13, 13, 8});
+            iconPoly(s, {19, 19, 28, 28});
+            break;
+        case IconClock:
+            s.circles.push_back({16, 16, 12});
+            iconPoly(s, {16, 8, 16, 16, 22, 20});
+            break;
+        case IconMail:
+            iconPoly(s, {3, 7, 29, 7, 29, 25, 3, 25}, true);
+            iconPoly(s, {3, 8, 16, 18, 29, 8});
+            break;
+        case IconGear:
+            s.circles.push_back({16, 16, 5});
+            iconPoly(s, {16, 2, 16, 7}); iconPoly(s, {16, 25, 16, 30}); iconPoly(s, {2, 16, 7, 16});
+            iconPoly(s, {25, 16, 30, 16}); iconPoly(s, {6, 6, 9.5f, 9.5f}); iconPoly(s, {22.5f, 22.5f, 26, 26});
+            iconPoly(s, {26, 6, 22.5f, 9.5f}); iconPoly(s, {9.5f, 22.5f, 6, 26});
+            break;
+        case IconCompass:
+            s.circles.push_back({16, 16, 12});
+            iconPoly(s, {21, 11, 18, 18, 11, 21, 14, 14}, true);
+            break;
     }
+    return s;
+}
+
+float segmentDistance(const IconSeg& g, float px, float py) {
+    const float dx = g.x2 - g.x1, dy = g.y2 - g.y1;
+    const float length2 = dx * dx + dy * dy;
+    float t = length2 > 0.f ? ((px - g.x1) * dx + (py - g.y1) * dy) / length2 : 0.f;
+    t = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
+    const float cx = g.x1 + dx * t - px, cy = g.y1 + dy * t - py;
+    return std::sqrt(cx * cx + cy * cy);
+}
+
+// Returns an alpha bitmap (size x size) for the icon; built on first use.
+const std::vector<uint8_t>& iconBitmap(int id, int size) {
+    static std::vector<uint8_t> cache[IconCount][2];
+    std::vector<uint8_t>& bitmap = cache[id][size > 30 ? 1 : 0];
+    if (!bitmap.empty()) return bitmap;
+    const IconShape shape = buildIcon(id);
+    const float scale = 32.f / size, halfStroke = size > 30 ? 1.25f : 1.0f;
+    bitmap.assign(static_cast<size_t>(size) * size, 0);
+    for (int py = 0; py < size; ++py) for (int px = 0; px < size; ++px) {
+        const float gx = (px + 0.5f) * scale, gy = (py + 0.5f) * scale;
+        float nearest = 1e9f;
+        for (const auto& seg : shape.segs) nearest = std::min(nearest, segmentDistance(seg, gx, gy));
+        for (const auto& circle : shape.circles)
+            nearest = std::min(nearest, std::fabs(std::sqrt((gx - circle.cx) * (gx - circle.cx) +
+                                                           (gy - circle.cy) * (gy - circle.cy)) - circle.r));
+        const float coverage = halfStroke + 0.5f - nearest / scale;
+        bitmap[static_cast<size_t>(py) * size + px] = static_cast<uint8_t>(255.f * (coverage < 0.f ? 0.f : coverage > 1.f ? 1.f : coverage));
+    }
+    return bitmap;
+}
+
+void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
+    if (id < 0 || id >= IconCount) return;
+    const auto& bitmap = iconBitmap(id, size);
+    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx)
+        blendPixel(x + xx, y + yy, shade, bitmap[static_cast<size_t>(yy) * size + xx]);
+}
+
+// Top status strip: product name on the left, clock and battery on the right.
+void drawStatusBar() {
+    drawText(10, 1, 0.42f, kTextDim, "WILIMINI", 120);
+    ScePspDateTime now{};
+    sceRtcGetCurrentClockLocalTime(&now);
+    char clock[16];
+    std::snprintf(clock, sizeof(clock), "%d:%02d", now.hour, now.minute);
+    int percent = scePowerGetBatteryLifePercent();
+    if (percent < 0 || percent > 100) percent = 100;
+    drawText(446 - bitmapMeasure(clock, 12), 1, 0.42f, kTextDim, clock, 60);
+    fillRect(452, 3, 16, 7, kTextDim);
+    fillRect(453, 4, 14, 5, kBackground);
+    fillRect(454, 5, std::max(1, percent * 12 / 100), 3, kTextDim);
+    fillRect(468, 5, 2, 3, kTextDim);
 }
 
 float clamp01(float v) { return v < 0.f ? 0.f : v > 1.f ? 1.f : v; }
@@ -558,7 +675,7 @@ struct HubFx {
 HubFx hubFx;
 
 // Per-tile entrance (staggered left to right) and launch (the chosen tile leaves last).
-struct TileMotion { float scale = 1.f; float opacity = 1.f; bool back = false; bool settled = true; };
+struct TileMotion { float scale = 1.f; float opacity = 1.f; bool back = false; };
 
 TileMotion tileMotion(const pspapp::App& app, int index, bool live, int64_t now) {
     using namespace pspapp;
@@ -573,14 +690,12 @@ TileMotion tileMotion(const pspapp::App& app, int index, bool live, int64_t now)
         motion.scale = 1.f - easeIn(out);
         motion.opacity = 1.f - out * 0.4f;
         if (chosen && launch < 130) motion.scale = 1.f - 0.07f * easeOut(launch / 130.f);  // press
-        motion.settled = false;
         return motion;
     }
     const float in = clamp01((now - hubFx.enterMs - (tile.col * 55 + tile.row * 28)) / 420.f);
     if (in < 1.f) {
         motion.scale = std::max(0.02f, easeOut(in));
         motion.opacity = easeOut(in);
-        motion.settled = false;
         return motion;
     }
     if (live) {
@@ -600,21 +715,28 @@ TileMotion tileMotion(const pspapp::App& app, int index, bool live, int64_t now)
     return motion;
 }
 
+std::string lowered(std::string label) {
+    for (char& c : label) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return label;
+}
+
 void drawHub(const pspapp::App& app, int64_t now) {
     using namespace pspapp;
     struct Look { TileId id; TextId label; int icon; uint32_t shade; };
     static const Look looks[] = {
-        {TileId::Recommend, TextId::tile_recommend, 0, color(0, 80, 239)},
-        {TileId::Hots,      TextId::tile_hots,     -1, color(216, 0, 115)},
-        {TileId::Search,    TextId::tile_search,   -1, color(162, 0, 37)},
-        {TileId::Discover,  TextId::tile_discover, -1, color(0, 171, 169)},
-        {TileId::Dynamic,   TextId::tile_dynamic,   1, color(96, 169, 23)},
-        {TileId::Inbox,     TextId::tile_inbox,     3, color(250, 104, 0)},
-        {TileId::Mine,      TextId::tile_mine,      2, color(106, 0, 255)},
-        {TileId::Settings,  TextId::tile_settings,  4, color(100, 118, 135)},
+        {TileId::Recommend, TextId::tile_recommend, IconHome, color(0, 80, 239)},
+        {TileId::Hots,      TextId::tile_hots,      IconFire, color(216, 0, 115)},
+        {TileId::Search,    TextId::tile_search,    IconSearch, color(100, 118, 135)},
+        {TileId::Discover,  TextId::tile_discover,  IconCompass, color(162, 0, 37)},
+        {TileId::Dynamic,   TextId::tile_dynamic,   IconUser, color(0, 171, 169)},
+        {TileId::Inbox,     TextId::tile_inbox,     IconMail, color(0, 80, 239)},
+        {TileId::Mine,      TextId::tile_mine,      IconClock, color(250, 104, 0)},
+        {TileId::Settings,  TextId::tile_settings,  IconGear, color(100, 118, 135)},
     };
     const Locale locale = app.preferences().locale;
     const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
+
+    drawStatusBar();
 
     // Smooth scrolling toward the pan that keeps the selection on screen.
     hubFx.panTarget = static_cast<float>(tilePan(app.tileSelection(), static_cast<int>(hubFx.panTarget)));
@@ -622,11 +744,11 @@ void drawHub(const pspapp::App& app, int64_t now) {
     if (std::fabs(hubFx.panTarget - hubFx.pan) < 0.4f) hubFx.pan = hubFx.panTarget;
     const float pan = hubFx.pan;
 
-    // Title slides in on entrance and drifts slower than the tiles (parallax).
+    // Large light title: slides in on entrance and drifts slower than the tiles (parallax).
     const float titleIn = easeOut((now - hubFx.enterMs) / 450.f);
-    drawText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 6, 0.9f,
-             shadeMix(kBackground, kText, static_cast<unsigned>(titleIn * 256.f)),
-             text(TextId::tile_title, locale), 300);
+    drawSmoothText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 11,
+                   shadeMix(kBackground, kText, static_cast<unsigned>(titleIn * 256.f)),
+                   lowered(text(TextId::tile_title, locale)), 300);
 
     for (int i = 0; i < kTileCount; ++i) {
         const TileSpec& tile = kTiles[i];
@@ -650,22 +772,16 @@ void drawHub(const pspapp::App& app, int64_t now) {
 
         const char* label = text(look->label, locale);
         if (motion.back) {
-            drawBigText(x + 8, y + 6, white, big, w - 16);
+            drawSmoothText(x + 8, y + 4, white, big, w - 16);
             if (tile.cols == 1) continue;
             drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
         } else if (tile.cols == 1) {
-            if (look->icon >= 0) {
-                drawIconGlyph(look->icon, x + (w - 22) / 2, y + 10, 22);
-                drawText(x + 2, y + h - 18, 0.5f, white, label, w - 4, true);
-            } else {
-                const bool fits = bitmapMeasure(label, 16) <= w - 4;
-                drawText(x + 2, y + (h - (fits ? 16 : 12)) / 2, fits ? 0.9f : 0.5f, white, label, w - 4, true);
-            }
+            drawLineIcon(look->icon, x + (w - 26) / 2, y + (h - 26) / 2, 26, white);
         } else {
-            if (look->icon >= 0) drawIconGlyph(look->icon, x + 8, y + 8, 44);
-            drawText(x + 8, y + h - 24, 0.9f, white, label, w - 16);
+            drawLineIcon(look->icon, x + 8, y + 8, 40, white);
             const std::string subtitle = app.tileSubtitle(tile.id);
-            if (!subtitle.empty()) drawText(x + 8, y + h - 42, 0.5f, softWhite, subtitle, w - 16);
+            if (!subtitle.empty()) drawText(x + 8, y + h - 34, 0.5f, softWhite, subtitle, w - 16);
+            drawText(x + 8, y + h - 18, 0.5f, white, label, w - 16);
         }
     }
 
@@ -691,12 +807,11 @@ void drawHub(const pspapp::App& app, int64_t now) {
 }
 
 // ---- Tile pages ---------------------------------------------------------------------------
-// With the tile theme on, every page shares the Metro look: flat palette, a pivot header, video
-// lists drawn as a grid of cover tiles with a gliding focus ring, and a flip-in transition
-// whenever the page changes. Navigation and data stay in App; this is drawing only.
-constexpr int kGridTop = 49, kGridBottom = 251, kGridY0 = 53;
-constexpr int kTileX = 12, kTileW = 224, kTileH = 98, kPitchX = 228, kPitchY = 102;
-constexpr int kAccountH = 50;
+// With the tile theme on, every page shares the Metro look: flat palette, status bar, a large
+// lowercase title with a pivot row, list rows with a small cover, a tinted selection that glides
+// between rows, and a flip-in transition whenever the page changes. Navigation and data stay in
+// App; this is drawing only.
+constexpr int kListTop = 66, kListBottom = 252, kListY0 = 70, kRowPitch = 36, kRowHeight = 34;
 const uint32_t kTilePalette[] = {color(0, 80, 239), color(216, 0, 115), color(96, 169, 23), color(250, 104, 0),
                                  color(0, 171, 169), color(162, 0, 37), color(106, 0, 255), color(100, 118, 135)};
 
@@ -705,8 +820,8 @@ struct PageFx {
     int64_t enterMs = 0;
     float scroll = 0.f, velocity = 0.f;
     uint64_t lastUs = 0;
-    bool ringReady = false;
-    float ring[4]{};
+    bool glideReady = false;
+    float glide[4]{};
 };
 PageFx pageFx;
 
@@ -731,57 +846,40 @@ int updateScroll(float target) {
     return static_cast<int>(pageFx.scroll + 0.5f);
 }
 
-void fillClipped(int x, int y, int w, int h, uint32_t shade) {
-    const int top = std::max(y, kGridTop), bottom = std::min(y + h, kGridBottom);
-    if (bottom > top) fillRect(x, top, w, bottom - top, shade);
-}
-
-// Focus ring that glides to its target rectangle.
-void drawRing(const float target[4]) {
-    if (!pageFx.ringReady) { for (int k = 0; k < 4; ++k) pageFx.ring[k] = target[k]; pageFx.ringReady = true; }
-    for (int k = 0; k < 4; ++k) {
-        pageFx.ring[k] += (target[k] - pageFx.ring[k]) * 0.4f;
-        if (std::fabs(target[k] - pageFx.ring[k]) < 0.5f) pageFx.ring[k] = target[k];
-    }
-    const int x = static_cast<int>(pageFx.ring[0] + 0.5f), y = static_cast<int>(pageFx.ring[1] + 0.5f);
-    const int w = static_cast<int>(pageFx.ring[2] + 0.5f), h = static_cast<int>(pageFx.ring[3] + 0.5f);
-    fillClipped(x - 3, y - 3, w + 6, 2, kText);
-    fillClipped(x - 3, y + h + 1, w + 6, 2, kText);
-    fillClipped(x - 3, y - 3, 2, h + 6, kText);
-    fillClipped(x + w + 1, y - 3, 2, h + 6, kText);
-}
-
-void drawVideoTile(int x, int y, const TileItem& item, size_t index) {
-    const int top = std::max(y, kGridTop), bottom = std::min(y + kTileH, kGridBottom);
+// Selected-row highlight: accent tint with an underline, as on the web design.
+void drawSelection(int x, int y, int w, int h, int clipTop, int clipBottom) {
+    const int top = std::max(y, clipTop), bottom = std::min(y + h, clipBottom);
     if (bottom <= top) return;
-    const uint32_t white = color(255, 255, 255);
-    // The 16:9 cover is drawn taller than the tile and cropped by the clip rows.
-    drawCover(*item.bvid, x, y - 10, kTileW, 118, false, top, bottom, kTilePalette[index % 8], false);
-    if (item.duration > 0 && y + 4 >= kGridTop) {
-        const std::string duration = formatDuration(item.duration);
-        const int badge = static_cast<int>(duration.size()) * 6 + 8;
-        blendRect(x + kTileW - badge - 4, y + 4, badge, 14, color(0, 0, 0), 170);
-        drawText(x + kTileW - badge, y + 4, 0.42f, white, duration, badge, false, top, bottom);
-    }
-    const int stripTop = std::max(y + kTileH - 32, top);
-    if (bottom > stripTop) blendRect(x, stripTop, kTileW, bottom - stripTop, color(0, 0, 0), 175);
-    drawText(x + 6, y + kTileH - 31, 0.5f, white, *item.title, kTileW - 12, false, top, bottom);
-    drawText(x + 6, y + kTileH - 16, 0.42f, color(200, 204, 214), item.meta, kTileW - 12, false, top, bottom);
+    blendRect(x, top, w, bottom - top, kPink, 56);
+    if (y + h - 1 >= clipTop && y + h - 1 < clipBottom) fillRect(x, y + h - 1, w, 1, kPink);
 }
 
-// Draws `items` as a two-column tile grid starting `topInset` pixels below the grid origin.
-void drawTileGrid(const std::vector<TileItem>& items, int selected, int topInset, int scroll) {
-    for (size_t i = 0; i < items.size(); ++i) {
-        const int x = kTileX + static_cast<int>(i % 2) * kPitchX;
-        const int y = kGridY0 + topInset + static_cast<int>(i / 2) * kPitchY - scroll;
-        if (y >= kGridBottom || y + kTileH <= kGridTop) continue;
-        drawVideoTile(x, y, items[i], i);
+// The highlight glides to its target instead of jumping.
+void drawGlidingSelection(const float target[4]) {
+    if (!pageFx.glideReady) { for (int k = 0; k < 4; ++k) pageFx.glide[k] = target[k]; pageFx.glideReady = true; }
+    for (int k = 0; k < 4; ++k) {
+        pageFx.glide[k] += (target[k] - pageFx.glide[k]) * 0.4f;
+        if (std::fabs(target[k] - pageFx.glide[k]) < 0.5f) pageFx.glide[k] = target[k];
     }
-    if (selected >= 0 && static_cast<size_t>(selected) < items.size()) {
-        const float target[4] = {static_cast<float>(kTileX + (selected % 2) * kPitchX),
-                                 static_cast<float>(kGridY0 + topInset + (selected / 2) * kPitchY - scroll),
-                                 static_cast<float>(kTileW), static_cast<float>(kTileH)};
-        drawRing(target);
+    drawSelection(static_cast<int>(pageFx.glide[0] + 0.5f), static_cast<int>(pageFx.glide[1] + 0.5f),
+                  static_cast<int>(pageFx.glide[2] + 0.5f), static_cast<int>(pageFx.glide[3] + 0.5f),
+                  kListTop, kListBottom);
+}
+
+void drawRow(int y, const TileItem& item, size_t index) {
+    const int top = std::max(y, kListTop), bottom = std::min(y + kRowHeight, kListBottom);
+    if (bottom <= top) return;
+    drawCover(*item.bvid, 12, y + 2, 54, 30, false, top, bottom, kTilePalette[index % 8], false);
+    drawText(74, y + 2, 0.7f, kText, *item.title, 388, false, top, bottom);
+    drawText(74, y + 19, 0.42f, kTextDim, item.meta, 388, false, top, bottom);
+}
+
+// Draws `items` as list rows starting `topInset` pixels below the list origin.
+void drawRowList(const std::vector<TileItem>& items, int topInset, int scroll) {
+    for (size_t i = 0; i < items.size(); ++i) {
+        const int y = kListY0 + topInset + static_cast<int>(i) * kRowPitch - scroll;
+        if (y >= kListBottom || y + kRowHeight <= kListTop) continue;
+        drawRow(y, items[i], i);
     }
 }
 
@@ -792,52 +890,56 @@ void drawVideoGrid(const pspapp::App& app) {
     for (const auto& card : cards) {
         std::string meta = card.author;
         if (card.views > 0) meta += "  ·  " + formatCount(card.views);
+        if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
         items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
     }
-    const bool focus = app.focusArea() == pspapp::FocusArea::Content;
-    const int row = static_cast<int>(app.selection() / 2);
-    const int scroll = updateScroll(std::max(0.f, static_cast<float>(row * kPitchY - 100)));
-    drawTileGrid(items, focus ? static_cast<int>(app.selection()) : -1, 0, scroll);
+    const int selected = static_cast<int>(app.selection());
+    const int scroll = updateScroll(std::max(0.f, static_cast<float>((selected - 2) * kRowPitch)));
+    drawRowList(items, 0, scroll);
+    if (app.focusArea() == pspapp::FocusArea::Content) {
+        const float target[4] = {12.f, static_cast<float>(kListY0 + selected * kRowPitch - scroll), 456.f,
+                                 static_cast<float>(kRowHeight)};
+        drawGlidingSelection(target);
+    }
 }
 
 void drawMineTiles(const pspapp::App& app) {
     using namespace pspapp;
     const auto& auth = app.auth();
     const bool signedIn = auth.state == AuthState::SignedIn;
-    const size_t selection = app.selection();
-    const bool focus = app.focusArea() == FocusArea::Content;
-    constexpr int inset = kAccountH + 4;
-    const int entryRow = selection ? static_cast<int>((selection - 1) / 2) : 0;
-    const int scroll = updateScroll(selection ? std::max(0.f, static_cast<float>(inset + entryRow * kPitchY - 100)) : 0.f);
+    const int selection = static_cast<int>(app.selection());
+    const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
 
-    // Account tile.
-    const int ay = kGridY0 - scroll;
-    const uint32_t white = color(255, 255, 255);
-    if (ay + kAccountH > kGridTop) {
-        const int top = std::max(ay, kGridTop), bottom = std::min(ay + kAccountH, kGridBottom);
-        fillRect(kTileX, top, 2 * kPitchX - 4, bottom - top, kTilePalette[0]);
-        drawText(kTileX + 10, ay + 7, 0.7f, white,
+    // Account row: accent square with a person icon, like a thumbnail.
+    const int ay = kListY0 - scroll;
+    if (ay + kRowHeight > kListTop) {
+        const int top = std::max(ay, kListTop), bottom = std::min(ay + kRowHeight, kListBottom);
+        fillRect(12, top, 54, bottom - top, kTilePalette[0]);
+        if (ay >= kListTop) drawLineIcon(IconUser, 12 + 16, ay + 6, 22, color(255, 255, 255));
+        drawText(74, ay + 2, 0.7f, kText,
                  signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
-                 2 * kPitchX - 24, false, top, bottom);
-        drawText(kTileX + 10, ay + 29, 0.5f, color(220, 228, 250),
-                 authStateMessage(auth.state, app.preferences().confirmWithCircle), 2 * kPitchX - 24, false, top, bottom);
+                 388, false, top, bottom);
+        drawText(74, ay + 19, 0.42f, kTextDim, authStateMessage(auth.state, app.preferences().confirmWithCircle),
+                 388, false, top, bottom);
     }
 
     std::vector<TileItem> items;
     items.reserve(app.history().size() + app.later().size());
     for (const auto& entry : app.history())
-        items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
+        items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author + " · " + formatDuration(entry.duration),
+                         entry.duration});
     for (const auto& entry : app.later())
-        items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
+        items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author + " · " + formatDuration(entry.duration),
+                         entry.duration});
     if (items.empty()) {
-        drawText(kTileX, kGridY0 + inset + 12, 0.7f, kText, "还没有本地记录", 440);
-        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
+        drawText(12, kListY0 + kRowPitch + 8, 0.7f, kText, "还没有本地记录", 440);
+        drawText(12, kListY0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
     }
-    drawTileGrid(items, focus && selection ? static_cast<int>(selection) - 1 : -1, inset, scroll);
-    if (focus && selection == 0) {
-        const float target[4] = {static_cast<float>(kTileX), static_cast<float>(ay),
-                                 static_cast<float>(2 * kPitchX - 4), static_cast<float>(kAccountH)};
-        drawRing(target);
+    drawRowList(items, kRowPitch, scroll);
+    if (app.focusArea() == FocusArea::Content) {
+        const float target[4] = {12.f, static_cast<float>(kListY0 + selection * kRowPitch - scroll), 456.f,
+                                 static_cast<float>(kRowHeight)};
+        drawGlidingSelection(target);
     }
 }
 
@@ -894,28 +996,25 @@ void drawDetailTiles(const pspapp::App& app) {
     }
 }
 
-// Pivot header for the tab pages: the five sections in a row, the current one bright.
+// Header for the tab pages: status bar, a large lowercase title and the pivot row of sections.
 void drawMetroHeader(const pspapp::App& app) {
     using namespace pspapp;
     const Locale locale = app.preferences().locale;
     static const TextId labels[] = {TextId::tile_recommend, TextId::tile_hots, TextId::tile_search,
                                     TextId::tile_discover, TextId::tile_mine};
     static const Tab tabs[] = {Tab::Recommend, Tab::Hots, Tab::Search, Tab::Discover, Tab::Mine};
+    drawStatusBar();
+    for (int i = 0; i < 5; ++i)
+        if (app.tab() == tabs[i]) drawSmoothText(10, 11, kText, lowered(text(labels[i], locale)), 440);
     const bool pivotFocus = app.focusArea() == FocusArea::Categories;
     int x = 12;
     for (int i = 0; i < 5; ++i) {
-        std::string label = text(labels[i], locale);
-        for (char& c : label) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        const std::string label = lowered(text(labels[i], locale));
         const bool active = app.tab() == tabs[i];
-        drawText(x, 4, 0.9f, active ? kText : kTextDim, label, 200);
+        drawText(x, 46, 0.9f, active ? kText : kTextDim, label, 200);
         const int width = bitmapMeasure(label, 16);
-        if (active) fillRect(x, 24, width, pivotFocus ? 3 : 1, kPink);
+        if (active) fillRect(x, 63, width, pivotFocus ? 3 : 1, kPink);
         x += width + 16;
-    }
-    if (app.tab() != Tab::Mine) {
-        char meta[16]{};
-        std::snprintf(meta, sizeof(meta), "P%d", app.page());
-        drawText(436, 8, 0.5f, kTextDim, meta, 36);
     }
 }
 
@@ -1269,9 +1368,9 @@ void drawUtility(const pspapp::App& app) {
             const bool selected = app.settingSelection() == i;
             if (preferences.tileHome) {
                 // Tile theme: the selected row becomes an accent tile.
-                if (selected) fillRect(33, y - 1, 436, 18, kTilePalette[0]);
-                drawText(39, y, 0.7f, selected ? color(255, 255, 255) : kText, pspapp::text(labels[i], locale), 250);
-                drawText(300, y, 0.7f, selected ? color(255, 255, 255) : kTextDim, values[i], 168);
+                if (selected) drawSelection(33, y - 1, 436, 18, 0, kHeight);
+                drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
+                drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
                 continue;
             }
             if (selected) fillRect(33, y + 2, 2, 13, kPink);
@@ -1508,9 +1607,10 @@ void drawBrowse(const pspapp::App& app) {
         // Tile theme: each row is a tile; the selected one is filled with the accent colour.
         const int inset = tile ? 8 : 0, width = tile ? 440 : 456;
         const uint32_t white = color(255, 255, 255);
-        const uint32_t titleShade = tile ? (selected ? white : kText) : (selected ? kPink : kText);
-        const uint32_t noteShade = tile && selected ? color(222, 230, 252) : kTextDim;
-        if (tile) fillRect(12, y, 456, 62, selected ? kTilePalette[0] : kPanelRaised);
+        const uint32_t titleShade = tile ? kText : (selected ? kPink : kText);
+        const uint32_t noteShade = kTextDim;
+        (void)white;
+        if (tile) { if (selected) drawSelection(12, y, 456, 62, 0, kHeight); }
         else if (selected) fillRect(6, y + 2, 2, 50, kPink);
         if (index == page.items.size()) {
             drawText(12 + inset, y + (tile ? 20 : 0), 0.7f, titleShade, "加载下一页", width);

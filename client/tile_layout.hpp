@@ -28,11 +28,11 @@ constexpr TileSpec kTiles[] = {
     {TileId::Recommend, 0, 0, 2, 2},
     {TileId::Search,    0, 2, 1, 1},
     {TileId::Discover,  1, 2, 1, 1},
-    {TileId::Hots,      2, 0, 4, 2},
     {TileId::Dynamic,   2, 2, 1, 1},
     {TileId::Inbox,     3, 2, 1, 1},
+    {TileId::Settings,  4, 2, 1, 1},
+    {TileId::Hots,      2, 0, 4, 2},
     {TileId::Mine,      6, 0, 2, 2},
-    {TileId::Settings,  6, 2, 1, 1},
 };
 constexpr int kTileCount = static_cast<int>(sizeof(kTiles) / sizeof(kTiles[0]));
 
@@ -43,7 +43,7 @@ constexpr int tileHeight(const TileSpec& t) { return t.rows * kTileUnit + (t.row
 
 // Moves the focus ring in a direction (dx or dy is +/-1). Returns the new index, or `from`
 // when nothing lies that way. A candidate must start beyond the far edge of the current tile;
-// among those, the nearest wins, with the sideways offset between centres counted double.
+// among those, one in line with the current tile wins, then the nearest.
 inline int tileNeighbor(int from, int dx, int dy) {
     if (from < 0 || from >= kTileCount) return 0;
     const TileSpec& a = kTiles[from];
@@ -55,8 +55,10 @@ inline int tileNeighbor(int from, int dx, int dy) {
         const int bL = tileX(b), bR = bL + tileWidth(b), bT = tileY(b), bB = bT + tileHeight(b);
         const int along = dx > 0 ? bL - aR : dx < 0 ? aL - bR : dy > 0 ? bT - aB : aT - bB;
         if (along < 0) continue;
-        const int sideways = dx ? (bT + bB) - (aT + aB) : (bL + bR) - (aL + aR);
-        const int score = along * 2 + (sideways < 0 ? -sideways : sideways);
+        // A tile that overlaps the current one across the movement axis is directly in line.
+        const bool inLine = dx ? (bT < aB && bB > aT) : (bL < aR && bR > aL);
+        const int offset = dx ? (bT + bB) - (aT + aB) : (bL + bR) - (aL + aR);
+        const int score = along * 2 + (inLine ? 0 : (offset < 0 ? -offset : offset) + 1000);
         if (score < bestScore) { bestScore = score; best = i; }
     }
     return best;

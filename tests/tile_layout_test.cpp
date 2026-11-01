@@ -30,6 +30,7 @@ int main() {
     assert(tileNeighbor(search, 1, 0) == disc);
     assert(tileNeighbor(disc, 1, 0) == dyn);
     assert(tileNeighbor(search, 0, -1) == rec);
+    assert(tileNeighbor(dyn, 0, -1) == hot);
     assert(tileNeighbor(hot, -1, 0) == rec);
     assert(tileNeighbor(hot, 1, 0) == mine);
     // Nothing lies beyond the edges.
@@ -37,6 +38,7 @@ int main() {
     assert(tileNeighbor(rec, 0, -1) == rec);
     assert(tileNeighbor(search, 0, 1) == search);
     assert(tileNeighbor(mine, 1, 0) == mine);
+    assert(tileNeighbor(mine, -1, 0) == hot);
 
     // Every tile is reachable from the first one by d-pad moves.
     bool seen[kTileCount] = {};
