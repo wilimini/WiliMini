@@ -1,5 +1,6 @@
 #include "ui.hpp"
 #include "bitmap_font.hpp"
+#include "title_font.hpp"
 #include "assets/wiliwili/sidebar.hpp"
 #include "settings_pages.hpp"
 
@@ -525,36 +526,23 @@ void blendRect(int x, int y, int width, int height, uint32_t shade, unsigned alp
     }
 }
 
-// 16 px bitmap glyphs enlarged to 32 px with bilinear smoothing: large page titles and the big
-// numbers on live tiles. The bitmap font has no larger size, so this is the thin "light" look.
-void drawSmoothText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
+// Large page titles and the big numbers on live tiles, drawn from the 32 px title font. If the
+// font file is missing, or a character is not in it, the text falls back to normal 16 px type.
+void drawTitleText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
+    const int width = titleFontReady() ? titleMeasure(text) : -1;
+    if (width < 0) { drawText(x, y + 10, 0.9f, shade, text, maxWidth); return; }
     const int right = std::min(kWidth, x + maxWidth);
     for (size_t pos = 0; pos < text.size();) {
-        const auto* glyph = bitmapGlyph(bitmapNext(text, pos), 16);
+        const TitleGlyph* glyph = titleGlyph(bitmapNext(text, pos));
         if (!glyph) continue;
-        const int advance = glyph->advance * 2;
-        if (x + advance > right) break;
-        const int gw = glyph->width, gh = glyph->height;
-        auto sample = [&](int px, int py) -> float {
-            if (px < 0 || py < 0 || px >= gw || py >= gh) return 0.f;
-            const int i = py * gw + px;
-            return static_cast<float>(((glyph->alpha[i / 2] >> ((i % 2) * 4)) & 15) * 17);
-        };
-        for (int oy = -1; oy <= gh * 2; ++oy) {
-            const float v = oy * 0.5f - 0.25f;
-            const int y0 = static_cast<int>(std::floor(v));
-            const float fy = v - y0;
-            for (int ox = -1; ox <= gw * 2; ++ox) {
-                const float u = ox * 0.5f - 0.25f;
-                const int x0 = static_cast<int>(std::floor(u));
-                const float fx = u - x0;
-                const float top = sample(x0, y0) * (1 - fx) + sample(x0 + 1, y0) * fx;
-                const float bottom = sample(x0, y0 + 1) * (1 - fx) + sample(x0 + 1, y0 + 1) * fx;
-                const unsigned alpha = static_cast<unsigned>(top * (1 - fy) + bottom * fy);
-                if (alpha > 3) blendPixel(x + ox, y + oy, shade, alpha);
+        if (x + glyph->advance > right) break;
+        for (int yy = 0; yy < glyph->height; ++yy)
+            for (int xx = 0; xx < glyph->width && x + xx < right; ++xx) {
+                const int pixel = yy * glyph->width + xx;
+                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
+                blendPixel(x + xx, y + yy, shade, alpha);
             }
-        }
-        x += advance;
+        x += glyph->advance;
     }
 }
 
@@ -648,8 +636,14 @@ float segmentDistance(const IconSeg& g, float px, float py) {
 
 // Returns an alpha bitmap (size x size) for the icon; built on first use.
 const std::vector<uint8_t>& iconBitmap(int id, int size) {
-    static std::vector<uint8_t> cache[IconCount][2];
-    std::vector<uint8_t>& bitmap = cache[id][size > 30 ? 1 : 0];
+    // One cached bitmap per icon and size; only the sizes the UI uses are supported.
+    static const int kSizes[] = {22, 26, 40};
+    static std::vector<uint8_t> cache[IconCount][3];
+    static const std::vector<uint8_t> none;
+    int slot = -1;
+    for (int k = 0; k < 3; ++k) if (kSizes[k] == size) slot = k;
+    if (slot < 0) return none;
+    std::vector<uint8_t>& bitmap = cache[id][slot];
     if (!bitmap.empty()) return bitmap;
     const IconShape shape = buildIcon(id);
     const float scale = 32.f / size, halfStroke = size > 30 ? 1.25f : 1.0f;
@@ -670,13 +664,13 @@ const std::vector<uint8_t>& iconBitmap(int id, int size) {
 void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
     if (id < 0 || id >= IconCount) return;
     const auto& bitmap = iconBitmap(id, size);
+    if (bitmap.empty()) return;
     for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx)
         blendPixel(x + xx, y + yy, shade, bitmap[static_cast<size_t>(yy) * size + xx]);
 }
 
-// Top status strip: product name on the left, clock and battery on the right.
+// Top status strip: clock and battery on the right.
 void drawStatusBar() {
-    drawText(10, 1, 0.42f, kTextDim, "WILIMINI", 120);
     ScePspDateTime now{};
     sceRtcGetCurrentClockLocalTime(&now);
     char clock[16];
@@ -775,7 +769,7 @@ void drawHub(const pspapp::App& app, int64_t now) {
 
     // Large light title: slides in on entrance and drifts slower than the tiles (parallax).
     const float titleIn = easeOut((now - hubFx.enterMs) / 450.f);
-    drawSmoothText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 11,
+    drawTitleText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 5,
                    shadeMix(kBackground, kText, static_cast<unsigned>(titleIn * 256.f)),
                    lowered(text(TextId::tile_title, locale)), 300);
 
@@ -801,7 +795,7 @@ void drawHub(const pspapp::App& app, int64_t now) {
 
         const char* label = text(look->label, locale);
         if (motion.back) {
-            drawSmoothText(x + 8, y + 4, white, big, w - 16);
+            drawTitleText(x + 8, y + 2, white, big, w - 16);
             if (tile.cols == 1) continue;
             drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
         } else if (tile.cols == 1) {
@@ -1177,6 +1171,82 @@ void drawMineGrid(const pspapp::App& app) {
     }
 }
 
+// One row of the Metro-style search page: coloured block (icon or rank), title, note.
+void drawInfoRow(int y, uint32_t block, int icon, const char* rank, const std::string& title, const std::string& note) {
+    const int top = std::max(y, kListTop), bottom = std::min(y + kRowHeight, kListBottom);
+    if (bottom <= top) return;
+    fillRect(12, top, 54, bottom - top, block);
+    if (icon >= 0 && y >= kListTop && y + kRowHeight <= kListBottom)
+        drawLineIcon(icon, 12 + 16, y + 6, 22, color(255, 255, 255));
+    if (rank) drawText(12, y + 8, 0.7f, color(255, 255, 255), rank, 54, true, top, bottom);
+    drawText(74, y + (note.empty() ? 9 : 2), 0.7f, kText, title, 388, false, top, bottom);
+    if (!note.empty()) drawText(74, y + 19, 0.42f, kTextDim, note, 388, false, top, bottom);
+}
+
+// Search tab in the Metro style: the content starts below the title and pivot row.
+void drawSearchMetro(const pspapp::App& app) {
+    using namespace pspapp;
+    const std::string confirm = app.preferences().confirmButton();
+    const bool focus = app.focusArea() == FocusArea::Content;
+    const int selection = static_cast<int>(app.selection());
+    auto highlight = [&](int scroll, int inset) {
+        if (!focus) return;
+        const float target[4] = {12.f, static_cast<float>(kListY0 + inset + selection * kRowPitch - scroll), 456.f,
+                                 static_cast<float>(kRowHeight)};
+        drawGlidingSelection(target);
+    };
+    if (app.searchView() == SearchView::History) {
+        const auto& history = app.searchHistory();
+        drawText(12, kListY0 - 2, 0.42f, kTextDim, "最近搜索 · 仅保存在本机", 440);
+        constexpr int inset = 18;
+        const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
+        if (history.empty()) {
+            drawText(12, kListY0 + inset + 6, 0.7f, kText, "还没有搜索历史", 440);
+            drawText(12, kListY0 + inset + 30, 0.5f, kTextDim,
+                     "□ 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 440);
+            return;
+        }
+        for (size_t i = 0; i < history.size() && i < 8; ++i)
+            drawInfoRow(kListY0 + inset + static_cast<int>(i) * kRowPitch - scroll, kTilePalette[3], IconClock, nullptr,
+                        history[i], "");
+        highlight(scroll, inset);
+        return;
+    }
+    if (app.searchView() == SearchView::Landing) {
+        const auto& topics = app.searchTopics();
+        const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
+        std::string preview;
+        for (size_t i = 0; i < app.searchHistory().size() && i < 2; ++i) {
+            if (!preview.empty()) preview += "  ·  ";
+            preview += app.searchHistory()[i];
+        }
+        drawInfoRow(kListY0 - scroll, kTilePalette[7], IconSearch, nullptr, "搜索视频", "按 " + confirm + " 输入关键词");
+        drawInfoRow(kListY0 + kRowPitch - scroll, kTilePalette[3], IconClock, nullptr, "历史",
+                    preview.empty() ? "暂无记录 · " + confirm + " 查看" : preview);
+        if (topics.empty()) {
+            const int y = kListY0 + 2 * kRowPitch - scroll;
+            drawText(12, y + 6, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 440, false, kListTop, kListBottom);
+            drawText(12, y + 28, 0.5f, kTextDim, "□ 仍可输入关键词搜索", 440, false, kListTop, kListBottom);
+        }
+        for (size_t i = 0; i < topics.size(); ++i) {
+            char rank[16];
+            std::snprintf(rank, sizeof(rank), "%02u", static_cast<unsigned>(i + 1));
+            drawInfoRow(kListY0 + static_cast<int>(i + 2) * kRowPitch - scroll, i < 3 ? kTilePalette[1] : kTilePalette[7],
+                        -1, rank, topics[i].title, "");
+        }
+        highlight(scroll, 0);
+        return;
+    }
+    // Results with nothing to list: the keyword line plus the reason.
+    drawText(12, kListY0 - 2, 0.5f, app.searchError().empty() ? kTextDim : kPink,
+             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · △ 重试", 380);
+    drawText(12, kListY0 + 24, 0.7f, kText, app.busy() ? "正在搜索…" :
+             app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 440);
+    drawWrapped(12, kListY0 + 50, 0.5f, kTextDim,
+                app.searchError().empty() ? "□ 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索"
+                                          : app.searchError(), 440, 3, 16);
+}
+
 // Video detail as tiles: cover, title block, four action tiles and a strip of part tiles.
 void drawDetailTiles(const pspapp::App& app) {
     using namespace pspapp;
@@ -1264,7 +1334,7 @@ void drawMetroHeader(const pspapp::App& app) {
     static const Tab tabs[] = {Tab::Recommend, Tab::Hots, Tab::Search, Tab::Discover, Tab::Mine};
     drawStatusBar();
     for (int i = 0; i < 5; ++i)
-        if (app.tab() == tabs[i]) drawSmoothText(10, 11, kText, lowered(text(labels[i], locale)), 440);
+        if (app.tab() == tabs[i]) drawTitleText(10, 5, kText, lowered(text(labels[i], locale)), 440);
     const bool pivotFocus = app.focusArea() == FocusArea::Categories;
     int x = 12;
     for (int i = 0; i < 5; ++i) {
@@ -1972,6 +2042,7 @@ void ui_init() {
     sceGuDisplay(GU_TRUE);
     draw_buffer = nullptr;
     bitmapFontInit(CLIENT_PATH("/wqy.bmf"));
+    titleFontInit(CLIENT_PATH("/title.bmf"));
 }
 
 void ui_startup_status(const char *message) {
@@ -1987,6 +2058,7 @@ void ui_startup_status(const char *message) {
 
 void ui_shutdown() {
     bitmapFontShutdown();
+    titleFontShutdown();
     sceGuTerm();
 }
 
@@ -2069,7 +2141,8 @@ void ui_render(const pspapp::App& app) {
         } else if (app.tab() == pspapp::Tab::Search) {
             if (tile && app.searchView() == pspapp::SearchView::Results && !app.cards().empty()) {
                 if (app.preferences().metro()) drawVideoGrid(app); else drawVideoGridTiles(app);
-            } else drawSearch(app);
+            } else if (app.preferences().metro()) drawSearchMetro(app);
+            else drawSearch(app);
         } else if (tile && !app.cards().empty()) {
             if (app.preferences().metro()) drawVideoGrid(app); else drawVideoGridTiles(app);
         }

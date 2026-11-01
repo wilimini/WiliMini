@@ -1,0 +1,10 @@
+{
+  "family": "WenQuanYi Micro Hei",
+  "source": "wqy-microhei.ttc",
+  "source_sha256": "2420e8078af796b19a3f6ef13de527a1a91c1e7171eea115926c614ced1009b3",
+  "size": 32,
+  "glyphs": 113,
+  "gamma": 1.25,
+  "coverage": "ASCII and the characters of the tile_* title strings",
+  "bytes": 70524
+}
