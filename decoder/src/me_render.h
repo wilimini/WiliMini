@@ -16,10 +16,10 @@ static uint64_t me_warmup_presented_us, me_last_presented_us;
 #endif
 static MeJob me_job;
 #if PSP_AUDIO && PSP_RGB_PACE
-static uint32_t *me_output;
+static uint16_t *me_output;
 static int64_t me_rgb_pts;
 #else
-static uint32_t me_output[512 * 272] __attribute__((aligned(64)));
+static uint16_t me_output[512 * 272] __attribute__((aligned(64)));
 #endif
 static AVFrame *me_frame;
 static int me_pending;
@@ -39,20 +39,20 @@ static int me_render_finish(void)
     }
     if (!PSP_ME_RENDER_QUEUE && !me_completed) playback_diagnostic("me_first_task_completed", ret);
 #if !PSP_ME_CACHE || !PSP_ME_DMA
-    sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint32_t));
+    sceKernelDcacheInvalidateRange(me_output, 512 * 272 * sizeof(uint16_t));
 #endif
 #if PSP_AUDIO && PSP_RGB_PACE
     rgb_publish(me_rgb_pts);
 #else
-    uint32_t *dst = (void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u);
+    uint16_t *dst = (void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u);
 #if PSP_PTS_PACE
     wait_presentation(me_presentation_deadline);
 #endif
 #if PSP_ME_DMA
-    ret = sceDmacMemcpy(dst + 512, me_output + 512, 512 * 270 * 4);
+    ret = sceDmacMemcpy(dst + 512, me_output + 512, 512 * 270 * 2);
     if (ret < 0) return ret;
 #else
-    memcpy(dst + 512, me_output + 512, 512 * 270 * 4);
+    memcpy(dst + 512, me_output + 512, 512 * 270 * 2);
 #endif
 #if PSP_PTS_PACE
     uint64_t presented = sceKernelGetSystemTimeWide();

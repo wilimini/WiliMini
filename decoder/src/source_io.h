@@ -3,8 +3,8 @@
 #include <wili_log.h>
 static void source_memory(const char *phase) {
     const struct mallinfo heap = mallinfo();
-    WLOG_I(WLC_MEM, "%s heap_used=%u system_free=%u system_max=%u", phase,
-           (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+    WLOG_I(WLC_MEM, "%s heap_used=%u heap_arena_free=%u system_free=%u system_max=%u", phase,
+           (unsigned)heap.uordblks, (unsigned)heap.fordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
 }
 typedef struct {
     AVIOContext *io;

@@ -74,7 +74,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     // Third VRAM page holds only video, so hiding controls or redrawing a
     // paused frame never leaves stale text. No extra RGB allocation in RAM.
     if (initializeDisplay) std::memset(vram(2 * frameBytes), 0, frameBytes);
-    presenter_ = {this, [](void* opaque, const uint32_t* pixels, const PspVideoStatus* status) {
+    presenter_ = {this, [](void* opaque, const uint16_t* pixels, const PspVideoStatus* status) {
         return static_cast<PlaybackOsd*>(opaque)->draw(pixels, *status);
     }, [](void* opaque, PspVideoSettings* settings) {
         static_cast<PlaybackOsd*>(opaque)->updateSettings(*settings);
@@ -453,14 +453,23 @@ void PlaybackOsd::gradient(int y, int height, unsigned topAlpha, unsigned bottom
     sceGuShadeModel(GU_SMOOTH);
     sceGuDrawArray(GU_TRIANGLE_STRIP, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 4, nullptr, v);
 }
-int PlaybackOsd::draw(const uint32_t* pixels, const PspVideoStatus& status) {
+int PlaybackOsd::draw(const uint16_t* pixels, const PspVideoStatus& status) {
     const uint64_t now = sceKernelGetSystemTimeWide();
     receiveOverlays();
     if (!pixels && now - lastDraw_ < 33333) return 0;
     if (pixels) {
         // The previous GU list has completed before this clean page is reused.
-        int result = pixels == vram(2 * frameBytes) ? 0 : sceDmacMemcpy(vram(2 * frameBytes), pixels, frameBytes);
-        if (result < 0) return result;
+        auto* converted = static_cast<uint32_t*>(vram(2 * frameBytes));
+        for (unsigned y = 0; y < 272; ++y) {
+            for (unsigned x = 0; x < 512; ++x) {
+                const uint16_t p = pixels[y * 512 + x];
+                const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
+                const unsigned r = (r5 << 3) | (r5 >> 2);
+                const unsigned g = (g6 << 2) | (g6 >> 4);
+                const unsigned b = (b5 << 3) | (b5 >> 2);
+                converted[y * 512 + x] = 0xff000000u | (b << 16) | (g << 8) | r;
+            }
+        }
         haveFrame_ = true;
         if (overlayThread_ >= 0 && !overlayStarted_) {
             PlaybackOsd* self = this;

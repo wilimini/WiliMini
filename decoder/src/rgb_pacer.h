@@ -11,7 +11,7 @@ static unsigned rgb_slots = RGB_SLOTS;
 static int64_t audio_clock_us(void);
 static int audio_playback_failed(void);
 // Playback owns these buffers until the ME and presentation worker have stopped.
-static uint32_t (*rgb_pixels)[512 * 272];
+static uint16_t (*rgb_pixels)[512 * 272];
 static int64_t rgb_pts[RGB_SLOTS], presentation_pts_us;
 static SceUID rgb_space = -1, rgb_ready = -1, rgb_thread = -1;
 static volatile unsigned rgb_produced, rgb_consumed;
@@ -67,7 +67,7 @@ static int rgb_worker(SceSize size, void *arg)
         }
         if (!drop && !quit_requested) {
             int ret = presenter ? present_video(rgb_pixels[slot]) :
-                sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 4);
+                sceDmacMemcpy((void *)0x44000800, rgb_pixels[slot] + 512, 512 * 270 * 2);
             if (ret < 0) rgb_error = ret;
             else {
                 late = audio_clock_us() - target;

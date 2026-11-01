@@ -44,6 +44,8 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 
 `PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
 客户端传入用户设置，新设置默认值由启动器选中的客户端决定。
+ME 渲染队列按 RGB565 保存 512×272 输出帧，每帧占 272 KiB；presenter 可在
+合成阶段转换为显示格式。真机上 GU/display 的 565 路径出现画面异常，因此 OSD 保留 8888 页面。
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
 默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`，只有启用
 `BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时才选择 `PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG`。
@@ -181,7 +183,7 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 
 ## 播放控制与显示回调
 
-`PspVideoOptions.presenter` 接收视频帧和控制状态；空帧表示重绘上一帧。
+`PspVideoOptions.presenter` 接收 RGB565 视频帧和控制状态；空帧表示重绘上一帧。
 宿主负责 DMA/GE 同步及换页。未提供回调时沿用默认视频显示。
 原生 ME 跳转保留视频/ME 实例；音频管线会重新打开。源的
 `interrupt_reads` 回调用于中断旧读取，不得销毁或取消下载源。

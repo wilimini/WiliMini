@@ -45,7 +45,7 @@ typedef struct {
      * frame. NULL pixels means redraw the last clean frame (pause/OSD).
      * Copy pixels before returning; never retain a queue slot. This callback
      * owns DMA, GE completion and scanout switching. No network or disk I/O. */
-    int (*present)(void *opaque, const uint32_t *pixels, const PspVideoStatus *status);
+    int (*present)(void *opaque, const uint16_t *pixels, const PspVideoStatus *status);
     void (*update_settings)(void *opaque, PspVideoSettings *settings);
 } PspVideoPresenter;
 typedef struct {

@@ -145,7 +145,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     SceMpegStream *stream = NULL;
     SceMpegAu au __attribute__((aligned(64)));
     void *state = NULL, *ring_data = NULL, *es = NULL;
-    uint32_t *rgb = NULL;
+    uint16_t *rgb = NULL;
     VideoSourceIO input = {0};
     EmuMux mux = {0};
     uint8_t header[2048] __attribute__((aligned(64))) = {0};
@@ -185,7 +185,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(EMU_RING_PACKETS);
     if (state_size <= 0 || ring_size <= 0) { ret = -1; goto done; }
     state = memalign(64, state_size); ring_data = memalign(64, ring_size);
-    rgb = memalign(64, stride * ((height + 15) & ~15) * 4);
+    rgb = memalign(64, stride * ((height + 15) & ~15) * 2);
     if (!state || !ring_data || !rgb) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegRingbufferConstruct(&ring, EMU_RING_PACKETS, ring_data, ring_size, emu_ring_read, &mux);
     if (ret < 0) goto done;
@@ -209,7 +209,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     if (!es) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegInitAu(&mpeg,es,&au);
     if (ret < 0) goto done;
-    SceMpegAvcMode mode = {-1,SCE_MPEG_AVC_FORMAT_8888};
+    SceMpegAvcMode mode = {-1,SCE_MPEG_AVC_FORMAT_5650};
     ret = sceMpegAvcDecodeMode(&mpeg,&mode);
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
@@ -261,13 +261,13 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
         }
         if (quit_requested) break;
         if (audio.error) { ret = audio.error; break; }
-        uint32_t *vram = (uint32_t *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * 4);
-        memset(vram,0,512*272*4);
+        uint16_t *vram = (uint16_t *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * 2);
+        memset(vram,0,512*272*2);
         int w=480, h=(int)((int64_t)height*480/width);
         if (h>272) { h=272; w=(int)((int64_t)width*272/height); }
         for (int y=0;y<h;++y) {
-            uint32_t *dst=vram+(y+(272-h)/2)*512+(480-w)/2;
-            const uint32_t *src=rgb+(y*height/h)*stride;
+            uint16_t *dst=vram+(y+(272-h)/2)*512+(480-w)/2;
+            const uint16_t *src=rgb+(y*height/h)*stride;
             for (int x=0;x<w;++x) dst[x]=src[x*width/w];
         }
         if (presenter) {
@@ -275,7 +275,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
             if (ret < 0) break;
         } else {
             sceDisplayWaitVblankStart();
-            sceDisplaySetFrameBuf(vram,512,PSP_DISPLAY_PIXEL_FORMAT_8888,PSP_DISPLAY_SETBUF_IMMEDIATE);
+            sceDisplaySetFrameBuf(vram,512,PSP_DISPLAY_PIXEL_FORMAT_565,PSP_DISPLAY_SETBUF_IMMEDIATE);
         }
         page ^= 1;
         ++stats->total_frames;

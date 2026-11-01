@@ -62,7 +62,7 @@ static int playback_is_paused(void) {
     sceKernelSignalSema(controls_lock, 1);
     return value;
 }
-static int present_video(const uint32_t *pixels);
+static int present_video(const uint16_t *pixels);
 static void playback_metadata(int64_t duration_ms, int seekable) {
     if (controls_lock < 0) return;
     sceKernelWaitSema(controls_lock, 1, NULL);
@@ -212,7 +212,7 @@ static void begin_playback_seek(void) {
     controls.visible = 1;
     sceKernelSignalSema(controls_lock, 1);
 }
-static int present_video(const uint32_t *pixels) {
+static int present_video(const uint16_t *pixels) {
     if (!presenter || !presenter->present) return 0;
     int64_t position = playback_start_ms;
 #if PSP_AUDIO
@@ -881,11 +881,8 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
             s->media_boundary_pts = frame->best_effort_timestamp;
         }
         ++*output_count;
-        if (*output_count == WARMUP_FRAMES) {
-            const struct mallinfo heap = mallinfo();
-            WLOG_I(WLC_MEM, "decode heap_used=%u system_free=%u system_max=%u",
-                   (unsigned)heap.uordblks, sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
-        }
+        if (*output_count == 1) source_memory("video_first_frame");
+        if (*output_count == WARMUP_FRAMES) source_memory("decode");
         av_frame_unref(frame);
         if (*output_count == WARMUP_FRAMES) {
 #if PSP_ME_RENDER && !PSP_ME_RENDER_QUEUE
@@ -1009,6 +1006,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     diagnostic_audio_valid = 1;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
     ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, run_path);
+    source_memory("audio_init_end");
     playback_diagnostic("audio_init_end", ret);
     if (ret < 0) goto done;
 #endif
@@ -1019,15 +1017,22 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
         memset((void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u),
                0, DISPLAY_STRIDE * DISPLAY_HEIGHT * sizeof(uint32_t));
 #endif
+#if PSP_ME_RENDER || PSP_ME_DECODE_RENDER
+        sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
+                              PSP_DISPLAY_PIXEL_FORMAT_565, PSP_DISPLAY_SETBUF_IMMEDIATE);
+#else
         sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
                               PSP_DISPLAY_PIXEL_FORMAT_8888, PSP_DISPLAY_SETBUF_IMMEDIATE);
+#endif
     }
 
     video_stage = PSP_VIDEO_STAGE_PLAY;
 decode_again:
     while (!quit_requested) {
         if (playback_seeking) {
+            source_memory("seek_begin");
             ret = seek_in_session(format, codec, packet, frame, run_path);
+            source_memory("seek_end");
             if (ret < 0) goto done;
             catchup_to_key = 0;
             stats->eof = 0;
@@ -1121,6 +1126,7 @@ decode_again:
 
 done:
     if (playback_seeking && !quit_requested && ret >= 0) goto decode_again;
+    source_memory("cleanup_begin");
     playback_diagnostic("cleanup_begin", ret);
 #if PSP_ME_DECODE
     {
@@ -1181,6 +1187,7 @@ done:
     if (audio_started) {
         const int64_t audio_origin = audio.format ? source_origin_us(audio.format) : 0;
         audio_close(stats->eof && ret >= 0);
+        source_memory("audio_closed");
         if (output_count && (quit_requested || !stats->eof) &&
             audio.first_pts_us != AV_NOPTS_VALUE && audio.rate > 0) {
             int64_t played = audio_clock_us() - audio_origin;
@@ -1196,7 +1203,9 @@ done:
     if (packet) av_packet_free(&packet);
     if (frame) av_frame_free(&frame);
     if (codec) avcodec_free_context(&codec);
+    source_memory("video_codec_closed");
     source_close(&format, &input_io);
+    source_memory("video_source_closed");
     stats->total_frames = output_count;
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
     playback_diagnostic(psp_video_stage_name(video_stage), ret);

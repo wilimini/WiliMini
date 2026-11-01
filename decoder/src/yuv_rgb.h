@@ -63,4 +63,24 @@ static inline uint32_t yuv_rgb_pixel(const YuvRgbTables *tables,
                                  tables->u_blue[u]);
 }
 
+static inline uint16_t yuv_rgb565_pixel(const YuvRgbTables *tables,
+                                        uint8_t y, uint8_t u, uint8_t v)
+{
+    uint32_t pixel = yuv_rgb_pixel(tables, y, u, v);
+    unsigned r = pixel & 255;
+    unsigned g = (pixel >> 8) & 255;
+    unsigned b = (pixel >> 16) & 255;
+    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+static inline uint16_t yuv_rgb565_pixel_offsets(const YuvRgbTables *tables,
+                                               int luma, int red, int green, int blue)
+{
+    uint32_t pixel = yuv_rgb_pixel_offsets(tables, luma, red, green, blue);
+    unsigned r = pixel & 255;
+    unsigned g = (pixel >> 8) & 255;
+    unsigned b = (pixel >> 16) & 255;
+    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
 #endif
