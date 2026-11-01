@@ -221,6 +221,7 @@ target_link_libraries(me_bridge_custom_core PRIVATE psppower)
 add_library(wili_client_objects OBJECT
     platform/src/psp_device.c
     platform/src/wili_log.c
+    platform/src/wili_log_sink.c
     client/app.cpp
     client/preferences.cpp
     client/app_settings.cpp

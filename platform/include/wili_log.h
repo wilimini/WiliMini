@@ -97,6 +97,28 @@ int wili_log_files(void);
 /* Creates or replaces `path` with the lines since `mark`. Returns the line count, -1 if the
  * file could not be written, or -2 without touching the Memory Stick when log files are off. */
 int wili_log_save_since(const char *path, unsigned mark);
+/* Streaming file sinks (platform/src/wili_log_sink.c; the loader does not link it).
+ *
+ * A low-priority writer thread copies lines out of the ring into a file, so loggers never
+ * touch the Memory Stick and a crash loses at most the last second or so. Lines are written
+ * in batches at most once per WILI_LOG_SINK_FLUSH_MS; an ERROR line is written at once. If
+ * lines are logged faster than they can be written the ring overwrites the oldest and the
+ * file gets a "log_lines_dropped=N" line. Everything needs wili_log_set_files(1).
+ *
+ *   WILI_LOG_SINK_SESSION  rotating log of the whole session (max_bytes > 0, kept as
+ *                          path and path.1)
+ *   WILI_LOG_SINK_RUN      one playback's log, replaced on each start (max_bytes = 0) */
+typedef enum { WILI_LOG_SINK_SESSION = 0, WILI_LOG_SINK_RUN, WILI_LOG_SINK_COUNT } WiliLogSink;
+/* Starts (or restarts) a sink writing lines logged since `from_mark` (0 = the oldest line
+ * still in the ring). Returns 0, -1 if the file or thread could not be created, or -2 when
+ * log files are off. */
+int wili_log_sink_start(WiliLogSink sink, const char *path, unsigned from_mark, unsigned max_bytes);
+/* Writes what is pending, closes the file and stops the sink. Safe if not started. */
+void wili_log_sink_stop(WiliLogSink sink);
+int wili_log_sink_active(WiliLogSink sink);
+/* Stops every sink and the writer thread. Call before wili_log_shutdown(). */
+void wili_log_sink_shutdown(void);
+
 /* Number of lines currently held, and the capacity (0 when the ring is disabled). */
 int wili_log_ring_count(void);
 int wili_log_ring_capacity(void);

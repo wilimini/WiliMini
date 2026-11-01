@@ -33,19 +33,25 @@ message, so searches for `LOADER root=`, `CLIENT root=` or `MEM rgb_start` still
   An unknown `log_level` or a bad `log_channels` makes the whole file unreadable, like other
   invalid settings: defaults are used and the file is not rewritten.
 - `WILI_LOG_MAX_LEVEL` (default `DEBUG`) removes higher levels at compile time.
-- The last 64 lines are kept in RAM. **Log files are off by default**, so nothing is written
-  to the Memory Stick for logging unless you turn on Settings > Save logs to file
-  (`"log_files": true` in `settings.json`); console output is unaffected. When on, the ring
-  is written to files at fixed points only, so a crash or hang loses the lines not yet saved:
-  - `results/run-NNN/log.txt`: the lines logged during one playback, written when it
-    ends, on both the native and sceMpeg backends. If more than 64 lines were logged it
-    starts with `log_lines_overwritten=N`.
-  - `logs/last-run.log`: the newest lines of the whole session, written on a normal quit
-    (START). It starts at the client's first line; the loader keeps no ring buffer.
-  - `last-error.txt`: the newest lines between `recent_log_begin` and `recent_log_end`,
-    added when an error is recorded. The error fields themselves are always written.
-  Lines longer than 384 bytes are truncated. The controlled playback test enables files
-  per run with `"log_files": true` in `playback-test.json`.
+- **Log files and playback results are off by default.** Nothing about logging or playback
+  results is written to the Memory Stick unless Settings > Save logs and results is on
+  (`"log_files": true` in `settings.json`). Console output is unaffected. The switch takes
+  effect at once. It controls:
+  - `logs/wili.log`: the whole session, kept as `wili.log` and `wili.log.1` of about 256 KiB
+    each at most. New sessions append to it.
+  - `results/run-NNN/log.txt`: the lines logged during one playback, on both backends.
+  - the newest log lines in `last-error.txt` (between `recent_log_begin` and
+    `recent_log_end`); the error fields themselves are always written.
+  - the `results/run-NNN/` folders themselves; see "Playback result folders" below.
+- **How the files are written.** Lines go into a 64-line RAM ring. A low-priority writer
+  thread copies them to the files, so the UI, video and network threads never wait on the
+  Memory Stick. Lines are written at most about once a second, an ERROR line immediately, so
+  a crash or hang loses at most the last second or so. If lines are logged faster than they
+  can be written, the oldest are overwritten and the file gets `log_lines_dropped=N`. A
+  failed write (card full or removed) stops that file quietly. At a normal exit (START) the
+  thread flushes and stops, waiting at most 3 seconds.
+  Lines longer than 384 bytes are truncated. The controlled playback test enables files per
+  run with `"log_files": true` in `playback-test.json`.
 - Converted so far: `main.cpp`, the loader, `bilibili.c` network/stream reports,
   and the player (`PLAYER`, `MEM`, `VIDEO` lines). `HTTP timing`, `STREAM` and
   `LIVE` lines now appear as `NET` lines. Not converted: `memory_profile.c` (`ALLOC`,
@@ -70,9 +76,10 @@ Emulator screenshots do not replace hardware validation.
 
 ## Playback result folders
 
-Each playback creates `results/run-NNN/` on the Memory Stick (`summary.json`, `log.txt`
-only when log files are on, and for native playback `diagnostics.txt` and CSV files).
-These result files are written regardless of the log file setting.
+With Save logs and results on, each playback creates `results/run-NNN/` on the Memory Stick:
+`summary.json`, `log.txt`, and for native playback `diagnostics.txt` and CSV files. With it
+off, nothing under `results/` is created or written. Profiling runs (`diagnostic_profile`),
+the benchmark runner and the lab build always save results, because that is their purpose.
 
 - The number is the highest existing one plus one, so numbers are not reused when old
   folders are deleted. Names are matched ignoring case because FAT lists them in uppercase.
@@ -84,3 +91,5 @@ These result files are written regardless of the log file setting.
 - If a numbered folder cannot be created, the run uses `results/latest` and overwrites it
   each time. Playback does not fail because its logs cannot be saved.
 - Only folders named `run-NNN` are ever deleted; other files in `results/` are left alone.
+- Other writes are not part of this switch: `settings.json`, the cover cache, session
+  files, and `last-error.txt` when an error occurs.

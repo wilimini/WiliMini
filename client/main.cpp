@@ -372,11 +372,7 @@ int main(int argc, char** argv) {
     network_close();
     ui_shutdown();
     logMemory("shutdown");
-    // The newest lines of this session; "log_lines_overwritten" says if it ran longer.
-    if (wili_log_files()) {
-        sceIoMkdir(CLIENT_PATH("/logs"), 0777);
-        wili_log_save_since(CLIENT_PATH("/logs/last-run.log"), 0);
-    }
+    wili_log_sink_shutdown(); // writes pending lines and stops the writer thread
     wili_log_shutdown();
     sceKernelExitGame();
     return 0;

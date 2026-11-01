@@ -15,7 +15,7 @@
   "settings_confirm_button": "确认键",
   "settings_language": "界面语言",
   "settings_log_level": "日志级别",
-  "settings_log_files": "日志写入文件",
+  "settings_log_files": "日志与结果写入文件",
   "settings_wifi": "Wi-Fi",
   "settings_cover_cache": "封面缓存",
   "settings_help": "按键帮助",

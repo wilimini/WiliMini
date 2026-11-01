@@ -56,6 +56,7 @@ for name, config in cases.items():
     shutil.copytree(package, game, ignore=shutil.ignore_patterns('cache', 'session.json', 'results'))
     for file in media.iterdir():
         shutil.copy2(file, game / file.name)
+    config['log_files'] = True  # results and logs are off by default; this test reads them
     (game/'playback-test.json').write_text(json.dumps(config))
     env = dict(os.environ, BILI_HEADLESS_CLIENT_DIR=str(build), BILI_HEADLESS_PACKAGE=str(package),
                BILI_HEADLESS_MEMSTICK=str(memstick), BILI_HEADLESS_TIMEOUT='180',

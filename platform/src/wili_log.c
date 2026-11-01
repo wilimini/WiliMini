@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "wili_log.h"
+#include "wili_log_internal.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -15,10 +16,6 @@
 #include <time.h>
 #endif
 
-#ifndef WILI_LOG_RING_LINES
-#define WILI_LOG_RING_LINES 64
-#endif
-
 unsigned char wili_log_levels[WLC_COUNT] = {
     WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO,
     WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO, WILI_LOG_INFO
@@ -29,6 +26,9 @@ static const char *const channel_names[WLC_COUNT] = {
 };
 static const char *const level_names[] = {"off", "error", "warn", "info", "debug", "verbose"};
 static const char level_letters[] = "-EWIDV";
+
+void (*wili_log_notify)(void);
+volatile int wili_log_urgent;
 
 #if WILI_LOG_RING_LINES > 0
 static char ring[WILI_LOG_RING_LINES][WILI_LOG_LINE_MAX];
@@ -164,6 +164,9 @@ void wili_log_write(WiliLogChannel channel, WiliLogLevel level, const char *form
     memcpy(ring[ring_total % WILI_LOG_RING_LINES], line, (size_t)used + 2);
     ++ring_total;
     lock_give();
+    if (level == WILI_LOG_ERROR) WILI_STORE(&wili_log_urgent, 1);
+    void (*const notify)(void) = WILI_LOAD(&wili_log_notify);
+    if (notify) notify();
 #endif
 }
 
@@ -189,36 +192,54 @@ unsigned wili_log_mark(void) {
 }
 
 #if WILI_LOG_RING_LINES > 0
+int wili_log_ring_next(unsigned *seq, char *line, unsigned *lost) {
+    lock_take();
+    const unsigned total = ring_total;
+    if (*seq >= total) {
+        lock_give();
+        return 0;
+    }
+    if (total - *seq > WILI_LOG_RING_LINES) {
+        if (lost) *lost += total - WILI_LOG_RING_LINES - *seq;
+        *seq = total - WILI_LOG_RING_LINES;
+    }
+    memcpy(line, ring[*seq % WILI_LOG_RING_LINES], WILI_LOG_LINE_MAX);
+    ++*seq;
+    lock_give();
+    return 1;
+}
+
+unsigned wili_log_ring_total(void) {
+    lock_take();
+    const unsigned total = ring_total;
+    lock_give();
+    return total;
+}
+
 /* Copies one line at a time under the lock and writes it after releasing it, so a slow
  * Memory Stick never blocks threads that are logging. Lines overwritten while we copy are
  * skipped and counted. */
 static int dump_from(unsigned from, FILE *out, int announce_loss) {
     char line[WILI_LOG_LINE_MAX];
     int written = 0;
-    unsigned seq = from;
+    unsigned seq = from, lost = 0;
     if (announce_loss) {
-        lock_take();
-        const unsigned total = ring_total;
-        lock_give();
+        const unsigned total = wili_log_ring_total();
         if (seq < total && total - seq > WILI_LOG_RING_LINES)
             fprintf(out, "log_lines_overwritten=%u\n", total - WILI_LOG_RING_LINES - seq);
     }
-    for (;;) {
-        lock_take();
-        const unsigned total = ring_total;
-        if (seq >= total) {
-            lock_give();
-            break;
-        }
-        if (total - seq > WILI_LOG_RING_LINES) seq = total - WILI_LOG_RING_LINES;
-        memcpy(line, ring[seq % WILI_LOG_RING_LINES], sizeof(line));
-        lock_give();
+    while (wili_log_ring_next(&seq, line, &lost)) {
         fputs(line, out);
-        ++seq;
         ++written;
     }
     return written;
 }
+#else
+int wili_log_ring_next(unsigned *seq, char *line, unsigned *lost) {
+    (void)seq; (void)line; (void)lost;
+    return 0;
+}
+unsigned wili_log_ring_total(void) { return 0; }
 #endif
 
 int wili_log_dump_since(unsigned mark, FILE *out) {
@@ -240,8 +261,8 @@ int wili_log_dump(FILE *out) {
 }
 
 static volatile int files_enabled; /* off until the setting turns it on */
-void wili_log_set_files(int enabled) { files_enabled = enabled != 0; }
-int wili_log_files(void) { return files_enabled; }
+void wili_log_set_files(int enabled) { WILI_STORE(&files_enabled, enabled != 0); }
+int wili_log_files(void) { return WILI_LOAD(&files_enabled); }
 
 int wili_log_save_since(const char *path, unsigned mark) {
     if (!files_enabled) return -2;

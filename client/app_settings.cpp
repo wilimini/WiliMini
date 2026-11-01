@@ -37,6 +37,14 @@ bool coverEntry(const SceIoDirent& entry) {
 void applyLogPreferences(const Preferences& preferences) {
     // Set the base level first so a channel override is not reset by it.
     wili_log_set_files(preferences.saveLogFiles);
+    if (preferences.saveLogFiles) {
+        // Whole-session log, kept as wili.log and wili.log.1 (about 256 KiB each at most).
+        sceIoMkdir(CLIENT_PATH("/logs"), 0777);
+        wili_log_sink_start(WILI_LOG_SINK_SESSION, CLIENT_PATH("/logs/wili.log"), 0, 256 * 1024);
+    } else {
+        wili_log_sink_stop(WILI_LOG_SINK_SESSION);
+        wili_log_sink_stop(WILI_LOG_SINK_RUN);
+    }
     wili_log_set_all(static_cast<WiliLogLevel>(preferences.logLevel));
     if (!preferences.logChannels.empty()) wili_log_configure(preferences.logChannels.c_str());
     WLOG_I(WLC_CLIENT, "log_level=%s channels=%s files=%s", logVerbosityCode(preferences.logLevel),

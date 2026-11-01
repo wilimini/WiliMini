@@ -466,9 +466,12 @@ static int draw_frame(const AVFrame *frame)
     return 0;
 }
 
-/* The run folder of the playback in progress ("" if none), and where its log starts. */
+/* The run folder of the playback in progress ("" if none), and where its log starts.
+ * results_enabled is the "Save logs and results" setting (or a profiling run); the lab build
+ * always saves results. When off nothing is created or written under results/. */
 static char current_run_path[192];
 static unsigned run_log_mark;
+static int results_enabled = 1;
 
 static void remove_run_dir(const char *path)
 {
@@ -498,11 +501,30 @@ static void remove_run_dir(const char *path)
  * WILI_RESULTS_KEEP. Profiling runs keep every folder because they are experiment
  * evidence. Playback must not fail because of its logs: when no numbered folder can be
  * made, results/latest is reused (and overwritten) instead. */
+/* Streams this playback's log into its run folder next to summary.json, from the moment the
+ * playback began (run_log_mark). Needs "Save logs and results" on; otherwise it is a no-op. */
+static void start_run_log(void)
+{
+    char file[224];
+    if (snprintf(file, sizeof(file), "%s/log.txt", current_run_path) < (int)sizeof(file))
+        wili_log_sink_start(WILI_LOG_SINK_RUN, file, run_log_mark, 0);
+}
+
+static void stop_run_log(void)
+{
+    wili_log_sink_stop(WILI_LOG_SINK_RUN); /* writes what is pending, then closes */
+    current_run_path[0] = 0;
+}
+
 static int select_run_dir(char *path, size_t length)
 {
     static int scan[1024];
     int count = 0;
     current_run_path[0] = 0;
+    if (!results_enabled) {
+        path[0] = 0; /* callers treat an empty folder as "do not write results" */
+        return 0;
+    }
     snprintf(path, length, "%s/results", ROOT);
     sceIoMkdir(path, 0777);
     SceUID dir = sceIoDopen(path);
@@ -533,23 +555,17 @@ static int select_run_dir(char *path, size_t length)
         }
         if (drops) WLOG_I(WLC_IO, "results pruned=%d kept_newest=%d", drops, WILI_RESULTS_KEEP);
         snprintf(current_run_path, sizeof(current_run_path), "%s", path);
+        start_run_log();
         return 0;
     }
     WLOG_W(WLC_IO, "results run folder unavailable; reusing results/latest");
     snprintf(path, length, "%s/results/latest", ROOT);
     sceIoMkdir(path, 0777);
     snprintf(current_run_path, sizeof(current_run_path), "%s", path);
+    start_run_log();
     return 0;
 }
 
-/* Everything logged since the playback began, next to summary.json. */
-static void save_run_log(void)
-{
-    if (!current_run_path[0]) return;
-    char file[224];
-    snprintf(file, sizeof(file), "%s/log.txt", current_run_path);
-    wili_log_save_since(file, run_log_mark);
-}
 
 #if BILI_PPSSPP_SCE_MPEG
 #include "ppsspp_player.h"
@@ -558,6 +574,7 @@ static void save_run_log(void)
 static void save_results(const char *path, const RunStats *s, int render,
                          int full, int error_code)
 {
+    if (!path[0]) return; /* results are off */
     char file[160];
     if (profile_requested) {
         static const char *names[] = {"cabac_mb", "cavlc_mb", "reconstruct_mb_inclusive", "loop_filter_row",
@@ -1324,6 +1341,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     quit_requested = 0;
     profile_requested = options->diagnostic_profile != 0;
     current_run_path[0] = 0;
+    results_enabled = wili_log_files() || profile_requested;
     run_log_mark = wili_log_mark();
     yuv_rgb_init(&yuv_rgb_tables);
     scale_map_init(&scale_map);
@@ -1360,7 +1378,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
     }
     poll_controller = 0;
-    save_run_log();
+    stop_run_log();
     if (control >= 0) {
         sceKernelWaitThreadEnd(control, NULL);
         sceKernelDeleteThread(control);

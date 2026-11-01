@@ -70,6 +70,7 @@ static void playback_diagnostic(const char *stage, int result)
 }
 static void playback_diagnostic_begin(const char *run_path)
 {
+    if (!run_path[0]) { diagnostic_path[0] = 0; return; } /* results are off */
     diagnostic_sequence = 0;
     ++diagnostic_attempt;
     diagnostic_model = kuKernelGetModel();
