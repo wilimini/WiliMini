@@ -85,6 +85,57 @@ std::mutex wbiMutex;
 std::string wbiMixin;
 std::time_t wbiUpdated = 0;
 
+// How long a fetched WBI mixin key is trusted, in memory and on disk.
+constexpr std::time_t kWbiTtlSeconds = 3600;
+
+bool wbiFresh(std::time_t stamp) {
+    const std::time_t now = std::time(nullptr);
+    return stamp > 0 && now >= stamp && now - stamp < kWbiTtlSeconds;
+}
+
+// The mixin key is derived from public nav data, not a credential. Keeping it
+// across launches saves the nav round trip before the first signed request.
+// Any unreadable, malformed or expired file is ignored and the key refetched.
+bool loadWbiCache() {
+    std::FILE *file = std::fopen(CLIENT_PATH("/wbi-key.txt"), "r");
+    if (!file)
+        return false;
+    long long stamp = 0;
+    char key[40] = {};
+    const int fields = std::fscanf(file, "%lld %39s", &stamp, key);
+    std::fclose(file);
+    if (fields != 2 || std::strlen(key) != 32 || !wbiFresh(static_cast<std::time_t>(stamp)))
+        return false;
+    for (const char *c = key; *c; ++c)
+        if (!std::isalnum(static_cast<unsigned char>(*c)))
+            return false;
+    std::lock_guard<std::mutex> lock(wbiMutex);
+    wbiMixin = key;
+    wbiUpdated = static_cast<std::time_t>(stamp);
+    return true;
+}
+
+void saveWbiCache(const std::string &mixin, std::time_t stamp) {
+    // Publish through a temporary file so a power loss never leaves a torn key.
+    std::FILE *file = std::fopen(CLIENT_PATH("/wbi-key.txt.part"), "w");
+    if (!file)
+        return;
+    const bool wrote = std::fprintf(file, "%lld %s\n", static_cast<long long>(stamp), mixin.c_str()) > 0;
+    const bool closed = std::fclose(file) == 0;
+    if (wrote && closed) {
+        // PSP filesystems may refuse to rename over an existing file.
+        std::remove(CLIENT_PATH("/wbi-key.txt"));
+        if (std::rename(CLIENT_PATH("/wbi-key.txt.part"), CLIENT_PATH("/wbi-key.txt")) != 0)
+            std::remove(CLIENT_PATH("/wbi-key.txt.part"));
+    } else {
+        std::remove(CLIENT_PATH("/wbi-key.txt.part"));
+    }
+}
+
+void clearWbiCache() {
+    std::remove(CLIENT_PATH("/wbi-key.txt"));
+}
+
 pspapp::Result<pspapp::ApiResponse> fetchJson(pspapp::HttpClient &http, const std::string &url,
                                               pspapp::ErrorOperation op, bool retrySafe) {
     auto response = http.get(url, op, retrySafe);
@@ -103,9 +154,11 @@ pspapp::Result<pspapp::ApiResponse> fetchJson(pspapp::HttpClient &http, const st
 [[maybe_unused]] pspapp::AppError fetchWbiMixin(pspapp::HttpClient &http) {
     {
         std::lock_guard<std::mutex> lock(wbiMutex);
-        if (!wbiMixin.empty() && std::time(nullptr) - wbiUpdated < 3600)
+        if (!wbiMixin.empty() && wbiFresh(wbiUpdated))
             return {};
     }
+    if (loadWbiCache())
+        return {};
     auto response =
         fetchJson(http, joinUrl(Api::Nav, {}), pspapp::ErrorOperation::SignRequest, true);
     if (!response)
@@ -121,9 +174,13 @@ pspapp::Result<pspapp::ApiResponse> fetchJson(pspapp::HttpClient &http, const st
                               extractWbiKey(image.at("sub_url").get<std::string>()));
         if (mixin.size() != 32)
             throw std::runtime_error("Invalid WBI key");
-        std::lock_guard<std::mutex> lock(wbiMutex);
-        wbiMixin = std::move(mixin);
-        wbiUpdated = std::time(nullptr);
+        const std::time_t stamp = std::time(nullptr);
+        {
+            std::lock_guard<std::mutex> lock(wbiMutex);
+            wbiMixin = mixin;
+            wbiUpdated = stamp;
+        }
+        saveWbiCache(mixin, stamp);
         return {};
     } catch (const std::exception &) {
         return {pspapp::ErrorDomain::Api, pspapp::ErrorKind::InvalidResponse,
@@ -180,6 +237,8 @@ pspapp::Result<pspapp::ApiResponse> requestDocument(pspapp::HttpClient &http,
             std::lock_guard<std::mutex> lock(wbiMutex);
             wbiMixin.clear();
         }
+        // A rejected signature must not come back from the saved copy.
+        clearWbiCache();
         auto error = fetchWbiMixin(http);
         if (error)
             return Result<ApiResponse>::failure(std::move(error));
