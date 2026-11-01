@@ -143,5 +143,6 @@
   "settings_home_style": "Home style",
   "value_home_classic": "Classic",
   "value_home_tiles": "Tiles",
-  "tile_live_loaded": "recommendations loaded"
+  "tile_live_loaded": "recommendations loaded",
+  "value_home_metro": "Metro"
 }

@@ -63,7 +63,7 @@ void applyPreferences(const pspapp::Preferences& settings) {
     kText = settings.darkTheme ? color(235, 237, 242) : color(43, 46, 53);
     kTextDim = settings.darkTheme ? color(163, 170, 184) : color(117, 123, 134);
     kPink = settings.darkTheme ? color(255, 128, 170) : color(204, 65, 113);
-    if (settings.tileHome) {
+    if (settings.tileHome()) {
         // Metro palette: flat black or white, high-contrast text, one accent blue.
         kBackground = settings.darkTheme ? color(0, 0, 0) : color(255, 255, 255);
         kPanel = settings.darkTheme ? color(16, 16, 16) : color(255, 255, 255);
@@ -314,10 +314,11 @@ void drawCover(const std::string& bvid, int x, int y, int width, int height, boo
 }
 
 void drawMetroHeader(const pspapp::App& app);
+void drawTilesHeader(const pspapp::App& app);
 
 void drawHeader(const pspapp::App& app) {
     static const int iconY[] = {38, 71, 104, 191, 221};
-    const bool tile = app.preferences().tileHome;
+    const bool tile = app.preferences().tileHome();
     const bool navFocus = !tile && app.focusArea() == pspapp::FocusArea::Navigation;
     const int activeNav = app.utilityPage() ? 4 : navFocus ? app.navigationSelection() : app.tab() == pspapp::Tab::Mine ? 2 : 0;
     for (int icon = 0; !tile && icon < 5; ++icon) {
@@ -330,7 +331,10 @@ void drawHeader(const pspapp::App& app) {
         }
     }
     if (!tile) fillRect(0, iconY[activeNav] - 1, navFocus ? 3 : 2, 22, kPink);
-    if (tile && !app.utilityPage()) { drawMetroHeader(app); return; }
+    if (tile && !app.utilityPage()) {
+        if (app.preferences().metro()) drawMetroHeader(app); else drawTilesHeader(app);
+        return;
+    }
     if (app.utilityPage()) {
         const char* title = pspapp::text(pspapp::TextId::page_settings_title, app.preferences().locale);
         switch (app.screen()) {
@@ -551,6 +555,31 @@ void drawSmoothText(int x, int y, uint32_t shade, std::string_view text, int max
             }
         }
         x += advance;
+    }
+}
+
+// Tiles style: 16 px text drawn at double size (32 px) for the big numbers on live tiles.
+void drawBigText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
+    const int right = std::min(kWidth, x + maxWidth);
+    for (size_t pos = 0; pos < text.size();) {
+        const auto* glyph = bitmapGlyph(bitmapNext(text, pos), 16);
+        if (!glyph) continue;
+        if (x + glyph->advance * 2 > right) break;
+        for (int yy = 0; yy < glyph->height; ++yy)
+            for (int xx = 0; xx < glyph->width; ++xx) {
+                const int pixel = yy * glyph->width + xx;
+                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
+                for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
+                    blendPixel(x + xx * 2 + dx, y + yy * 2 + dy, shade, alpha);
+            }
+        x += glyph->advance * 2;
+    }
+}
+
+void drawIconGlyph(int icon, int x, int y, int size) {
+    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx) {
+        const unsigned pixel = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];
+        blendPixel(x + xx, y + yy, color(255, 255, 255), ((pixel >> 12) & 15) * 17);
     }
 }
 
@@ -806,6 +835,96 @@ void drawHub(const pspapp::App& app, int64_t now) {
     }
 }
 
+void drawHubTiles(const pspapp::App& app, int64_t now) {
+    using namespace pspapp;
+    struct Look { TileId id; TextId label; int icon; uint32_t shade; };
+    static const Look looks[] = {
+        {TileId::Recommend, TextId::tile_recommend, 0, color(0, 80, 239)},
+        {TileId::Hots,      TextId::tile_hots,     -1, color(216, 0, 115)},
+        {TileId::Search,    TextId::tile_search,   -1, color(162, 0, 37)},
+        {TileId::Discover,  TextId::tile_discover, -1, color(0, 171, 169)},
+        {TileId::Dynamic,   TextId::tile_dynamic,   1, color(96, 169, 23)},
+        {TileId::Inbox,     TextId::tile_inbox,     3, color(250, 104, 0)},
+        {TileId::Mine,      TextId::tile_mine,      2, color(106, 0, 255)},
+        {TileId::Settings,  TextId::tile_settings,  4, color(100, 118, 135)},
+    };
+    const Locale locale = app.preferences().locale;
+    const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
+
+    // Smooth scrolling toward the pan that keeps the selection on screen.
+    hubFx.panTarget = static_cast<float>(tilePan(app.tileSelection(), static_cast<int>(hubFx.panTarget)));
+    hubFx.pan += (hubFx.panTarget - hubFx.pan) * 0.22f;
+    if (std::fabs(hubFx.panTarget - hubFx.pan) < 0.4f) hubFx.pan = hubFx.panTarget;
+    const float pan = hubFx.pan;
+
+    // Title slides in on entrance and drifts slower than the tiles (parallax).
+    const float titleIn = easeOut((now - hubFx.enterMs) / 450.f);
+    drawText(kTileOriginX - static_cast<int>(pan * 0.35f) - static_cast<int>((1.f - titleIn) * 36.f), 6, 0.9f,
+             shadeMix(kBackground, kText, static_cast<unsigned>(titleIn * 256.f)),
+             text(TextId::tile_title, locale), 300);
+
+    for (int i = 0; i < kTileCount; ++i) {
+        const TileSpec& tile = kTiles[i];
+        const Look* look = nullptr;
+        for (const Look& candidate : looks) if (candidate.id == tile.id) look = &candidate;
+        if (!look) continue;
+        const int x = tileX(tile) - static_cast<int>(pan + 0.5f), y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
+        if (x + w + 4 < 0 || x - 4 >= kWidth) continue;
+
+        std::string big, small;
+        const bool live = app.tileLive(tile.id, big, small);
+        const TileMotion motion = tileMotion(app, i, live, now);
+
+        // Squeeze about the centre line (flip) and slightly in width (depth).
+        const int drawH = std::max(1, static_cast<int>(h * motion.scale));
+        const int drawW = static_cast<int>(w * (0.88f + 0.12f * motion.scale));
+        const int drawX = x + (w - drawW) / 2, drawY = y + (h - drawH) / 2;
+        const uint32_t face = motion.back ? shadeMix(look->shade, color(0, 0, 0), 56) : look->shade;
+        blendRect(drawX, drawY, drawW, drawH, face, static_cast<unsigned>(motion.opacity * 255.f));
+        if (motion.scale < 0.96f || motion.opacity < 0.96f) continue;  // content only on a flat face
+
+        const char* label = text(look->label, locale);
+        if (motion.back) {
+            drawBigText(x + 8, y + 6, white, big, w - 16);
+            if (tile.cols == 1) continue;
+            drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
+        } else if (tile.cols == 1) {
+            if (look->icon >= 0) {
+                drawIconGlyph(look->icon, x + (w - 22) / 2, y + 10, 22);
+                drawText(x + 2, y + h - 18, 0.5f, white, label, w - 4, true);
+            } else {
+                const bool fits = bitmapMeasure(label, 16) <= w - 4;
+                drawText(x + 2, y + (h - (fits ? 16 : 12)) / 2, fits ? 0.9f : 0.5f, white, label, w - 4, true);
+            }
+        } else {
+            if (look->icon >= 0) drawIconGlyph(look->icon, x + 8, y + 8, 44);
+            drawText(x + 8, y + h - 24, 0.9f, white, label, w - 16);
+            const std::string subtitle = app.tileSubtitle(tile.id);
+            if (!subtitle.empty()) drawText(x + 8, y + h - 42, 0.5f, softWhite, subtitle, w - 16);
+        }
+    }
+
+    // Focus ring glides between tiles instead of jumping.
+    const TileSpec& selected = kTiles[app.tileSelection()];
+    const float target[4] = {static_cast<float>(tileX(selected)), static_cast<float>(tileY(selected)),
+                             static_cast<float>(tileWidth(selected)), static_cast<float>(tileHeight(selected))};
+    if (!hubFx.ringReady) { for (int k = 0; k < 4; ++k) hubFx.ring[k] = target[k]; hubFx.ringReady = true; }
+    for (int k = 0; k < 4; ++k) {
+        hubFx.ring[k] += (target[k] - hubFx.ring[k]) * 0.38f;
+        if (std::fabs(target[k] - hubFx.ring[k]) < 0.5f) hubFx.ring[k] = target[k];
+    }
+    const int launch = app.tileLaunchMs();
+    const bool entered = now - hubFx.enterMs > 700;
+    if (entered && (launch < 0 || launch < 90)) {
+        const int rx = static_cast<int>(hubFx.ring[0] - pan + 0.5f), ry = static_cast<int>(hubFx.ring[1] + 0.5f);
+        const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
+        fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
+        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);
+        fillRect(rx - 3, ry - 3, 2, rh + 6, kText);
+        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kText);
+    }
+}
+
 // ---- Tile pages ---------------------------------------------------------------------------
 // With the tile theme on, every page shares the Metro look: flat palette, status bar, a large
 // lowercase title with a pivot row, list rows with a small cover, a tinted selection that glides
@@ -822,6 +941,8 @@ struct PageFx {
     uint64_t lastUs = 0;
     bool glideReady = false;
     float glide[4]{};
+    bool ringReady = false;  // Tiles style focus ring
+    float ring[4]{};
 };
 PageFx pageFx;
 
@@ -943,6 +1064,119 @@ void drawMineTiles(const pspapp::App& app) {
     }
 }
 
+constexpr int kGridTop = 49, kGridBottom = 251, kGridY0 = 53;
+constexpr int kTileX = 12, kTileW = 224, kTileH = 98, kPitchX = 228, kPitchY = 102;
+constexpr int kAccountH = 50;
+void fillClipped(int x, int y, int w, int h, uint32_t shade) {
+    const int top = std::max(y, kGridTop), bottom = std::min(y + h, kGridBottom);
+    if (bottom > top) fillRect(x, top, w, bottom - top, shade);
+}
+
+// Focus ring that glides to its target rectangle.
+void drawRing(const float target[4]) {
+    if (!pageFx.ringReady) { for (int k = 0; k < 4; ++k) pageFx.ring[k] = target[k]; pageFx.ringReady = true; }
+    for (int k = 0; k < 4; ++k) {
+        pageFx.ring[k] += (target[k] - pageFx.ring[k]) * 0.4f;
+        if (std::fabs(target[k] - pageFx.ring[k]) < 0.5f) pageFx.ring[k] = target[k];
+    }
+    const int x = static_cast<int>(pageFx.ring[0] + 0.5f), y = static_cast<int>(pageFx.ring[1] + 0.5f);
+    const int w = static_cast<int>(pageFx.ring[2] + 0.5f), h = static_cast<int>(pageFx.ring[3] + 0.5f);
+    fillClipped(x - 3, y - 3, w + 6, 2, kText);
+    fillClipped(x - 3, y + h + 1, w + 6, 2, kText);
+    fillClipped(x - 3, y - 3, 2, h + 6, kText);
+    fillClipped(x + w + 1, y - 3, 2, h + 6, kText);
+}
+
+void drawVideoTile(int x, int y, const TileItem& item, size_t index) {
+    const int top = std::max(y, kGridTop), bottom = std::min(y + kTileH, kGridBottom);
+    if (bottom <= top) return;
+    const uint32_t white = color(255, 255, 255);
+    // The 16:9 cover is drawn taller than the tile and cropped by the clip rows.
+    drawCover(*item.bvid, x, y - 10, kTileW, 118, false, top, bottom, kTilePalette[index % 8], false);
+    if (item.duration > 0 && y + 4 >= kGridTop) {
+        const std::string duration = formatDuration(item.duration);
+        const int badge = static_cast<int>(duration.size()) * 6 + 8;
+        blendRect(x + kTileW - badge - 4, y + 4, badge, 14, color(0, 0, 0), 170);
+        drawText(x + kTileW - badge, y + 4, 0.42f, white, duration, badge, false, top, bottom);
+    }
+    const int stripTop = std::max(y + kTileH - 32, top);
+    if (bottom > stripTop) blendRect(x, stripTop, kTileW, bottom - stripTop, color(0, 0, 0), 175);
+    drawText(x + 6, y + kTileH - 31, 0.5f, white, *item.title, kTileW - 12, false, top, bottom);
+    drawText(x + 6, y + kTileH - 16, 0.42f, color(200, 204, 214), item.meta, kTileW - 12, false, top, bottom);
+}
+
+// Draws `items` as a two-column tile grid starting `topInset` pixels below the grid origin.
+void drawTileGrid(const std::vector<TileItem>& items, int selected, int topInset, int scroll) {
+    for (size_t i = 0; i < items.size(); ++i) {
+        const int x = kTileX + static_cast<int>(i % 2) * kPitchX;
+        const int y = kGridY0 + topInset + static_cast<int>(i / 2) * kPitchY - scroll;
+        if (y >= kGridBottom || y + kTileH <= kGridTop) continue;
+        drawVideoTile(x, y, items[i], i);
+    }
+    if (selected >= 0 && static_cast<size_t>(selected) < items.size()) {
+        const float target[4] = {static_cast<float>(kTileX + (selected % 2) * kPitchX),
+                                 static_cast<float>(kGridY0 + topInset + (selected / 2) * kPitchY - scroll),
+                                 static_cast<float>(kTileW), static_cast<float>(kTileH)};
+        drawRing(target);
+    }
+}
+
+void drawVideoGridTiles(const pspapp::App& app) {
+    const auto& cards = app.cards();
+    std::vector<TileItem> items;
+    items.reserve(cards.size());
+    for (const auto& card : cards) {
+        std::string meta = card.author;
+        if (card.views > 0) meta += "  ·  " + formatCount(card.views);
+        items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
+    }
+    const bool focus = app.focusArea() == pspapp::FocusArea::Content;
+    const int row = static_cast<int>(app.selection() / 2);
+    const int scroll = updateScroll(std::max(0.f, static_cast<float>(row * kPitchY - 100)));
+    drawTileGrid(items, focus ? static_cast<int>(app.selection()) : -1, 0, scroll);
+}
+
+void drawMineGrid(const pspapp::App& app) {
+    using namespace pspapp;
+    const auto& auth = app.auth();
+    const bool signedIn = auth.state == AuthState::SignedIn;
+    const size_t selection = app.selection();
+    const bool focus = app.focusArea() == FocusArea::Content;
+    constexpr int inset = kAccountH + 4;
+    const int entryRow = selection ? static_cast<int>((selection - 1) / 2) : 0;
+    const int scroll = updateScroll(selection ? std::max(0.f, static_cast<float>(inset + entryRow * kPitchY - 100)) : 0.f);
+
+    // Account tile.
+    const int ay = kGridY0 - scroll;
+    const uint32_t white = color(255, 255, 255);
+    if (ay + kAccountH > kGridTop) {
+        const int top = std::max(ay, kGridTop), bottom = std::min(ay + kAccountH, kGridBottom);
+        fillRect(kTileX, top, 2 * kPitchX - 4, bottom - top, kTilePalette[0]);
+        drawText(kTileX + 10, ay + 7, 0.7f, white,
+                 signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
+                 2 * kPitchX - 24, false, top, bottom);
+        drawText(kTileX + 10, ay + 29, 0.5f, color(220, 228, 250),
+                 authStateMessage(auth.state, app.preferences().confirmWithCircle), 2 * kPitchX - 24, false, top, bottom);
+    }
+
+    std::vector<TileItem> items;
+    items.reserve(app.history().size() + app.later().size());
+    for (const auto& entry : app.history())
+        items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
+    for (const auto& entry : app.later())
+        items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
+    if (items.empty()) {
+        drawText(kTileX, kGridY0 + inset + 12, 0.7f, kText, "还没有本地记录", 440);
+        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
+    }
+    drawTileGrid(items, focus && selection ? static_cast<int>(selection) - 1 : -1, inset, scroll);
+    if (focus && selection == 0) {
+        const float target[4] = {static_cast<float>(kTileX), static_cast<float>(ay),
+                                 static_cast<float>(2 * kPitchX - 4), static_cast<float>(kAccountH)};
+        drawRing(target);
+    }
+}
+
 // Video detail as tiles: cover, title block, four action tiles and a strip of part tiles.
 void drawDetailTiles(const pspapp::App& app) {
     using namespace pspapp;
@@ -993,6 +1227,31 @@ void drawDetailTiles(const pspapp::App& app) {
             fillRect(x - 3, 209, 2, 43, kText);
             fillRect(x + 149, 209, 2, 43, kText);
         }
+    }
+}
+
+// Pivot header for the tab pages: the five sections in a row, the current one bright.
+void drawTilesHeader(const pspapp::App& app) {
+    using namespace pspapp;
+    const Locale locale = app.preferences().locale;
+    static const TextId labels[] = {TextId::tile_recommend, TextId::tile_hots, TextId::tile_search,
+                                    TextId::tile_discover, TextId::tile_mine};
+    static const Tab tabs[] = {Tab::Recommend, Tab::Hots, Tab::Search, Tab::Discover, Tab::Mine};
+    const bool pivotFocus = app.focusArea() == FocusArea::Categories;
+    int x = 12;
+    for (int i = 0; i < 5; ++i) {
+        std::string label = text(labels[i], locale);
+        for (char& c : label) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        const bool active = app.tab() == tabs[i];
+        drawText(x, 4, 0.9f, active ? kText : kTextDim, label, 200);
+        const int width = bitmapMeasure(label, 16);
+        if (active) fillRect(x, 24, width, pivotFocus ? 3 : 1, kPink);
+        x += width + 16;
+    }
+    if (app.tab() != Tab::Mine) {
+        char meta[16]{};
+        std::snprintf(meta, sizeof(meta), "P%d", app.page());
+        drawText(436, 8, 0.5f, kTextDim, meta, 36);
     }
 }
 
@@ -1331,8 +1590,9 @@ void drawUtility(const pspapp::App& app) {
             app.activeMeBackend() != static_cast<int>(preferences.meBackend);
         const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
                                                                          : pspapp::TextId::value_light, locale),
-            pspapp::text(preferences.tileHome ? pspapp::TextId::value_home_tiles
-                                              : pspapp::TextId::value_home_classic, locale),
+            pspapp::text(preferences.metro() ? pspapp::TextId::value_home_metro
+                         : preferences.tileHome() ? pspapp::TextId::value_home_tiles
+                                                  : pspapp::TextId::value_home_classic, locale),
             std::to_string(preferences.bodySize) + " px",
             pspapp::text(preferences.showCovers ? pspapp::TextId::value_on_demand
                                                : pspapp::TextId::value_off, locale),
@@ -1366,11 +1626,18 @@ void drawUtility(const pspapp::App& app) {
         for (size_t i = app.settingsScroll(); i < end; ++i) {
             const int y = 49 + static_cast<int>(i - app.settingsScroll()) * 18;
             const bool selected = app.settingSelection() == i;
-            if (preferences.tileHome) {
+            if (preferences.tileHome()) {
                 // Tile theme: the selected row becomes an accent tile.
-                if (selected) drawSelection(33, y - 1, 436, 18, 0, kHeight);
-                drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
-                drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
+                if (preferences.metro()) {
+                    if (selected) drawSelection(33, y - 1, 436, 18, 0, kHeight);
+                    drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
+                    drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
+                } else {
+                    // Tiles style: the selected row becomes an accent tile.
+                    if (selected) fillRect(33, y - 1, 436, 18, kTilePalette[0]);
+                    drawText(39, y, 0.7f, selected ? color(255, 255, 255) : kText, pspapp::text(labels[i], locale), 250);
+                    drawText(300, y, 0.7f, selected ? color(255, 255, 255) : kTextDim, values[i], 168);
+                }
                 continue;
             }
             if (selected) fillRect(33, y + 2, 2, 13, kPink);
@@ -1603,14 +1870,15 @@ void drawBrowse(const pspapp::App& app) {
         const int y = top + static_cast<int>(index - first) * 68;
         if (y + 30 > 251) break;
         const bool selected = index == app.browseSelection();
-        const bool tile = app.preferences().tileHome;
+        const bool tile = app.preferences().tileHome();
         // Tile theme: each row is a tile; the selected one is filled with the accent colour.
         const int inset = tile ? 8 : 0, width = tile ? 440 : 456;
         const uint32_t white = color(255, 255, 255);
-        const uint32_t titleShade = tile ? kText : (selected ? kPink : kText);
-        const uint32_t noteShade = kTextDim;
-        (void)white;
-        if (tile) { if (selected) drawSelection(12, y, 456, 62, 0, kHeight); }
+        const bool metro = app.preferences().metro();
+        const uint32_t titleShade = tile ? (metro || !selected ? kText : white) : (selected ? kPink : kText);
+        const uint32_t noteShade = tile && !metro && selected ? color(222, 230, 252) : kTextDim;
+        if (tile && metro) { if (selected) drawSelection(12, y, 456, 62, 0, kHeight); }
+        else if (tile) fillRect(12, y, 456, 62, selected ? kTilePalette[0] : kPanelRaised);
         else if (selected) fillRect(6, y + 2, 2, 50, kPink);
         if (index == page.items.size()) {
             drawText(12 + inset, y + (tile ? 20 : 0), 0.7f, titleShade, "加载下一页", width);
@@ -1777,7 +2045,7 @@ void ui_render(const pspapp::App& app) {
         pageFx.key = pageKey;
         pageFx.enterMs = nowMs;
     }
-    const bool tile = app.preferences().tileHome;
+    const bool tile = app.preferences().tileHome();
     if (app.screen() == pspapp::Screen::Browse && app.hasBrowse()) {
         drawBrowse(app);
     } else if (app.utilityPage()) {
@@ -1791,18 +2059,23 @@ void ui_render(const pspapp::App& app) {
     } else if (app.screen() == pspapp::Screen::Comments) {
         drawComments(app);
     } else if (hub) {
-        drawHub(app, nowMs);
+        if (app.preferences().metro()) drawHub(app, nowMs); else drawHubTiles(app, nowMs);
     } else {
         drawHeader(app);
         if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) {
-            if (tile) drawMineTiles(app); else drawMine(app);
+            if (!tile) drawMine(app);
+            else if (app.preferences().metro()) drawMineTiles(app);
+            else drawMineGrid(app);
         } else if (app.tab() == pspapp::Tab::Search) {
-            if (tile && app.searchView() == pspapp::SearchView::Results && !app.cards().empty()) drawVideoGrid(app);
-            else drawSearch(app);
-        } else if (tile && !app.cards().empty()) drawVideoGrid(app);
+            if (tile && app.searchView() == pspapp::SearchView::Results && !app.cards().empty()) {
+                if (app.preferences().metro()) drawVideoGrid(app); else drawVideoGridTiles(app);
+            } else drawSearch(app);
+        } else if (tile && !app.cards().empty()) {
+            if (app.preferences().metro()) drawVideoGrid(app); else drawVideoGridTiles(app);
+        }
         else drawCardGrid(app);
     }
-    if (!hub && app.preferences().tileHome) squeezePage(nowMs);
+    if (!hub && app.preferences().tileHome()) squeezePage(nowMs);
     drawFooter(app);
     presentFrame();
 }

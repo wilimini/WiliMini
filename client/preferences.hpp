@@ -38,6 +38,11 @@ const char* meBackendCode(MeBackend backend);
 enum class LogVerbosity : int { Error = 1, Warn = 2, Info = 3, Debug = 4 };
 const char* logVerbosityCode(LogVerbosity level);
 
+// Home screen style. Tiles and Metro both use the tile home; Tiles shows cover grids on
+// the sub-pages, Metro follows the web design with large titles and list rows.
+enum class HomeStyle : int { Classic = 0, Tiles = 1, Metro = 2 };
+const char* homeStyleCode(HomeStyle style);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -51,8 +56,10 @@ struct Preferences {
     LogVerbosity logLevel = LogVerbosity::Info;
     // Off by default: no log text is written to the Memory Stick unless this is on.
     bool saveLogFiles = false;
-    // Tile home screen (Metro style). Chosen in Settings; old files default to off.
-    bool tileHome = false;
+    // Chosen in Settings; old files default to Classic.
+    HomeStyle homeStyle = HomeStyle::Classic;
+    bool tileHome() const { return homeStyle != HomeStyle::Classic; }
+    bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
     // settings.json and preserved on save; see wili_log_configure().
     std::string logChannels;

@@ -77,17 +77,25 @@ int main(int argc, char** argv) {
     value.saveLogFiles = false;
     assert(pspapp::savePreferences(path, value));
     assert(pspapp::loadPreferences(path, filesRestored) && !filesRestored.saveLogFiles);
-    // The tile theme is off for files saved before it existed, round-trips, and must be a boolean.
+    // The home style is Classic for files saved before it existed, round-trips, and is validated.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
-    assert(pspapp::loadPreferences(path, value) && !value.tileHome);
-    value.tileHome = true;
-    assert(pspapp::savePreferences(path, value));
-    pspapp::Preferences tilesRestored;
-    assert(pspapp::loadPreferences(path, tilesRestored) && tilesRestored.tileHome);
-    value.tileHome = false;
-    assert(pspapp::savePreferences(path, value));
-    assert(pspapp::loadPreferences(path, tilesRestored) && !tilesRestored.tileHome);
+    assert(pspapp::loadPreferences(path, value) && value.homeStyle == pspapp::HomeStyle::Classic && !value.tileHome());
+    for (auto style : {pspapp::HomeStyle::Tiles, pspapp::HomeStyle::Metro, pspapp::HomeStyle::Classic}) {
+        value.homeStyle = style;
+        assert(pspapp::savePreferences(path, value));
+        pspapp::Preferences styleRestored;
+        assert(pspapp::loadPreferences(path, styleRestored) && styleRestored.homeStyle == style);
+        assert(styleRestored.tileHome() == (style != pspapp::HomeStyle::Classic));
+        assert(styleRestored.metro() == (style == pspapp::HomeStyle::Metro));
+    }
+    // The boolean written by the first tile build means the Tiles style.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"tile_home":true})";
+    assert(pspapp::loadPreferences(path, value) && value.homeStyle == pspapp::HomeStyle::Tiles);
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"tile_home":1})";
+    assert(!pspapp::loadPreferences(path, value));
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"home_style":"grid"})";
+    assert(!pspapp::loadPreferences(path, value));
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"home_style":2})";
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_files":"yes"})";
     assert(!pspapp::loadPreferences(path, value));

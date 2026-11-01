@@ -143,5 +143,6 @@
   "settings_home_style": "首页样式",
   "value_home_classic": "经典",
   "value_home_tiles": "磁贴",
-  "tile_live_loaded": "个推荐视频已载入"
+  "tile_live_loaded": "个推荐视频已载入",
+  "value_home_metro": "Metro"
 }

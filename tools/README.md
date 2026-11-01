@@ -65,8 +65,8 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 
 ### UI 夹具
 
-`tools/ppsspp/seed-ui-fixture.py MEMSTICK [--tiles] [--dark]` 向隔离的 memstick 写入离线夹具：
-缓存的首页数据、生成的封面、本地历史和稍后观看，以及可选的 `settings.json`（`--tiles` 开启磁贴主页）。
+`tools/ppsspp/seed-ui-fixture.py MEMSTICK [--tiles | --metro] [--dark]` 向隔离的 memstick 写入离线夹具：
+缓存的首页数据、生成的封面、本地历史和稍后观看，以及可选的 `settings.json`（`--tiles` 或 `--metro` 选择首页样式）。
 数据为合成数据，用于在没有账号和网络时检查 UI。按键回放的 MASK 是十六进制 sceCtrl 掩码，
 例如 `0x4000`（×）、`0x2000`（○）、`0x10`/`0x40`/`0x80`/`0x20`（上/下/左/右）。
 

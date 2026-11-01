@@ -5,7 +5,7 @@ Writes a cached home feed, generated cover images, local history and watch-later
 entries, and optionally settings.json, so UI screens can be inspected in
 PPSSPP without an account or network access. The data is synthetic.
 
-Usage: seed-ui-fixture.py MEMSTICK_DIR [--tiles] [--dark]
+Usage: seed-ui-fixture.py MEMSTICK_DIR [--tiles | --metro] [--dark]
 """
 import colorsys
 import json
@@ -53,7 +53,8 @@ def main():
     (root / "history.json").write_text(json.dumps(local))
     (root / "later.json").write_text(json.dumps([dict(local[0], bvid=items[5]["bvid"], title=items[5]["title"])]))
     settings = {"version": 1, "dark_theme": "--dark" in sys.argv, "body_size": 14, "show_covers": True,
-                "slow_repeat": False, "tile_home": "--tiles" in sys.argv}
+                "slow_repeat": False,
+                "home_style": "metro" if "--metro" in sys.argv else "tiles" if "--tiles" in sys.argv else "classic"}
     (root / "settings.json").write_text(json.dumps(settings))
 
 

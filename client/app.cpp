@@ -328,7 +328,7 @@ int App::workerEntry(SceSize, void*) {
 void App::init() {
     const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
     applyLogPreferences(preferences_);
-    hubOpen_ = preferences_.tileHome;
+    hubOpen_ = preferences_.tileHome();
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
     history_ = loadLocal(CLIENT_PATH("/history.json"));
     later_ = loadLocal(CLIENT_PATH("/later.json"));
@@ -569,13 +569,13 @@ void App::moveSelection(int dx, int dy) {
             return;
         }
         if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
-            if (preferences_.tileHome) return;  // the tile theme has no sidebar; back returns to the tiles
+            if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
         if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 &&
-            root().selection < (preferences_.tileHome ? 1 : kGridColumns)) {
+            root().selection < (preferences_.metro() ? 1 : kGridColumns)) {
             navigation_.current().focus = FocusArea::Categories;
             return;
         }
@@ -584,10 +584,15 @@ void App::moveSelection(int dx, int dy) {
         const size_t total = root().searchView == SearchView::Landing ? 2 + root().searchTopics.size() :
                              root().searchView == SearchView::History ? searchHistory_.size() : search_.size();
         if (!total) return;
-        int value = static_cast<int>(root().selection) + dy;
+        // Tiles style: search results are a two-column grid like the home tab.
+        const bool grid = preferences_.homeStyle == HomeStyle::Tiles && root().searchView == SearchView::Results;
+        int value = static_cast<int>(root().selection) + (grid ? dx + dy * static_cast<int>(kGridColumns) : dy);
+        if (grid && dx > 0 && root().selection % kGridColumns == kGridColumns - 1) value = static_cast<int>(root().selection);
+        if (grid && dx < 0 && root().selection % kGridColumns == 0) value = static_cast<int>(root().selection);
         value = std::max(0, std::min(value, static_cast<int>(total) - 1));
         root().selection = static_cast<size_t>(value);
-        if (root().searchView == SearchView::Results && dy > 0 && root().selection + 1 == total && hasMore()) loadNextPage();
+        if (root().searchView == SearchView::Results && dy > 0 &&
+            root().selection + (grid ? kGridColumns : 1) >= total && hasMore()) loadNextPage();
         return;
     }
     if (screen() == Screen::Comments) {
@@ -605,6 +610,18 @@ void App::moveSelection(int dx, int dy) {
     if (screen() == Screen::Mine) {
         size_t total = 1 + history_.size() + later_.size();
         if (!total) return;
+        if (preferences_.homeStyle == HomeStyle::Tiles) {
+            // Tiles style: the account tile is row 0, local records follow in a two-column grid.
+            const int at = static_cast<int>(root().selection), last = static_cast<int>(total) - 1;
+            int target = at;
+            if (at == 0) { if (dy > 0 || dx > 0) target = 1; }
+            else if (dx < 0 && (at - 1) % 2 == 1) target = at - 1;
+            else if (dx > 0 && (at - 1) % 2 == 0) target = at + 1 <= last ? at + 1 : at;
+            else if (dy < 0) target = at - 1 < 2 ? 0 : at - 2;
+            else if (dy > 0) target = at + 2 <= last ? at + 2 : at;
+            root().selection = static_cast<size_t>(std::max(0, std::min(target, last)));
+            return;
+        }
         int value = static_cast<int>(root().selection) + dx + dy;
         if (value < 0) value = 0;
         if (value >= static_cast<int>(total)) value = static_cast<int>(total) - 1;
@@ -613,8 +630,8 @@ void App::moveSelection(int dx, int dy) {
     }
     const auto& list = activeCards();
     if (list.empty()) return;
-    // The tile theme shows the home tabs as a single-column list.
-    const int columns = preferences_.tileHome ? 1 : static_cast<int>(kGridColumns);
+    // The Metro style shows the home tabs as a single-column list.
+    const int columns = preferences_.metro() ? 1 : static_cast<int>(kGridColumns);
     int value = static_cast<int>(root().selection);
     if (dx < 0 && value % columns != 0) --value;
     if (dx > 0 && value % columns != columns - 1 && value + 1 < static_cast<int>(list.size())) ++value;
@@ -788,7 +805,7 @@ void App::back() {
     communityInputPending_ = false;
     if (atTabRoot() && root().tab == Tab::Discover) {
         setTab(Tab::Recommend);
-        if (preferences_.tileHome) openHub();
+        if (preferences_.tileHome()) openHub();
         return;
     }
     if (navigation_.pop()) {
@@ -796,15 +813,15 @@ void App::back() {
         status_ = "已返回";
     } else if (screen() == Screen::Mine) {
         setTab(Tab::Recommend);
-        if (preferences_.tileHome) openHub();
+        if (preferences_.tileHome()) openHub();
     } else if (root().tab == Tab::Search && root().searchView != SearchView::Landing) {
         root().searchView = SearchView::Landing;
         root().selection = std::min(root().searchLandingSelection, root().searchTopics.size() + 1);
         status_ = "搜索 · □ 输入关键词";
     } else if (root().tab == Tab::Search) {
         setTab(Tab::Recommend);
-        if (preferences_.tileHome) openHub();
-    } else if (preferences_.tileHome) {
+        if (preferences_.tileHome()) openHub();
+    } else if (preferences_.tileHome()) {
         openHub();
     }
 }
@@ -1065,7 +1082,7 @@ void App::updateCoverQueue() {
                                 ? browseState().selection : root().selection;
     const bool posters = hasBrowse() &&
                          isPgcPosterPage(browseState().page.request.kind);
-    const bool grid = screen() == Screen::Home && root().tab != Tab::Search && !preferences_.tileHome;
+    const bool grid = screen() == Screen::Home && root().tab != Tab::Search && !preferences_.metro();
     // Include the preceding row while the selected row scrolls into view.
     const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
                                                           : (selected > 2 ? selected - 2 : 0);
@@ -1099,7 +1116,7 @@ void App::updateCoverQueue() {
             enqueue(list[i].bvid, normalizePicture(list[i].picture, true));
     } else if (screen() == Screen::Mine) {
         const size_t total = history_.size() + later_.size();
-        for (size_t i = first; i < total && i < first + (preferences_.tileHome ? kPageSize : 2); ++i) {
+        for (size_t i = first; i < total && i < first + (preferences_.metro() ? kPageSize : 2); ++i) {
             const auto &card = i < history_.size() ? history_[i] : later_[i - history_.size()];
             enqueue(card.bvid, normalizePicture(card.picture, true));
         }

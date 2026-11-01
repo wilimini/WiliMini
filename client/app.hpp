@@ -53,7 +53,7 @@ public:
     void openSettings();
     // Tile home screen. The hub is the root view while the tile theme is on and no tab has
     // been entered; child pages opened from it return to it when popped.
-    bool tileHubVisible() const { return preferences_.tileHome && hubOpen_ && navigation_.size() == 1; }
+    bool tileHubVisible() const { return preferences_.tileHome() && hubOpen_ && navigation_.size() == 1; }
     int tileSelection() const { return hubSelection_; }
     // Changes whenever the visible page changes (route, tab or search view); drives page transitions.
     uint64_t pageKey() const {
