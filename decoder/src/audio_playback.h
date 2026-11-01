@@ -22,7 +22,7 @@ static struct {
     AVCodecContext *codec;
     AVFrame *frame;
     AVPacket *packet;
-    int stream, rate, reserved;
+    int stream, rate, channels, reserved;
     SceUID space, ready, go, decoder_thread, output_thread;
     volatile int stop, eof, input_eof, error;
     volatile unsigned produced, consumed;
@@ -63,7 +63,7 @@ static int audio_publish(void)
 
 static int audio_convert(const AVFrame *frame)
 {
-    if (frame->sample_rate != audio.rate || frame->ch_layout.nb_channels != 2)
+    if (frame->sample_rate != audio.rate || frame->ch_layout.nb_channels != audio.channels)
         return AVERROR(EINVAL);
     const int64_t pts_us = frame->best_effort_timestamp == AV_NOPTS_VALUE ? AV_NOPTS_VALUE :
         av_rescale_q(frame->best_effort_timestamp,
@@ -87,14 +87,15 @@ static int audio_convert(const AVFrame *frame)
         uint64_t start = sceKernelGetSystemTimeWide();
         for (unsigned j = 0; j < count; ++j) {
             for (unsigned ch = 0; ch < 2; ++ch) {
+                const unsigned source_ch = audio.channels == 1 ? 0 : ch;
                 int sample;
                 if (frame->format == AV_SAMPLE_FMT_FLTP) {
-                    float value = ((const float *)frame->extended_data[ch])[i + j] * 32768.0f;
+                    float value = ((const float *)frame->extended_data[source_ch])[i + j] * 32768.0f;
                     sample = value >= 32767.0f ? 32767 : value <= -32768.0f ? -32768 : (int)value;
                 } else if (frame->format == AV_SAMPLE_FMT_S32P) {
-                    sample = ((const int32_t *)frame->extended_data[ch])[i + j] >> 16;
+                    sample = ((const int32_t *)frame->extended_data[source_ch])[i + j] >> 16;
                 } else if (frame->format == AV_SAMPLE_FMT_S16P) {
-                    sample = ((const int16_t *)frame->extended_data[ch])[i + j];
+                    sample = ((const int16_t *)frame->extended_data[source_ch])[i + j];
                 } else return AVERROR(ENOSYS);
                 dst[j * 2 + ch] = sample;
             }
@@ -252,7 +253,11 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     ret = avcodec_open2(audio.codec, decoder, NULL);
     if (ret < 0) return ret;
     audio.rate = audio.codec->sample_rate;
-    if ((audio.rate != 48000 && audio.rate != 44100) || audio.codec->ch_layout.nb_channels != 2) return AVERROR(EINVAL);
+    audio.channels = audio.codec->ch_layout.nb_channels;
+    WLOG_I(WLC_PLAYER, "AUDIO codec=%s rate=%d channels=%d output_channels=2",
+           decoder->name, audio.rate, audio.channels);
+    if ((audio.rate != 48000 && audio.rate != 44100) ||
+        (audio.channels != 1 && audio.channels != 2)) return AVERROR(EINVAL);
     audio.frame = av_frame_alloc();
     audio.packet = av_packet_alloc();
     if (!audio.frame || !audio.packet) return AVERROR(ENOMEM);
@@ -408,7 +413,8 @@ static void audio_report(FILE *out)
             (long long)rgb_max_late_us, (long long)(rgb_presented ? rgb_total_late_us / rgb_presented : 0));
 #endif
     fprintf(out, "  \"audio_enabled\": 1,\n  \"audio_fixed\": %d,\n", PSP_AUDIO_FIXED);
-    fprintf(out, "  \"audio_rate\": %d,\n  \"audio_error\": %d,\n", audio.rate, audio.error);
+    fprintf(out, "  \"audio_rate\": %d,\n  \"audio_source_channels\": %d,\n"
+                 "  \"audio_error\": %d,\n", audio.rate, audio.channels, audio.error);
     fprintf(out, "  \"audio_source_samples\": %llu,\n  \"audio_submitted_samples\": %llu,\n",
             (unsigned long long)audio.source_samples, (unsigned long long)audio.submitted_samples);
     fprintf(out, "  \"audio_underruns\": %u,\n  \"audio_max_wait_us\": %u,\n", audio.underruns, audio.max_wait_us);

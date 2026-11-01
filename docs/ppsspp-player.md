@@ -91,7 +91,7 @@ ME bridge 文件也可以启动。真机仍要求完整 ME 包并使用原播放
 PPSSPP 的 `sceMpegGetAvcNalAu` 尚未实现，因此不能直接投递 MP4 NAL 包。
 模拟器本身必须启用 FFmpeg；没有视频解码支持的 Headless 构建不能用于播放验证。
 
-支持范围沿用 H.264、最大 1280×720、双声道 44.1/48 kHz AAC 的输入限制。
+支持范围沿用 H.264、最大 1280×720、单/双声道 44.1/48 kHz AAC 的输入限制。
 实际验证覆盖 640×360 Baseline 和 High Profile/B 帧；不据此推断其他分辨率或真机性能。
 `rgb_buffer_frames` 保留接口兼容性，此后端直接双缓冲显示，不分配 ME 的 RGB 队列。
 每次播放仍在 `results/run-NNN/summary.json` 中记录后端、帧数、首帧/音频时间戳和错误。
