@@ -49,6 +49,8 @@ struct Preferences {
     LogVerbosity logLevel = LogVerbosity::Info;
     // Off by default: no log text is written to the Memory Stick unless this is on.
     bool saveLogFiles = false;
+    // Tile home screen (Metro style). Toggled with SELECT on a tab root; old files default to off.
+    bool tileHome = false;
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
     // settings.json and preserved on save; see wili_log_configure().
     std::string logChannels;

@@ -110,7 +110,7 @@
   "hint_search_landing": "↑↓ Select  {confirm} Choose  □ Input  △ Refresh hot searches  {back} Back",
   "hint_search_results": "↑↓ Select  {confirm} Open  □ Edit query  △ Retry  {back} Back",
   "hint_mine": "↑↓ Select  {confirm} Open  □ Cloud content  {back} Back",
-  "hint_home": "Directions Select  {confirm} Open  □ Search  L/R Categories",
+  "hint_home": "Directions Select  {confirm} Open  □ Search  L/R Categories  SELECT Tiles",
   "hint_search_keyboard": "Press {confirm} for the system keyboard; Chinese input is supported",
   "hint_search_modify": "Press {confirm} to edit the query",
   "hint_search_empty": "□ Enter a query, or press {back} to view hot searches",
@@ -128,5 +128,18 @@
   "auth_qr_expired": "QR code expired · △ Refresh",
   "auth_signed_in": "Signed in",
   "auth_session_expired": "Session expired · {confirm} Scan again",
-  "auth_signed_out": "Signed out · {confirm} Scan to sign in"
+  "auth_signed_out": "Signed out · {confirm} Scan to sign in",
+  "tile_title": "start",
+  "tile_recommend": "Home",
+  "tile_hots": "Trending",
+  "tile_search": "Search",
+  "tile_discover": "Discover",
+  "tile_dynamic": "Feed",
+  "tile_inbox": "Inbox",
+  "tile_mine": "Mine",
+  "tile_settings": "Settings",
+  "tile_mine_summary": "History {history} · Later {later}",
+  "tile_on": "Tile theme on",
+  "tile_off": "Tile theme off",
+  "hint_tiles": "Directions Select  {confirm} Open  SELECT Classic theme  START Quit"
 }

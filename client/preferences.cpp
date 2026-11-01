@@ -92,6 +92,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
             if (!files->is_boolean()) return false;
             loaded.saveLogFiles = files->get<bool>();
         }
+        const auto tiles = root.find("tile_home");
+        if (tiles != root.end()) {
+            if (!tiles->is_boolean()) return false;
+            loaded.tileHome = tiles->get<bool>();
+        }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -125,6 +130,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"locale", localeCode(preferences.locale)},
         {"log_level", logVerbosityCode(preferences.logLevel)},
         {"log_files", preferences.saveLogFiles},
+        {"tile_home", preferences.tileHome},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");

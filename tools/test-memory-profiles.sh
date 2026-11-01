@@ -12,6 +12,8 @@ for frames in 2 8; do
         client/preferences.cpp client/memory_budget.cpp -o "$out/preferences-$frames-test"
     "$out/preferences-$frames-test" "$out/settings-test.json" "$frames"
 done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/tile_layout_test.cpp -o "$out/tile-layout-test"
+"$out/tile-layout-test"
 ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -pthread \
     -fsanitize=address,undefined -Itests/psp_stubs -Iplatform/include tests/rgb_pacer_test.c \
     platform/src/wili_log.c -o "$out/rgb-pacer-test"

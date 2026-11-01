@@ -10,6 +10,7 @@
 #include "bilibili.h"
 #include "navigation.hpp"
 #include "preferences.hpp"
+#include "tile_layout.hpp"
 #include "services/auth_service.hpp"
 #include "services/search_service.hpp"
 #include "services/community_service.hpp"
@@ -50,6 +51,14 @@ public:
     FocusArea focusArea() const { return navigation_.current().focus; }
     int navigationSelection() const { return root().navigationSelection; }
     void openSettings();
+    // Tile home screen. The hub is the root view while the tile theme is on and no tab has
+    // been entered; child pages opened from it return to it when popped.
+    bool tileHubVisible() const { return preferences_.tileHome && hubOpen_ && navigation_.size() == 1; }
+    int tileSelection() const { return hubSelection_; }
+    void tileMove(int dx, int dy);
+    void tileActivate();
+    void toggleTileHome();
+    std::string tileSubtitle(TileId tile) const;
     void changeSetting();
     void updateStorage();
     bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
@@ -204,6 +213,9 @@ private:
     static App *workerApp;
 
     Preferences preferences_;
+    bool hubOpen_ = false;
+    int hubSelection_ = 0;
+    void openHub();
     int activeMeBackend_ = -1;
     size_t coverFiles_ = 0;
     uint64_t coverBytes_ = 0;

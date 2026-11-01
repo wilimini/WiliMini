@@ -389,6 +389,8 @@ void drawFooter(const pspapp::App& app) {
         const char *progress = network_progress_message();
         hint = uiText(app, pspapp::TextId::hint_busy,
                       {{"progress", progress[0] ? progress : app.status()}, {"back", back}});
+    } else if (app.tileHubVisible()) {
+        hint = uiText(app, pspapp::TextId::hint_tiles, {{"confirm", confirm}});
     } else if (app.focusArea() == pspapp::FocusArea::Navigation) {
         hint = uiText(app, pspapp::TextId::hint_navigation, {{"confirm", confirm}});
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
@@ -470,6 +472,68 @@ void drawFooter(const pspapp::App& app) {
         if (width > 460) width = 460;
         if (!total) width = static_cast<int>((sceKernelGetSystemTimeLow() / 12000) % 460);
         fillRect(10, 256, width, 2, kPink);
+    }
+}
+
+// Tile home screen: a Metro-style panorama. Layout comes from tile_layout.hpp; the sidebar
+// icon bitmaps are reused as white glyphs, tiles without an icon show their label only.
+void drawIconGlyph(int icon, int x, int y, int size) {
+    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx) {
+        const unsigned pixel = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];
+        blendPixel(x + xx, y + yy, color(255, 255, 255), ((pixel >> 12) & 15) * 17);
+    }
+}
+
+void drawHub(const pspapp::App& app) {
+    using namespace pspapp;
+    struct Look { TileId id; TextId label; int icon; uint32_t shade; };
+    static const Look looks[] = {
+        {TileId::Recommend, TextId::tile_recommend, 0, color(0, 80, 239)},
+        {TileId::Hots,      TextId::tile_hots,     -1, color(216, 0, 115)},
+        {TileId::Search,    TextId::tile_search,   -1, color(162, 0, 37)},
+        {TileId::Discover,  TextId::tile_discover, -1, color(0, 171, 169)},
+        {TileId::Dynamic,   TextId::tile_dynamic,   1, color(96, 169, 23)},
+        {TileId::Inbox,     TextId::tile_inbox,     3, color(250, 104, 0)},
+        {TileId::Mine,      TextId::tile_mine,      2, color(106, 0, 255)},
+        {TileId::Settings,  TextId::tile_settings,  4, color(100, 118, 135)},
+    };
+    const Locale locale = app.preferences().locale;
+    const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
+    static int panTarget = 0, pan = 0;
+    panTarget = tilePan(app.tileSelection(), panTarget);
+    const int step = (panTarget - pan) / 4;
+    pan += step ? step : (panTarget > pan) - (panTarget < pan);
+
+    drawText(kTileOriginX, 6, 0.9f, kText, text(TextId::tile_title, locale), 300);
+    for (int i = 0; i < kTileCount; ++i) {
+        const TileSpec& tile = kTiles[i];
+        const Look* look = nullptr;
+        for (const Look& candidate : looks) if (candidate.id == tile.id) look = &candidate;
+        if (!look) continue;
+        const int x = tileX(tile) - pan, y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
+        if (x + w + 4 < 0 || x - 4 >= kWidth) continue;
+        fillRect(x, y, w, h, look->shade);
+        const char* label = text(look->label, locale);
+        if (tile.cols == 1) {
+            if (look->icon >= 0) {
+                drawIconGlyph(look->icon, x + (w - 22) / 2, y + 10, 22);
+                drawText(x + 2, y + h - 18, 0.5f, white, label, w - 4, true);
+            } else {
+                const bool fits = bitmapMeasure(label, 16) <= w - 4;
+                drawText(x + 2, y + (h - (fits ? 16 : 12)) / 2, fits ? 0.9f : 0.5f, white, label, w - 4, true);
+            }
+        } else {
+            if (look->icon >= 0) drawIconGlyph(look->icon, x + 8, y + 8, 44);
+            drawText(x + 8, y + h - 24, 0.9f, white, label, w - 16);
+            const std::string subtitle = app.tileSubtitle(tile.id);
+            if (!subtitle.empty()) drawText(x + 8, y + h - 42, 0.5f, softWhite, subtitle, w - 16);
+        }
+        if (i == app.tileSelection()) {
+            fillRect(x - 3, y - 3, w + 6, 2, kText);
+            fillRect(x - 3, y + h + 1, w + 6, 2, kText);
+            fillRect(x - 3, y - 3, 2, h + 6, kText);
+            fillRect(x + w + 1, y - 3, 2, h + 6, kText);
+        }
     }
 }
 
@@ -1192,6 +1256,8 @@ void ui_render(const pspapp::App& app) {
         drawDetail(app);
     } else if (app.screen() == pspapp::Screen::Comments) {
         drawComments(app);
+    } else if (app.tileHubVisible()) {
+        drawHub(app);
     } else {
         drawHeader(app);
         if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) drawMine(app);

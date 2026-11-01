@@ -110,7 +110,7 @@
   "hint_search_landing": "↑↓ 选择  {confirm} 确认  □ 输入  △ 刷新热搜  {back} 返回",
   "hint_search_results": "↑↓ 选择  {confirm} 打开  □ 修改关键词  △ 重试  {back} 返回",
   "hint_mine": "↑↓ 选择  {confirm} 打开  □ 云端内容  {back} 返回",
-  "hint_home": "方向键选择  {confirm} 打开  □ 搜索  L/R 分类",
+  "hint_home": "方向键选择  {confirm} 打开  □ 搜索  L/R 分类  SELECT 磁贴",
   "hint_search_keyboard": "按 {confirm} 打开系统键盘，支持中文输入",
   "hint_search_modify": "按 {confirm} 修改关键词",
   "hint_search_empty": "□ 输入关键词，或 {back} 返回查看热搜",
@@ -128,5 +128,18 @@
   "auth_qr_expired": "二维码已过期 · △ 刷新",
   "auth_signed_in": "已登录",
   "auth_session_expired": "登录已失效 · {confirm} 重新扫码",
-  "auth_signed_out": "未登录 · {confirm} 扫码登录"
+  "auth_signed_out": "未登录 · {confirm} 扫码登录",
+  "tile_title": "开始",
+  "tile_recommend": "推荐",
+  "tile_hots": "热门",
+  "tile_search": "搜索",
+  "tile_discover": "发现",
+  "tile_dynamic": "动态",
+  "tile_inbox": "消息",
+  "tile_mine": "我的",
+  "tile_settings": "设置",
+  "tile_mine_summary": "历史 {history} · 稍后看 {later}",
+  "tile_on": "磁贴主题已开启",
+  "tile_off": "磁贴主题已关闭",
+  "hint_tiles": "方向键选择  {confirm} 打开  SELECT 经典主题  START 退出"
 }

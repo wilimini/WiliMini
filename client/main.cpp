@@ -299,6 +299,16 @@ int main(int argc, char** argv) {
                     previous = ~0u;
                 }
             }
+        } else if (app.tileHubVisible()) {
+            // Tile home: the d-pad moves the focus ring, confirm opens, SELECT returns to the
+            // classic theme. Moving works while a background load is running.
+            if (pressed & PSP_CTRL_START) break;
+            if (pressed & PSP_CTRL_SELECT) app.toggleTileHome();
+            else if (pressed & confirmButton) app.tileActivate();
+            else if (pressed & PSP_CTRL_UP) app.tileMove(0, -1);
+            else if (pressed & PSP_CTRL_DOWN) app.tileMove(0, 1);
+            else if (pressed & PSP_CTRL_LEFT) app.tileMove(-1, 0);
+            else if (pressed & PSP_CTRL_RIGHT) app.tileMove(1, 0);
         } else if (app.busy()) {
             if (pressed & backButton) app.back();
             else if (pressed & PSP_CTRL_RTRIGGER) {
@@ -339,7 +349,8 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_UP) ui_scroll_comments(app, -1);
                 else if (pressed & PSP_CTRL_DOWN) ui_scroll_comments(app, 1);
             } else if (app.screen() == pspapp::Screen::Mine) {
-                if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
+                if (pressed & PSP_CTRL_SELECT) app.toggleTileHome();
+                else if (pressed & PSP_CTRL_SQUARE) app.communityShortcut();
                 else if (pressed & backButton) app.back();
                 else if (pressed & confirmButton) app.activate();
                 else if (pressed & PSP_CTRL_UP) app.moveSelection(0, -1);
@@ -366,9 +377,7 @@ int main(int argc, char** argv) {
                         app.removeSearchHistory();
                     else app.refresh();
                 } else if (pressed & PSP_CTRL_SELECT) {
-                    networkDialog();
-                    app.refresh();
-                    previous = ~0u;
+                    app.toggleTileHome();
                 } else if (pressed & PSP_CTRL_LEFT) {
                     app.moveSelection(-1, 0);
                 } else if (pressed & PSP_CTRL_RIGHT) {

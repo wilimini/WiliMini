@@ -77,6 +77,18 @@ int main(int argc, char** argv) {
     value.saveLogFiles = false;
     assert(pspapp::savePreferences(path, value));
     assert(pspapp::loadPreferences(path, filesRestored) && !filesRestored.saveLogFiles);
+    // The tile theme is off for files saved before it existed, round-trips, and must be a boolean.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && !value.tileHome);
+    value.tileHome = true;
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences tilesRestored;
+    assert(pspapp::loadPreferences(path, tilesRestored) && tilesRestored.tileHome);
+    value.tileHome = false;
+    assert(pspapp::savePreferences(path, value));
+    assert(pspapp::loadPreferences(path, tilesRestored) && !tilesRestored.tileHome);
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"tile_home":1})";
+    assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_files":"yes"})";
     assert(!pspapp::loadPreferences(path, value));
     // Channel overrides are plain words only; quotes, long text and unknown levels are rejected.
