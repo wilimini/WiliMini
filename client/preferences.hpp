@@ -16,6 +16,7 @@ enum class SettingItem : std::size_t {
     MeBackend,
     ConfirmWithCircle,
     Language,
+    InputMethod,
     LogLevel,
     LogFiles,
     Wifi,
@@ -43,6 +44,11 @@ const char* logVerbosityCode(LogVerbosity level);
 enum class HomeStyle : int { Classic = 0, Tiles = 1, Metro = 2 };
 const char* homeStyleCode(HomeStyle style);
 
+// Text entry. Auto uses the system keyboard on Chinese firmware (it has its own pinyin input)
+// and the built-in pinyin keyboard elsewhere; the other two force one of them.
+enum class InputMethod : int { Auto = 0, System = 1, Pinyin = 2 };
+const char* inputMethodCode(InputMethod method);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -58,6 +64,7 @@ struct Preferences {
     bool saveLogFiles = false;
     // Chosen in Settings; old files default to Classic.
     HomeStyle homeStyle = HomeStyle::Classic;
+    InputMethod inputMethod = InputMethod::Auto;
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in

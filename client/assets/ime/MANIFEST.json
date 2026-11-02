@@ -1,0 +1,16 @@
+{
+  "source": "rime-ice cn_dicts/8105.dict.yaml and base.dict.yaml",
+  "license": "GPL-3.0-or-later (see LICENSE-rime-ice)",
+  "source_sha256": {
+    "8105.dict.yaml": "1f9a42b91dea6982baee2551981780271aeffd78876662b9c9f324e56b37b120",
+    "base.dict.yaml": "551cad93c2e74c7325599e0d23afbf71c2d2e57df9af3f8f6fa16d87e60290a3",
+    "LICENSE": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+  },
+  "format_version": 1,
+  "syllables": 412,
+  "full_records": 98544,
+  "abbreviation_records": 49912,
+  "prefix_records": 13110,
+  "bytes": 2540077,
+  "generator": "scripts/prepare-pinyin-dict.py"
+}

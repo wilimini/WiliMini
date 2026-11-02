@@ -86,6 +86,10 @@ void App::changeSetting() {
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;
+        case SettingItem::InputMethod:
+            next.inputMethod = next.inputMethod == InputMethod::Auto ? InputMethod::Pinyin
+                             : next.inputMethod == InputMethod::Pinyin ? InputMethod::System : InputMethod::Auto;
+            break;
         case SettingItem::LogLevel:
             next.logLevel = next.logLevel == LogVerbosity::Error ? LogVerbosity::Warn
                           : next.logLevel == LogVerbosity::Warn ? LogVerbosity::Info

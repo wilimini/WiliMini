@@ -248,6 +248,7 @@ add_library(wili_client_objects OBJECT
     client/third_party/qrcodegen/qrcodegen.c
     client/ui.cpp
     client/bitmap_font.cpp
+    client/pinyin_ime.cpp
     client/title_font.cpp
     client/bilibili.c
     client/live_stream.c
@@ -424,6 +425,8 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/wqy.bmf" "${PACKAGE_DIR}/wqy.bmf"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/title.bmf" "${PACKAGE_DIR}/title.bmf"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/ime/pinyin.dat" "${PACKAGE_DIR}/pinyin.dat"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/ime/LICENSE-rime-ice" "${PACKAGE_DIR}/licenses/rime-ice.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/LICENSE.txt" "${PACKAGE_DIR}/licenses/wqy.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/APACHE-2.0.txt" "${PACKAGE_DIR}/licenses/wqy-apache-2.0.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt" "${PACKAGE_DIR}/licenses/wiliwili-assets.txt"
