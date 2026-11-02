@@ -956,6 +956,7 @@ struct PageFx {
     int64_t enterMs = 0;
     float scroll = 0.f, velocity = 0.f;
     uint64_t lastUs = 0;
+    bool positioned = false;  // the scroll has been placed once for this page (no slide-in from the top)
     bool glideReady = false;
     float glide[4]{};
     bool ringReady = false;  // Tiles style focus ring
@@ -973,6 +974,15 @@ struct TileItem {
 // Spring-damped vertical scroll toward `target` pixels.
 int updateScroll(float target) {
     const uint64_t now = sceKernelGetSystemTimeWide();
+    if (!pageFx.positioned) {
+        // First frame of a page: start at the target. Tabs remember their selection, so animating
+        // from the top would scroll through every row on the way (slow, and each row decodes a cover).
+        pageFx.positioned = true;
+        pageFx.scroll = target;
+        pageFx.velocity = 0.f;
+        pageFx.lastUs = now;
+        return static_cast<int>(target + 0.5f);
+    }
     const float dt = pageFx.lastUs ? std::min(0.033f, static_cast<float>(now - pageFx.lastUs) / 1000000.0f) : 0.016f;
     pageFx.lastUs = now;
     pageFx.velocity += (190.0f * (target - pageFx.scroll) - 24.0f * pageFx.velocity) * dt;
@@ -1764,26 +1774,14 @@ void drawCardGrid(const pspapp::App& app) {
         return;
     }
 
-    static float scroll = 0.0f;
-    static float velocity = 0.0f;
-    static uint64_t lastFrame = 0;
-    const uint64_t now = sceKernelGetSystemTimeWide();
-    const float dt = lastFrame ? std::min(0.033f, static_cast<float>(now - lastFrame) / 1000000.0f) : 0.016f;
-    lastFrame = now;
     const size_t row = app.selection() / 2;
-    const float target = row ? static_cast<float>(row * 162 - 42) : 0.0f;
-    velocity += (190.0f * (target - scroll) - 24.0f * velocity) * dt;
-    scroll += velocity * dt;
-    if (std::fabs(target - scroll) < 0.4f && std::fabs(velocity) < 1.0f) {
-        scroll = target;
-        velocity = 0.0f;
-    }
+    const int scroll = updateScroll(row ? static_cast<float>(row * 162 - 42) : 0.0f);
 
     constexpr int clipTop = 49;
     constexpr int clipBottom = 251;
     for (size_t index = 0; index < cards.size(); ++index) {
         const int x = 39 + static_cast<int>(index % 2) * 218;
-        const int y = 53 + static_cast<int>(index / 2) * 162 - static_cast<int>(scroll + 0.5f);
+        const int y = 53 + static_cast<int>(index / 2) * 162 - scroll;
         if (y >= clipBottom || y + 118 <= clipTop) continue;
         const bool selected = index == app.selection() && app.focusArea() == pspapp::FocusArea::Content;
         drawCover(cards[index].bvid, x, y, 210, 118, false, clipTop, clipBottom);
