@@ -63,6 +63,8 @@ void App::openSettings() {
 void App::changeSetting() {
     if (screen() != Screen::Settings || navigation_.get<SettingsRoute>().selection >=
             static_cast<size_t>(SettingItem::Wifi)) return;
+    if (defaultPlaybackBufferFrames() == 2 &&
+        navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)) return;
     Preferences next = preferences_;
     switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
         case SettingItem::DarkTheme: next.darkTheme = !next.darkTheme; break;

@@ -168,6 +168,7 @@ void PlaybackOsd::loadOverlays() {
         HttpResponse out;
         bili_http_get_response_cancel(url.c_str(), &response, 512 * 1024, &overlayStop_);
         if (response.text) { out.body = response.text; bili_http_free(response.text); }
+        if (defaultPlaybackBufferFrames() == 2) network_trim_idle_http();
         if (response.failure) out.error = {ErrorDomain::Network,
             overlayStop_ ? ErrorKind::Cancelled : ErrorKind::HttpFailure, op, response.transport_code, response.status};
         return out;
@@ -189,6 +190,7 @@ void PlaybackOsd::loadOverlays() {
     if (overlayStop_) return;
     if (response) {
         auto comments = parseDanmaku(response.value.body);
+        std::string().swap(response.value.body);
         auto* prepared = new PlaybackOsd(title_, preferences_, comments, {}, false);
         if (!publish(prepared, true)) return;
     } else message(1);
@@ -203,6 +205,7 @@ void PlaybackOsd::loadOverlays() {
             if (overlayStop_) return;
             for (auto& track : tracks) track.cues.clear();
             if (result) tracks[selected - 1].cues = parseSubtitles(result.value.body);
+            std::string().swap(result.value.body);
             failed = !result || tracks[selected - 1].cues.empty();
             loaded = selected;
             auto* prepared = new PlaybackOsd(title_, preferences_, {}, tracks, false);

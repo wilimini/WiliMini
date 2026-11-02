@@ -38,6 +38,14 @@ at network shutdown. Cover and media transfers do not borrow this handle.
 Reuse depends on the server keeping the connection open; curl reconnects when
 necessary. This does not eliminate the first TLS handshake to a new origin.
 
+On PSP-1000, entering playback releases idle API and cover handles after the
+UI worker has joined, and overlay requests release their idle handles when done.
+Active media handles remain independent. The shared DNS/TLS session cache is
+retained; returning to browsing recreates HTTP handles on demand. This trades
+idle connection reuse for room for decoder reference frames. GET response
+buffers start at up to 4 KiB and grow to the existing response limit, rather
+than reserving that entire limit for small responses.
+
 DASH video and audio startup overlap: both range threads are started before
 either is awaited, so DNS, TCP, TLS and the first response run together and the
 30 second size deadline is shared. This relies on the PSP DNS wrapper giving each

@@ -43,6 +43,8 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 播放器初始化只安装解码内核，不运行亮度、色度、音频或 CABAC 自检。
 
 `PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
+客户端在 PSP-1000 上固定使用默认的 2 帧，播放缓冲设置不可修改；扩展内存机型可选 2/4/8。
+在线内存不足复现和缓解结果见 [内存调查](../docs/playback-memory-investigation.md)。
 `rgb_pixel_format` 可选 RGB565 或 RGBA8888，零值使用 RGB565。客户端“自动”模式在 PSP-1000
 默认选择 RGB565，在扩展内存机型默认选择 RGBA8888；也可在设置中强制选择任一格式。
 ME 渲染队列按所选格式保存 512×272 输出帧：RGB565 每帧 272 KiB，RGBA8888 每帧 544 KiB。

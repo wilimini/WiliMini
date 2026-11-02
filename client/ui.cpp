@@ -2511,7 +2511,7 @@ void ui_render(const pspapp::App& app) {
         // H tile home, L launching a tile, P page entering, S page.
         const char phase = hub ? (app.tileLaunching() ? 'L' : (nowMs - hubFx.enterMs < 500 ? 'E' : 'H'))
                          : (nowMs - pageFx.enterMs < 200 ? 'P' : 'S');
-        WLOG_I(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
+        WLOG_D(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
     }
 #endif
     presentFrame();

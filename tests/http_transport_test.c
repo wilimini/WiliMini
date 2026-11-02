@@ -14,7 +14,12 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     assert(curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     CURL *cached = NULL;
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 8; ++i) {
+        if (i == 6) {
+            /* PSP-1000 drops idle API connections before/during playback. */
+            curl_easy_cleanup(cached);
+            cached = NULL;
+        }
         CURL *curl = bili_http_transport_acquire(&cached);
         assert(curl);
         char url[256];
@@ -37,7 +42,7 @@ int main(int argc, char **argv) {
         curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &connections);
         assert(status == 200);
         /* Two warm requests, followed by recovery after the server closes. */
-        assert(connections == ((i == 0 || i == 3 || i == 5) ? 1 : 0));
+        assert(connections == ((i == 0 || i == 3 || i == 5 || i == 6) ? 1 : 0));
         bili_http_transport_release(curl);
         curl_slist_free_all(headers);
     }
