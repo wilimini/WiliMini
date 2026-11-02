@@ -21,7 +21,7 @@ constexpr int kTileOriginX = 10;   // left edge of column 0 when the panorama is
 constexpr int kTileOriginY = 50;   // top edge of row 0
 constexpr int kTileMargin = 10;    // keep this much clear at the screen edges when scrolling
 constexpr int kScreenWidth = 480;
-constexpr int kTileLaunchMs = 380;  // length of the tile flip-out played before a tile opens
+constexpr int kTileLaunchMs = 240;  // length of the tile flip-out played before a tile opens
 
 // Medium tiles span 2x2, wide tiles 4x2, small tiles 1x1.
 constexpr TileSpec kTiles[] = {

@@ -74,6 +74,10 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 在 memstick 的客户端目录写入 `ui-fixture.txt`，内容为 `comments` 或 `replies`，客户端启动后直接进入带示例评论的评论页或回复页。
 该选项只用于模拟器截图，不要用于发布包。
 
+帧耗时：`-DBILI_UI_FRAME_STATS=ON`（默认关闭）会在日志里为每一帧写一行 `UIFRAME <阶段> <微秒>`，
+是该帧的 CPU 绘制时间（不含 vblank 等待），阶段 E/H/L 为磁贴主页（进入/空闲/启动磁贴），P/S 为页面（进入/稳定）。
+模拟器里的时间按指令数计，不含真机上读取 VRAM 等的额外开销，只能作为下限和前后对比。
+
 ### 输出和诊断
 
 - `BILI_HEADLESS_SCREENSHOT`：指定截图路径。

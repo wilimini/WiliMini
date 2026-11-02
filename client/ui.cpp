@@ -1,4 +1,7 @@
 #include "ui.hpp"
+#ifdef BILI_UI_FRAME_STATS
+#include <wili_log.h>
+#endif
 #include "bitmap_font.hpp"
 #include "title_font.hpp"
 #include "comment_layout.hpp"
@@ -122,7 +125,12 @@ void fillRect(int x, int y, int width, int height, uint32_t shade) {
     }
 }
 
+// Decoding a cover takes tens of milliseconds, so at most one is decoded per frame; the others
+// show their placeholder and appear on the next frames instead of freezing the first frame of a page.
+unsigned coverDecodesThisFrame = 0;
+
 void beginFrame() {
+    coverDecodesThisFrame = 0;
     sceGuStart(GU_DIRECT, commands);
     sceGuDisable(GU_DEPTH_TEST);
     sceGuEnable(GU_BLEND);
@@ -139,14 +147,20 @@ void presentFrame() {
 
 int fontSize(float scale) { return scale >= 0.8f ? 16 : scale >= 0.6f ? bodySize : 12; }
 
+// Blends d towards s; a is 0..256.
+uint32_t shadeMix(uint32_t d, uint32_t s, unsigned a) {
+    const uint32_t rb = ((((d & 0x00ff00ffu) * (256 - a)) + ((s & 0x00ff00ffu) * a)) >> 8) & 0x00ff00ffu;
+    const uint32_t g = ((((d & 0x0000ff00u) * (256 - a)) + ((s & 0x0000ff00u) * a)) >> 8) & 0x0000ff00u;
+    return 0xff000000u | rb | g;
+}
+
+// Source coverage 0..15 of the bitmap font as a 0..256 blend weight.
+constexpr uint16_t kCoverage256[16] = {0, 17, 34, 51, 68, 85, 102, 119, 137, 154, 171, 188, 205, 222, 239, 256};
+
 void blendPixel(int x, int y, uint32_t shade, unsigned alpha) {
-    if (x < 0 || x >= kWidth || y < 0 || y >= kHeight || !alpha) return;
+    if (!alpha || x < 0 || x >= kWidth || y < 0 || y >= kHeight) return;
     uint32_t& destination = framebuffer()[y * 512 + x];
-    uint32_t result = 0xff000000;
-    for (int shift = 0; shift < 24; shift += 8)
-        result |= (((((shade >> shift) & 255) * alpha +
-                     ((destination >> shift) & 255) * (255 - alpha)) / 255) << shift);
-    destination = result;
+    destination = alpha >= 255 ? (shade | 0xff000000u) : shadeMix(destination, shade, alpha + (alpha >> 7));
 }
 
 void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
@@ -154,15 +168,23 @@ void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, 
     const int size = fontSize(scale);
     const int right = std::min(kWidth, x + maxWidth);
     if (centered) x += std::max(0, (maxWidth - bitmapMeasure(text, size)) / 2);
+    const int top = std::max(0, clipTop), bottom = std::min(kHeight, clipBottom);
+    const uint32_t solid = shade | 0xff000000u;
+    uint32_t* base = framebuffer();
     for (size_t pos = 0; pos < text.size();) {
         const auto* glyph = bitmapGlyph(bitmapNext(text, pos), size);
         if (!glyph) continue;
         if (x + glyph->advance > right) break;
+        const int width = glyph->width, first = std::max(0, -x), last = std::min(width, right - x);
         for (int yy = 0; yy < glyph->height; ++yy) {
-            if (y + yy < clipTop || y + yy >= clipBottom) continue;
-            for (int xx = 0; xx < glyph->width && x + xx < right; ++xx) {
-                const int pixel = yy * glyph->width + xx;
-                blendPixel(x + xx, y + yy, shade, ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17);
+            const int py = y + yy;
+            if (py < top || py >= bottom) continue;
+            uint32_t* row = base + py * 512 + x;
+            int index = yy * width + first;
+            for (int xx = first; xx < last; ++xx, ++index) {
+                const unsigned coverage = (glyph->alpha[index >> 1] >> ((index & 1) * 4)) & 15;
+                if (!coverage) continue;
+                row[xx] = coverage == 15 ? solid : shadeMix(row[xx], shade, kCoverage256[coverage]);
             }
         }
         x += glyph->advance;
@@ -280,6 +302,8 @@ CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int heigh
     for (auto& slot : covers) {
         if (slot.key == bvid && slot.width == width && slot.height == height) return &slot;
     }
+    if (coverDecodesThisFrame >= 1) return nullptr;
+    ++coverDecodesThisFrame;
     CoverSlot& slot = covers[next_cover++ % kMaxCovers];
     slot.key = bvid;
     slot.width = width; slot.height = height;
@@ -512,12 +536,6 @@ void drawFooter(const pspapp::App& app) {
 // by squeezing its height about its centre line, and fades by blending with the background.
 // Animation is time based (not frame based) so it looks the same if a frame is dropped.
 
-// Blends d towards s; a is 0..256.
-uint32_t shadeMix(uint32_t d, uint32_t s, unsigned a) {
-    const uint32_t rb = ((((d & 0x00ff00ffu) * (256 - a)) + ((s & 0x00ff00ffu) * a)) >> 8) & 0x00ff00ffu;
-    const uint32_t g = ((((d & 0x0000ff00u) * (256 - a)) + ((s & 0x0000ff00u) * a)) >> 8) & 0x0000ff00u;
-    return 0xff000000u | rb | g;
-}
 
 // Fills a rectangle with `shade` at the given opacity (0..255), clipped to the screen.
 void blendRect(int x, int y, int width, int height, uint32_t shade, unsigned alpha) {
@@ -728,14 +746,14 @@ TileMotion tileMotion(const pspapp::App& app, int index, bool live, int64_t now)
     if (launch >= 0) {
         const int distance = std::abs(tile.col - kTiles[app.tileSelection()].col);
         const bool chosen = index == app.tileSelection();
-        const float delay = chosen ? 130.f : distance * 18.f;
-        const float out = clamp01((launch - delay) / 220.f);
+        const float delay = chosen ? 60.f : distance * 10.f;
+        const float out = clamp01((launch - delay) / 150.f);
         motion.scale = 1.f - easeIn(out);
         motion.opacity = 1.f - out * 0.4f;
-        if (chosen && launch < 130) motion.scale = 1.f - 0.07f * easeOut(launch / 130.f);  // press
+        if (chosen && launch < 60) motion.scale = 1.f - 0.07f * easeOut(launch / 60.f);  // press
         return motion;
     }
-    const float in = clamp01((now - hubFx.enterMs - (tile.col * 55 + tile.row * 28)) / 420.f);
+    const float in = clamp01((now - hubFx.enterMs - (tile.col * 30 + tile.row * 15)) / 260.f);
     if (in < 1.f) {
         motion.scale = std::max(0.02f, easeOut(in));
         motion.opacity = easeOut(in);
@@ -1731,9 +1749,9 @@ void drawMetroHeader(const pspapp::App& app) {
 // Flip-in transition for a page that just appeared: squeezes the finished frame toward the
 // centre line and releases it. In place, working outward from the centre, so no copy is needed.
 void squeezePage(int64_t now) {
-    const float t = clamp01((now - pageFx.enterMs) / 340.f);
+    const float t = clamp01((now - pageFx.enterMs) / 200.f);
     if (t >= 1.f) return;
-    const float f = std::max(0.04f, easeOut(t));
+    const float f = 0.55f + 0.45f * easeOut(t);  // opens from 55% height, not from a flat line
     constexpr int half = 129;  // rows 0..257 around the centre line
     uint32_t* destination = framebuffer();
     for (int d = 0; d < half; ++d) {
@@ -2431,6 +2449,9 @@ void ui_dialog_present() {
 }
 
 void ui_render(const pspapp::App& app) {
+#ifdef BILI_UI_FRAME_STATS
+    const uint64_t statsStart = sceKernelGetSystemTimeWide();
+#endif
     applyPreferences(app.preferences());
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
@@ -2485,6 +2506,14 @@ void ui_render(const pspapp::App& app) {
     }
     if (!hub && app.preferences().tileHome()) squeezePage(nowMs);
     drawFooter(app);
+#ifdef BILI_UI_FRAME_STATS
+    {   // CPU drawing time of this frame (excludes the vblank wait). Phase: E tile home entering,
+        // H tile home, L launching a tile, P page entering, S page.
+        const char phase = hub ? (app.tileLaunching() ? 'L' : (nowMs - hubFx.enterMs < 500 ? 'E' : 'H'))
+                         : (nowMs - pageFx.enterMs < 200 ? 'P' : 'S');
+        WLOG_I(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
+    }
+#endif
     presentFrame();
 }
 
