@@ -233,8 +233,20 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     int ret = source_open(&audio.format, source, stream, &audio.input_io);
     if (ret < 0) return ret;
     source_memory("audio_source");
-    ret = avformat_find_stream_info(audio.format, NULL);
-    if (ret < 0) return ret;
+    /* MP4/DASH headers already carry AAC's AudioSpecificConfig. Opening the
+     * real AAC decoder below reads it (including HE-AAC's output rate).
+     * Probing the entire muxed input here also opens an unused H.264 decoder,
+     * especially costly during seek while video reference frames are live.
+     * Keep full probing for inputs without complete AAC headers. */
+    audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    const AVCodecParameters *params = audio.stream >= 0
+        ? audio.format->streams[audio.stream]->codecpar : NULL;
+    if (!params || params->codec_id != AV_CODEC_ID_AAC ||
+        params->extradata_size <= 0 || params->sample_rate <= 0 ||
+        params->ch_layout.nb_channels <= 0) {
+        ret = avformat_find_stream_info(audio.format, NULL);
+        if (ret < 0) return ret;
+    }
     source_memory("audio_probe");
     audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (audio.stream < 0) return audio.stream;

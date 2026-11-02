@@ -198,6 +198,10 @@ int main(int argc, char** argv) {
         if (app.playbackReady()) {
             ui_render(app);
             ui_prepare_playback();
+            if (pspapp::defaultPlaybackBufferFrames() == 2) {
+                logMemory("before_http_trim");
+                network_trim_idle_http();
+            }
             logMemory("before_playback");
             PspVideoOptions options{};
             options.path = app.playback().path;

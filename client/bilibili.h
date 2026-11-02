@@ -69,6 +69,8 @@ void network_progress_reset(void);
 int network_has_profile(void);
 void network_remember_profile(void);
 void network_close(void);
+/* Only when the UI worker is joined; active range handles are separate. */
+void network_trim_idle_http(void);
 /* Resolver result storage lock; network_init()/network_close() own the lifetime. */
 void psp_dns_init(void);
 void psp_dns_shutdown(void);

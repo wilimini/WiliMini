@@ -18,6 +18,7 @@
 #include <pspwlan.h>
 #include <curl/curl.h>
 #include "http_transport.h"
+#include "http_buffer.h"
 #include <unistd.h>
 #include <pspiofilemgr.h>
 #endif
@@ -120,6 +121,12 @@ const char *network_progress_message(void) {
 }
 static CURL *transport;
 static CURL *api_transport; /* Serialized JSON requests, separate from media/covers. */
+void network_trim_idle_http(void) {
+    curl_easy_cleanup(api_transport);
+    api_transport = NULL;
+    curl_easy_cleanup(transport);
+    transport = NULL;
+}
 static char buvid3[33];
 static char session_cookies[4096];
 /* One share object lets the API handle, the cover/download handle and each
@@ -307,6 +314,7 @@ typedef struct {
     BiliHttpResponse *response;
     int flush;
     const char *form;
+    size_t text_capacity; /* Nonzero for a response that grows on demand. */
 } Sink;
 static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t bytes);
 #if BILI_STREAM_PROFILE
@@ -318,7 +326,14 @@ static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
     if(cancelled || s->used>s->limit || bytes>s->limit-s->used)return 0;
     if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0)return 0;}
     else if(s->file){if(fwrite(data,1,bytes,s->file)!=bytes)return 0;}
-    else {memcpy(s->text+s->used,data,bytes);s->text[s->used+bytes]=0;}
+    else {
+        if (s->text_capacity && bili_http_buffer_reserve(&s->text, &s->text_capacity,
+                                                        s->used + bytes, s->limit) < 0) {
+            if (s->response) s->response->failure = BILI_HTTP_MEMORY;
+            return 0;
+        }
+        memcpy(s->text+s->used,data,bytes);s->text[s->used+bytes]=0;
+    }
     if(s->flush && fflush(s->file)!=0)return 0;
     s->used+=bytes;transfer_kb=s->used/1024;
     return bytes;
@@ -358,6 +373,7 @@ static int request(const char *url,Sink *sink) {
         strstr(url,"/pgc/view/pc/season") || strstr(url,"/x/player/pagelist")?NET_PARTS:
         strstr(url,"/reply/")?NET_COMMENTS:
         strstr(url,"/x/web-interface/archive/relation") || strstr(url,"/pgc/season/episode/web/info") || strstr(url,"/pgc/view/web/season/user/status")?NET_RELATION:NET_REQUEST;
+    if (!sink->response && !transport) transport = curl_easy_init();
     CURL *c=sink->response?bili_http_transport_acquire(&api_transport):transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
@@ -432,7 +448,7 @@ static int request(const char *url,Sink *sink) {
         sink->response->status=(int)status;
         sink->response->transport_code=(int)r;
         if((sink->cancel&&*sink->cancel) || transfer_cancel)sink->response->failure=BILI_HTTP_CANCELLED;
-        else if(r!=CURLE_OK)sink->response->failure=BILI_HTTP_TRANSPORT;
+        else if(r!=CURLE_OK){if(sink->response->failure!=BILI_HTTP_MEMORY)sink->response->failure=BILI_HTTP_TRANSPORT;}
         else if(status!=200)sink->response->failure=BILI_HTTP_STATUS;
     }
 #if BILI_STREAM_PROFILE
@@ -467,12 +483,13 @@ int bili_http_get_response_cancel(const char *url,BiliHttpResponse *out,size_t m
     if(!url || max_bytes<2 || max_bytes>1024*1024){out->failure=BILI_HTTP_MEMORY;return -1;}
     if(cancel && (*cancel || !network_ready())) {out->failure=*cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
     if(!cancel && network_connect()<0){out->failure=transfer_cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
-    char *text=calloc(1,max_bytes+1);
+    size_t capacity = max_bytes + 1 < 4096 ? max_bytes + 1 : 4096;
+    char *text=calloc(1,capacity);
     if(!text){out->failure=BILI_HTTP_MEMORY;return -1;}
-    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel};
+    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel,.text_capacity=capacity};
     int result=request(url,&sink);
-    if(result<0){free(text);return -1;}
-    out->text=text;
+    if(result<0){free(sink.text);return -1;}
+    out->text=sink.text;
     return 0;
 }
 int bili_http_get_response(const char *url,BiliHttpResponse *out,size_t max_bytes) {
