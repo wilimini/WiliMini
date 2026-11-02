@@ -14,6 +14,10 @@ const char* meBackendCode(MeBackend backend) {
     return backend == MeBackend::CustomCore ? "custom-core" : "mist";
 }
 
+const char* homeStyleCode(HomeStyle style) {
+    return style == HomeStyle::Metro ? "metro" : style == HomeStyle::Tiles ? "tiles" : "classic";
+}
+
 const char* logVerbosityCode(LogVerbosity level) {
     switch (level) {
         case LogVerbosity::Error: return "error";
@@ -92,6 +96,21 @@ bool loadPreferences(const char* path, Preferences& preferences) {
             if (!files->is_boolean()) return false;
             loaded.saveLogFiles = files->get<bool>();
         }
+        // Files from the first tile build used a boolean; it maps to the Tiles style.
+        const auto legacy = root.find("tile_home");
+        if (legacy != root.end()) {
+            if (!legacy->is_boolean()) return false;
+            loaded.homeStyle = legacy->get<bool>() ? HomeStyle::Tiles : HomeStyle::Classic;
+        }
+        const auto style = root.find("home_style");
+        if (style != root.end()) {
+            if (!style->is_string()) return false;
+            const std::string value = style->get<std::string>();
+            if (value == "classic") loaded.homeStyle = HomeStyle::Classic;
+            else if (value == "tiles") loaded.homeStyle = HomeStyle::Tiles;
+            else if (value == "metro") loaded.homeStyle = HomeStyle::Metro;
+            else return false;
+        }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -125,6 +144,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"locale", localeCode(preferences.locale)},
         {"log_level", logVerbosityCode(preferences.logLevel)},
         {"log_files", preferences.saveLogFiles},
+        {"home_style", homeStyleCode(preferences.homeStyle)},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");

@@ -192,6 +192,12 @@ bool isPgcPosterPage(BrowseKind kind) {
   return kind == BrowseKind::Bangumi || kind == BrowseKind::Cinema ||
          kind == BrowseKind::FollowBangumi || kind == BrowseKind::FollowCinema;
 }
+bool isVideoListPage(const BrowsePage &page) {
+  if (page.items.empty()) return false;
+  for (const auto &item : page.items)
+    if (item.next.kind != BrowseKind::Video || item.bvid.empty()) return false;
+  return true;
+}
 std::string pgcCoverKey(const BrowseItem &item) {
   if (item.next.kind == BrowseKind::Season && !item.next.id.empty() &&
       item.next.id.find_first_not_of("0123456789") == std::string::npos)

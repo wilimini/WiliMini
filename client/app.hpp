@@ -10,6 +10,7 @@
 #include "bilibili.h"
 #include "navigation.hpp"
 #include "preferences.hpp"
+#include "tile_layout.hpp"
 #include "services/auth_service.hpp"
 #include "services/search_service.hpp"
 #include "services/community_service.hpp"
@@ -50,6 +51,23 @@ public:
     FocusArea focusArea() const { return navigation_.current().focus; }
     int navigationSelection() const { return root().navigationSelection; }
     void openSettings();
+    // Tile home screen. The hub is the root view while the tile theme is on and no tab has
+    // been entered; child pages opened from it return to it when popped.
+    bool tileHubVisible() const { return preferences_.tileHome() && hubOpen_ && navigation_.size() == 1; }
+    int tileSelection() const { return hubSelection_; }
+    // Changes whenever the visible page changes (route, tab or search view); drives page transitions.
+    uint64_t pageKey() const {
+        return navigation_.current().id * 64 + static_cast<uint64_t>(root().tab) * 8 +
+               static_cast<uint64_t>(root().searchView);
+    }
+    void tileMove(int dx, int dy);
+    void tileActivate();
+    // Confirm starts a short launch animation; the destination opens when it ends (see poll()).
+    bool tileLaunching() const { return hubLaunchAt_ != 0; }
+    int tileLaunchMs() const;
+    void tileFinishLaunch();
+    bool tileLive(TileId tile, std::string& big, std::string& small) const;
+    std::string tileSubtitle(TileId tile) const;
     void changeSetting();
     void updateStorage();
     bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
@@ -80,6 +98,25 @@ public:
     void commentActions();
     void selectComment(int direction);
     void beginComment();
+    // Comment lists: video comments and reply threads share one design and one set of controls.
+    enum class CommentTile { Reply, Like, Replies, More };
+    bool commentPage() const;
+    int commentSelectedRow() const;
+    size_t commentRowCount() const;
+    bool commentExpanded() const;
+    int commentInner() const;
+    void commentSetInner(int line);
+    bool commentMenuOpen() const;
+    int commentMenuIndex() const;
+    std::vector<CommentTile> commentMenuTiles() const;
+    void commentMoveSelection(int dy);
+    void commentToggle();
+    void commentOpenMenu();
+    void commentMenuMove(int dx);
+    void commentMenuClose();
+    void commentMenuActivate();
+    void commentQuickLike();
+    void commentQuickReplies();
     void beginMessage();
     void submitCommunityInput(const std::string &text);
     bool communityInputPending() const { return communityInputPending_; }
@@ -174,9 +211,17 @@ private:
         HistoryReport
     };
 
+    // Jobs that never block input. A new foreground job cancels them and takes over.
     bool backgroundJob() const {
-        return job_ == Job::HistoryReport && queuedJob_ == Job::None && !coverActive_;
+        return ((job_ == Job::HistoryReport) || (prefetch_ && !prefetchPromoted_)) &&
+               queuedJob_ == Job::None && !coverActive_;
     }
+    // Next-page prefetch for video lists: runs between cover downloads, appends silently
+    // without moving the selection, and is promoted to a normal load if the user reaches
+    // the end first.
+    bool startPrefetchIfWanted();
+    void finishPrefetch();
+    void commitPrefetch(bool promoted);
     void startJob(Job job);
     void runJob();
     void commitJob();
@@ -205,6 +250,10 @@ private:
     static App *workerApp;
 
     Preferences preferences_;
+    bool hubOpen_ = false;
+    int hubSelection_ = 0;
+    uint64_t hubLaunchAt_ = 0;  // system time (us) when the launch animation began; 0 = idle
+    void openHub();
     int activeMeBackend_ = -1;
     size_t coverFiles_ = 0;
     uint64_t coverBytes_ = 0;
@@ -221,6 +270,13 @@ private:
     size_t coverPage_ = 0, coverDepth_ = 0;
 
     BrowseRequest jobBrowse_;
+    // Prefetch requests are private to the worker so foreground actions can keep editing job*_.
+    bool prefetch_ = false, prefetchPromoted_ = false;
+    int pfPage_ = 1;
+    std::string pfQuery_;
+    uint64_t pfGeneration_ = 0;
+    BrowseRequest pfBrowse_;
+    uint64_t prefetchRetryAt_ = 0;
     BrowsePage stagedBrowse_;
     CommunityWrite jobWrite_, jobHistoryWrite_;
     uint64_t jobRouteId_ = 0;
@@ -242,6 +298,15 @@ private:
     const CommentsRoute &commentsState() const { return navigation_.get<CommentsRoute>(); }
     BrowseRoute &browseState() { return navigation_.get<BrowseRoute>(); }
     const BrowseRoute &browseState() const { return navigation_.get<BrowseRoute>(); }
+    CommentUi* commentUi();
+    const CommentUi* commentUi() const;
+    bool selectedCommentData(CommunityComment& comment, BrowseItem& item) const;
+    void commentReply(const CommunityComment& comment, const BrowseRequest& request);
+    void commentVote(const CommunityComment& comment, const BrowseRequest& request);
+    void commentOpenReplies(const CommunityComment& comment, const BrowseRequest& request);
+#ifdef BILI_UI_FIXTURE
+    void loadUiFixture();
+#endif
     void pushBrowse(BrowseRoute page);
     void pushCommentActions(const BrowseItem &item);
     void clearAccountPages();

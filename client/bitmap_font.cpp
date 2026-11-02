@@ -15,6 +15,10 @@ static_assert(sizeof(Record) == 12, "Font index layout");
 FILE* fontFile = nullptr;
 std::vector<Record> fontIndex;
 BitmapGlyph cache[384];
+// Recent lookups by hash, validated against the glyph in the slot (slots are reused round-robin).
+constexpr size_t kFront = 1024;
+const BitmapGlyph* front[kFront];
+size_t frontIndex(uint32_t cp, int size) { return ((cp * 2654435761u) ^ (static_cast<uint32_t>(size) * 40503u)) >> 22 & (kFront - 1); }
 size_t nextSlot = 0;
 long dataOffset = 0;
 const Record* findRecord(uint32_t cp, int size) {
@@ -49,13 +53,16 @@ void bitmapFontShutdown() {
     fontFile = nullptr;
     fontIndex.clear();
     for (auto& glyph : cache) glyph = BitmapGlyph{};
+    for (auto& entry : front) entry = nullptr;
     nextSlot = 0;
 }
 
 const BitmapGlyph* bitmapGlyph(uint32_t cp, int size) {
     if (!fontFile) return nullptr;
+    const size_t slotHash = frontIndex(cp, size);
+    if (const BitmapGlyph* hit = front[slotHash]; hit && hit->codepoint == cp && hit->size == size) return hit;
     for (const auto& glyph : cache)
-        if (glyph.codepoint == cp && glyph.size == size) return &glyph;
+        if (glyph.codepoint == cp && glyph.size == size) { front[slotHash] = &glyph; return &glyph; }
     const auto* found = findRecord(cp, size);
     if (!found) return nullptr;
     BitmapGlyph& glyph = cache[nextSlot++ % 384];
@@ -65,6 +72,7 @@ const BitmapGlyph* bitmapGlyph(uint32_t cp, int size) {
         std::fread(glyph.alpha, 1, bytes, fontFile) != bytes) return nullptr;
     glyph.codepoint = cp; glyph.size = size; glyph.advance = found->advance;
     glyph.width = found->width; glyph.height = found->height;
+    front[slotHash] = &glyph;
     return &glyph;
 }
 

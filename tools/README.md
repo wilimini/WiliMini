@@ -63,6 +63,21 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 该模式不加载 native ME bridge，但 Headless 仍需使用启用了 FFmpeg 的构建。
 `BILI_HEADLESS_PLAYER` 必须是 `psp-native` 或 `ppsspp-sceMpeg`。
 
+### UI 夹具
+
+`tools/ppsspp/seed-ui-fixture.py MEMSTICK [--tiles | --metro] [--dark]` 向隔离的 memstick 写入离线夹具：
+缓存的首页数据、生成的封面、本地历史和稍后观看，以及可选的 `settings.json`（`--tiles` 或 `--metro` 选择首页样式）。
+数据为合成数据，用于在没有账号和网络时检查 UI。按键回放的 MASK 是十六进制 sceCtrl 掩码，
+例如 `0x4000`（×）、`0x2000`（○）、`0x10`/`0x40`/`0x80`/`0x20`（上/下/左/右）。
+
+评论页需要账号和网络数据，离线时可用诊断构建：`cmake -S . -B build/client -DBILI_UI_FIXTURE=ON`（默认关闭）。
+在 memstick 的客户端目录写入 `ui-fixture.txt`，内容为 `comments` 或 `replies`，客户端启动后直接进入带示例评论的评论页或回复页。
+该选项只用于模拟器截图，不要用于发布包。
+
+帧耗时：`-DBILI_UI_FRAME_STATS=ON`（默认关闭）会在日志里为每一帧写一行 `UIFRAME <阶段> <微秒>`，
+是该帧的 CPU 绘制时间（不含 vblank 等待），阶段 E/H/L 为磁贴主页（进入/空闲/启动磁贴），P/S 为页面（进入/稳定）。
+模拟器里的时间按指令数计，不含真机上读取 VRAM 等的额外开销，只能作为下限和前后对比。
+
 ### 输出和诊断
 
 - `BILI_HEADLESS_SCREENSHOT`：指定截图路径。
@@ -78,6 +93,16 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 自定义 runner 默认从相邻的 `assets/flash0/font` 查找字体。
 播放器测试构建和覆盖范围见 [PPSSPP 播放后端](../docs/ppsspp-player.md)。
 PPSSPP 启动与 UI 测试不能替代真实 ME 播放验证。
+
+## 全部测试与 CI
+
+`sh tools/test-host.sh` 依次运行全部主机检查（内存配置、日志、ME 桥、HTTP 传输、弹幕、字幕、播放控件）。
+`python3 tools/ppsspp/test-ui-smoke.py` 在 PPSSPP 中以四种首页样式启动客户端并检查截图，不需要账号、网络或固件。
+`.github/workflows/test.yml` 在每个 PR 上运行：主机检查；以及 PPSSPP（固定提交，开启 ME 模拟）+ 原生 ME 的
+播放套件（PSP-1000 与 Slim 两种机型）、播放控件回放和 UI 冒烟测试。ME 镜像由
+`tools/ppsspp/prepare-me-firmware.py` 在运行时从官方 6.61 更新包解出并校验 SHA-256，不缓存、不上传、不打包；
+如需换镜像源，设置仓库变量 `PSP_661_UPDATER_URL`（HTTPS）。
+这些结果是模拟器结果，不代表真机行为或性能。
 
 ## 内存配置主机检查
 

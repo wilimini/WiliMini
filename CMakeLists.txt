@@ -20,6 +20,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
+option(BILI_UI_FIXTURE "Start on a comment page with sample data for emulator UI captures (diagnostic)" OFF)
+option(BILI_UI_FRAME_STATS "Log the CPU drawing time of every UI frame (diagnostic)" OFF)
 option(BILI_DEVICE_OSK_TEST "Open the PSP on-screen keyboard at startup for diagnostics" OFF)
 option(BILI_DEVICE_PLAYBACK_TEST "Run controlled media decoder tests without account/network APIs" OFF)
 option(BILI_DEVICE_PLAYBACK_CPU_RENDER "Diagnostic CPU display when ME firmware is unavailable" OFF)
@@ -246,6 +248,7 @@ add_library(wili_client_objects OBJECT
     client/third_party/qrcodegen/qrcodegen.c
     client/ui.cpp
     client/bitmap_font.cpp
+    client/title_font.cpp
     client/bilibili.c
     client/live_stream.c
     client/json.c
@@ -282,6 +285,12 @@ set(CLIENT_INCLUDE_DIRS
     "${PSP_CURL_PREFIX}/include")
 target_include_directories(wili_client_objects PRIVATE ${CLIENT_INCLUDE_DIRS})
 target_compile_definitions(wili_client_objects PRIVATE _POSIX_C_SOURCE=200809L)
+if(BILI_UI_FIXTURE)
+    target_compile_definitions(wili_client_objects PRIVATE BILI_UI_FIXTURE)
+endif()
+if(BILI_UI_FRAME_STATS)
+    target_compile_definitions(wili_client_objects PRIVATE BILI_UI_FRAME_STATS)
+endif()
 if(BILI_NETWORK_DIAGNOSTICS)
     target_compile_definitions(wili_client_objects PRIVATE BILI_NETWORK_DIAGNOSTICS)
 endif()
@@ -414,6 +423,7 @@ add_custom_target(package
         "${PACKAGE_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/wqy.bmf" "${PACKAGE_DIR}/wqy.bmf"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/title.bmf" "${PACKAGE_DIR}/title.bmf"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/LICENSE.txt" "${PACKAGE_DIR}/licenses/wqy.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/APACHE-2.0.txt" "${PACKAGE_DIR}/licenses/wqy-apache-2.0.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt" "${PACKAGE_DIR}/licenses/wiliwili-assets.txt"
@@ -449,8 +459,9 @@ add_dependencies(assets generate-player-icons)
 if(BILI_FONT_FILE)
     add_custom_target(generate-font
         COMMAND python3 "${ROOT}/scripts/prepare-client-font.py" "${BILI_FONT_FILE}"
+        COMMAND python3 "${ROOT}/scripts/prepare-title-font.py" "${BILI_FONT_FILE}"
         DEPENDS "${BILI_FONT_FILE}"
-        BYPRODUCTS "${ROOT}/client/assets/font/wqy.bmf"
+        BYPRODUCTS "${ROOT}/client/assets/font/wqy.bmf" "${ROOT}/client/assets/font/title.bmf"
         COMMENT "Generating PSP bitmap font")
     add_dependencies(assets generate-font)
 endif()

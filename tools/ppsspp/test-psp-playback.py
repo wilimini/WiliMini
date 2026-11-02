@@ -42,10 +42,9 @@ cases = {
     'dash-resume': dict(video='video.mp4', audio='audio.m4a', mode='split', start_ms=3000),
     'flv-live': dict(video='live.flv', mode='live', start_ms=0),
     'muxed-cancel': dict(video='muxed.mp4', mode='file', start_ms=3000),
-    # Native ME publishes asynchronously; its first-frame callback means queued,
-    # so a screenshot at that callback is only an HLE decoder check.
-    'high-bframes': dict(video='high.mp4', mode='source', start_ms=0,
-                        capture_frame=backend == 'ppsspp-sceMpeg'),
+    # B-frame reordering; the first-frame PPM capture was removed from the client,
+    # so this checks decode, presentation and EOF only.
+    'high-bframes': dict(video='high.mp4', mode='source', start_ms=0),
     'repeat': dict(video='muxed.mp4', mode='file', start_ms=0, repeat=3),
     'short-audio': dict(video='video.mp4', audio='short-audio.m4a', mode='split', start_ms=0),
 }
@@ -89,11 +88,6 @@ for name, config in cases.items():
             p['code'] == 0 and p['frames'] > 0 and p['eof'] == 1 for p in result['plays'])
         checks[name+'_heap_released'] = all(p['heap_after'] <= p['heap_before']
             for p in result['plays'][1:])
-    if config.get('capture_frame'):
-        frame = (game/'playback-first-frame.ppm').read_bytes()
-        pixels = frame.split(b'\n', 3)[3]
-        checks[name+'_pixels'] = len(pixels) == 480 * 272 * 3 and len(set(pixels)) > 32
-        shutil.copy2(game/'playback-first-frame.ppm', out/(name+'.ppm'))
 (out/'verification.json').write_text(json.dumps(checks, indent=2))
 print(json.dumps(checks, indent=2))
 assert all(checks.values()), checks

@@ -12,14 +12,14 @@ struct PlaybackTestPresentation {
     unsigned count = 0;
     uint64_t last = 0, firstFrame = 0;
     const PspVideoPresenter* target = nullptr;
-    PspVideoPresenter presenter{this, [](void* opaque, const uint32_t* pixels, const PspVideoStatus* status) {
+    PspVideoPresenter presenter{this, [](void* opaque, const void* pixels, PspVideoPixelFormat format, const PspVideoStatus* status) {
         auto* self = static_cast<PlaybackTestPresentation*>(opaque);
         uint64_t now = sceKernelGetSystemTimeWide();
         if (pixels && !self->firstFrame) self->firstFrame = now;
         if (self->count < 512 && now - self->last >= 100000) {
             self->samples[self->count++] = {now, *status}; self->last = now;
         }
-        return self->target->present(self->target->opaque, pixels, status);
+        return self->target->present(self->target->opaque, pixels, format, status);
     }, [](void* opaque, PspVideoSettings* settings) {
         auto* self = static_cast<PlaybackTestPresentation*>(opaque);
         if (self->target->update_settings) self->target->update_settings(self->target->opaque, settings);

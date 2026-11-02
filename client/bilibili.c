@@ -18,6 +18,7 @@
 #include <pspwlan.h>
 #include <curl/curl.h>
 #include "http_transport.h"
+#include "http_buffer.h"
 #include <unistd.h>
 #include <pspiofilemgr.h>
 #endif
@@ -120,6 +121,12 @@ const char *network_progress_message(void) {
 }
 static CURL *transport;
 static CURL *api_transport; /* Serialized JSON requests, separate from media/covers. */
+void network_trim_idle_http(void) {
+    curl_easy_cleanup(api_transport);
+    api_transport = NULL;
+    curl_easy_cleanup(transport);
+    transport = NULL;
+}
 static char buvid3[33];
 static char session_cookies[4096];
 /* One share object lets the API handle, the cover/download handle and each
@@ -307,6 +314,7 @@ typedef struct {
     BiliHttpResponse *response;
     int flush;
     const char *form;
+    size_t text_capacity; /* Nonzero for a response that grows on demand. */
 } Sink;
 static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t bytes);
 #if BILI_STREAM_PROFILE
@@ -318,7 +326,14 @@ static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
     if(cancelled || s->used>s->limit || bytes>s->limit-s->used)return 0;
     if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0)return 0;}
     else if(s->file){if(fwrite(data,1,bytes,s->file)!=bytes)return 0;}
-    else {memcpy(s->text+s->used,data,bytes);s->text[s->used+bytes]=0;}
+    else {
+        if (s->text_capacity && bili_http_buffer_reserve(&s->text, &s->text_capacity,
+                                                        s->used + bytes, s->limit) < 0) {
+            if (s->response) s->response->failure = BILI_HTTP_MEMORY;
+            return 0;
+        }
+        memcpy(s->text+s->used,data,bytes);s->text[s->used+bytes]=0;
+    }
     if(s->flush && fflush(s->file)!=0)return 0;
     s->used+=bytes;transfer_kb=s->used/1024;
     return bytes;
@@ -342,7 +357,7 @@ static void http_timing(CURL *curl, const char *kind) {
     curl_easy_getinfo(curl,CURLINFO_TOTAL_TIME,&total);
     curl_easy_getinfo(curl,CURLINFO_NUM_CONNECTS,&connections);
     curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
-    WLOG_I(WLC_NET,"HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f",
+    WLOG_D(WLC_NET,"HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f",
            kind,status,connections,dns*1000,connect*1000,tls*1000,first*1000,total*1000);
 #else
     (void)curl;(void)kind;
@@ -358,6 +373,7 @@ static int request(const char *url,Sink *sink) {
         strstr(url,"/pgc/view/pc/season") || strstr(url,"/x/player/pagelist")?NET_PARTS:
         strstr(url,"/reply/")?NET_COMMENTS:
         strstr(url,"/x/web-interface/archive/relation") || strstr(url,"/pgc/season/episode/web/info") || strstr(url,"/pgc/view/web/season/user/status")?NET_RELATION:NET_REQUEST;
+    if (!sink->response && !transport) transport = curl_easy_init();
     CURL *c=sink->response?bili_http_transport_acquire(&api_transport):transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
     network_ensure_buvid3();
@@ -372,7 +388,7 @@ static int request(const char *url,Sink *sink) {
     }
 #ifdef BILI_NETWORK_DIAGNOSTICS
     /* Never print login keys, signed queries, Cookie headers or Set-Cookie. */
-    WLOG_I(WLC_NET,"HTTP request started");
+    WLOG_D(WLC_NET,"HTTP request started");
     curl_easy_setopt(c,CURLOPT_VERBOSE,0L);
 #endif
     char detail[CURL_ERROR_SIZE]={0};
@@ -432,7 +448,7 @@ static int request(const char *url,Sink *sink) {
         sink->response->status=(int)status;
         sink->response->transport_code=(int)r;
         if((sink->cancel&&*sink->cancel) || transfer_cancel)sink->response->failure=BILI_HTTP_CANCELLED;
-        else if(r!=CURLE_OK)sink->response->failure=BILI_HTTP_TRANSPORT;
+        else if(r!=CURLE_OK){if(sink->response->failure!=BILI_HTTP_MEMORY)sink->response->failure=BILI_HTTP_TRANSPORT;}
         else if(status!=200)sink->response->failure=BILI_HTTP_STATUS;
     }
 #if BILI_STREAM_PROFILE
@@ -467,12 +483,13 @@ int bili_http_get_response_cancel(const char *url,BiliHttpResponse *out,size_t m
     if(!url || max_bytes<2 || max_bytes>1024*1024){out->failure=BILI_HTTP_MEMORY;return -1;}
     if(cancel && (*cancel || !network_ready())) {out->failure=*cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
     if(!cancel && network_connect()<0){out->failure=transfer_cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
-    char *text=calloc(1,max_bytes+1);
+    size_t capacity = max_bytes + 1 < 4096 ? max_bytes + 1 : 4096;
+    char *text=calloc(1,capacity);
     if(!text){out->failure=BILI_HTTP_MEMORY;return -1;}
-    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel};
+    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel,.text_capacity=capacity};
     int result=request(url,&sink);
-    if(result<0){free(text);return -1;}
-    out->text=text;
+    if(result<0){free(sink.text);return -1;}
+    out->text=sink.text;
     return 0;
 }
 int bili_http_get_response(const char *url,BiliHttpResponse *out,size_t max_bytes) {
@@ -1383,10 +1400,10 @@ static void stream_report(BiliStreamCache *s) {
     uint64_t span=s->prof.last_data_us>s->prof.first_data_us?s->prof.last_data_us-s->prof.first_data_us:0;
     uint64_t elapsed=s->prof.finished_us>s->prof.started_us?s->prof.finished_us-s->prof.started_us:0;
     uint64_t rate=span?(uint64_t)s->prof.bytes*1000000u/span:0;
-    WLOG_I(WLC_NET,"STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu",
+    WLOG_D(WLC_NET,"STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu",
            (unsigned long long)s->prof.connect_us,(unsigned long long)s->prof.first_byte_us,
            (unsigned long long)s->prof.http_total_us,(unsigned long long)s->prof.http_speed_bps);
-    WLOG_I(WLC_NET,"STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu",
+    WLOG_D(WLC_NET,"STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu",
            s->prof.writes,s->prof.bytes,(unsigned long long)elapsed,(unsigned long long)span,
            (unsigned long long)rate,(unsigned long long)s->prof.callback_us,
            (unsigned long long)s->prof.backpressure_us,s->prof.waits,
@@ -1399,7 +1416,7 @@ static void stream_report(BiliStreamCache *s) {
         StreamReader *r=&s->readers[i];
         if(!r->tid)continue;
         uint64_t copy_bps=r->copy_us?(uint64_t)r->bytes*1000000u/r->copy_us:0;
-        WLOG_I(WLC_NET,"STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu",
+        WLOG_D(WLC_NET,"STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu",
                i,(unsigned)r->tid,r->calls,r->bytes,r->waits,
                (unsigned long long)r->wait_us,(unsigned long long)r->max_wait_us,
                (unsigned long long)r->lock_us,(unsigned long long)r->copy_us,

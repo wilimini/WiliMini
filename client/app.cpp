@@ -328,6 +328,7 @@ int App::workerEntry(SceSize, void*) {
 void App::init() {
     const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
     applyLogPreferences(preferences_);
+    hubOpen_ = preferences_.tileHome();
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
     history_ = loadLocal(CLIENT_PATH("/history.json"));
     later_ = loadLocal(CLIENT_PATH("/later.json"));
@@ -342,6 +343,9 @@ void App::init() {
     }
     loadCachedCards();
     status_ = recommend_.empty() ? "推荐 · 按 □ 搜索，△ 刷新" : "缓存首页 · 联网后自动刷新";
+#ifdef BILI_UI_FIXTURE
+    loadUiFixture();
+#endif
     if (!preferencesLoaded) status_ = "设置文件无法读取 · 已使用默认设置";
 }
 
@@ -568,11 +572,13 @@ void App::moveSelection(int dx, int dy) {
             return;
         }
         if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
+            if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
-        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 && root().selection < kGridColumns) {
+        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 &&
+            root().selection < (preferences_.metro() ? 1 : kGridColumns)) {
             navigation_.current().focus = FocusArea::Categories;
             return;
         }
@@ -581,10 +587,15 @@ void App::moveSelection(int dx, int dy) {
         const size_t total = root().searchView == SearchView::Landing ? 2 + root().searchTopics.size() :
                              root().searchView == SearchView::History ? searchHistory_.size() : search_.size();
         if (!total) return;
-        int value = static_cast<int>(root().selection) + dy;
+        // Tiles style: search results are a two-column grid like the home tab.
+        const bool grid = preferences_.homeStyle == HomeStyle::Tiles && root().searchView == SearchView::Results;
+        int value = static_cast<int>(root().selection) + (grid ? dx + dy * static_cast<int>(kGridColumns) : dy);
+        if (grid && dx > 0 && root().selection % kGridColumns == kGridColumns - 1) value = static_cast<int>(root().selection);
+        if (grid && dx < 0 && root().selection % kGridColumns == 0) value = static_cast<int>(root().selection);
         value = std::max(0, std::min(value, static_cast<int>(total) - 1));
         root().selection = static_cast<size_t>(value);
-        if (root().searchView == SearchView::Results && dy > 0 && root().selection + 1 == total && hasMore()) loadNextPage();
+        if (root().searchView == SearchView::Results && dy > 0 &&
+            root().selection + (grid ? kGridColumns : 1) >= total && hasMore()) loadNextPage();
         return;
     }
     if (screen() == Screen::Comments) {
@@ -602,6 +613,18 @@ void App::moveSelection(int dx, int dy) {
     if (screen() == Screen::Mine) {
         size_t total = 1 + history_.size() + later_.size();
         if (!total) return;
+        if (preferences_.homeStyle == HomeStyle::Tiles) {
+            // Tiles style: the account tile is row 0, local records follow in a two-column grid.
+            const int at = static_cast<int>(root().selection), last = static_cast<int>(total) - 1;
+            int target = at;
+            if (at == 0) { if (dy > 0 || dx > 0) target = 1; }
+            else if (dx < 0 && (at - 1) % 2 == 1) target = at - 1;
+            else if (dx > 0 && (at - 1) % 2 == 0) target = at + 1 <= last ? at + 1 : at;
+            else if (dy < 0) target = at - 1 < 2 ? 0 : at - 2;
+            else if (dy > 0) target = at + 2 <= last ? at + 2 : at;
+            root().selection = static_cast<size_t>(std::max(0, std::min(target, last)));
+            return;
+        }
         int value = static_cast<int>(root().selection) + dx + dy;
         if (value < 0) value = 0;
         if (value >= static_cast<int>(total)) value = static_cast<int>(total) - 1;
@@ -610,13 +633,15 @@ void App::moveSelection(int dx, int dy) {
     }
     const auto& list = activeCards();
     if (list.empty()) return;
+    // The Metro style shows the home tabs as a single-column list.
+    const int columns = preferences_.metro() ? 1 : static_cast<int>(kGridColumns);
     int value = static_cast<int>(root().selection);
-    if (dx < 0 && value % static_cast<int>(kGridColumns) != 0) --value;
-    if (dx > 0 && value % static_cast<int>(kGridColumns) != static_cast<int>(kGridColumns) - 1 && value + 1 < static_cast<int>(list.size())) ++value;
-    if (dy < 0 && value >= static_cast<int>(kGridColumns)) value -= static_cast<int>(kGridColumns);
-    if (dy > 0 && value + static_cast<int>(kGridColumns) < static_cast<int>(list.size())) value += static_cast<int>(kGridColumns);
+    if (dx < 0 && value % columns != 0) --value;
+    if (dx > 0 && value % columns != columns - 1 && value + 1 < static_cast<int>(list.size())) ++value;
+    if (dy < 0 && value >= columns) value -= columns;
+    if (dy > 0 && value + columns < static_cast<int>(list.size())) value += columns;
     root().selection = static_cast<size_t>(value);
-    if (dy > 0 && value + static_cast<int>(kGridColumns) >= static_cast<int>(list.size()) && hasMore())
+    if (dy > 0 && value + columns >= static_cast<int>(list.size()) && hasMore())
         loadNextPage();
 }
 
@@ -783,6 +808,7 @@ void App::back() {
     communityInputPending_ = false;
     if (atTabRoot() && root().tab == Tab::Discover) {
         setTab(Tab::Recommend);
+        if (preferences_.tileHome()) openHub();
         return;
     }
     if (navigation_.pop()) {
@@ -790,12 +816,87 @@ void App::back() {
         status_ = "已返回";
     } else if (screen() == Screen::Mine) {
         setTab(Tab::Recommend);
+        if (preferences_.tileHome()) openHub();
     } else if (root().tab == Tab::Search && root().searchView != SearchView::Landing) {
         root().searchView = SearchView::Landing;
         root().selection = std::min(root().searchLandingSelection, root().searchTopics.size() + 1);
         status_ = "搜索 · □ 输入关键词";
     } else if (root().tab == Tab::Search) {
         setTab(Tab::Recommend);
+        if (preferences_.tileHome()) openHub();
+    } else if (preferences_.tileHome()) {
+        openHub();
+    }
+}
+
+void App::openHub() {
+    hubOpen_ = true;
+    navigation_.current().focus = FocusArea::Content;
+}
+
+void App::tileMove(int dx, int dy) {
+    hubSelection_ = tileNeighbor(hubSelection_, dx, dy);
+}
+
+void App::tileActivate() {
+    if (busy() || playbackReady_ || !tileHubVisible() || tileLaunching() ||
+        hubSelection_ < 0 || hubSelection_ >= kTileCount) return;
+    hubLaunchAt_ = sceKernelGetSystemTimeWide();
+}
+
+int App::tileLaunchMs() const {
+    if (!tileLaunching()) return -1;
+    return static_cast<int>((sceKernelGetSystemTimeWide() - hubLaunchAt_) / 1000);
+}
+
+void App::tileFinishLaunch() {
+    hubLaunchAt_ = 0;
+    if (busy() || playbackReady_ || !tileHubVisible()) return;
+    switch (kTiles[hubSelection_].id) {
+        // Tabs replace the hub; child pages sit on top of it and pop back to it.
+        case TileId::Recommend: hubOpen_ = false; setTab(Tab::Recommend); break;
+        case TileId::Hots: hubOpen_ = false; setTab(Tab::Hots); break;
+        case TileId::Search: hubOpen_ = false; setTab(Tab::Search); break;
+        case TileId::Discover: hubOpen_ = false; setTab(Tab::Discover); break;
+        case TileId::Mine: hubOpen_ = false; setTab(Tab::Mine); break;
+        case TileId::Dynamic: openBrowse({BrowseKind::DynamicFeed}); break;
+        case TileId::Inbox: openBrowse({BrowseKind::Inbox}); break;
+        case TileId::Settings: openSettings(); break;
+    }
+}
+
+// Back face of a live tile, built from data already in memory (no network access).
+bool App::tileLive(TileId tile, std::string& big, std::string& small) const {
+    switch (tile) {
+        case TileId::Recommend:
+            if (recommend_.empty()) return false;
+            big = std::to_string(recommend_.size());
+            small = text(TextId::tile_live_loaded, preferences_.locale);
+            return true;
+        case TileId::Hots:
+            if (hots_.empty()) return false;
+            big = "#1";
+            small = hots_.front().title;
+            return true;
+        case TileId::Mine:
+            big = std::to_string(history_.size());
+            small = formatText(TextId::tile_mine_summary, preferences_.locale,
+                               {{"history", std::to_string(history_.size())},
+                                {"later", std::to_string(later_.size())}});
+            return true;
+        default: return false;
+    }
+}
+
+std::string App::tileSubtitle(TileId tile) const {
+    switch (tile) {
+        case TileId::Recommend: return recommend_.empty() ? std::string() : recommend_.front().title;
+        case TileId::Hots: return hots_.empty() ? std::string() : hots_.front().title;
+        case TileId::Mine:
+            return formatText(TextId::tile_mine_summary, preferences_.locale,
+                              {{"history", std::to_string(history_.size())},
+                               {"later", std::to_string(later_.size())}});
+        default: return {};
     }
 }
 
@@ -948,8 +1049,115 @@ void App::startSearch() {
     startJob(Job::Search);
 }
 
+bool App::startPrefetchIfWanted() {
+    // Start loading the next page while the reader is still a few rows away from the end.
+    constexpr size_t kLookahead = 5;
+    if (busy_ || coverActive_ || queuedJob_ != Job::None || playbackReady_ || !network_ready() ||
+        tileHubVisible() || tileLaunching() || navigation_.current().playbackFailed ||
+        navigation_.current().error)
+        return false;
+    if (static_cast<uint64_t>(sceKernelGetSystemTimeWide()) < prefetchRetryAt_) return false;
+    Job job = Job::None;
+    if (screen() == Screen::Home) {
+        const Tab tab = root().tab;
+        if (tab == Tab::Mine || !hasMore()) return false;
+        if (tab == Tab::Search && (root().searchView != SearchView::Results || root().query.empty()))
+            return false;
+        const size_t total = cards().size();
+        if (!total || root().selection + kLookahead < total) return false;
+        if (tab == Tab::Search) {
+            job = Job::Search;
+            pfPage_ = searchPage_;
+            pfQuery_ = root().query;
+            pfGeneration_ = searchGeneration_;
+        } else if (tab == Tab::Hots) {
+            job = Job::Hots;
+            pfPage_ = hotsPage_;
+        } else {
+            job = Job::Recommend;
+            pfPage_ = recommendPage_;
+        }
+        if (job != Job::Search && pfPage_ < 2) return false;
+    } else if (screen() == Screen::Browse && hasBrowse()) {
+        const auto &frame = browseState();
+        if (frame.error || !frame.page.hasMore || !isVideoListPage(frame.page) ||
+            frame.selection + kLookahead < frame.page.items.size())
+            return false;
+        job = Job::Browse;
+        pfBrowse_ = frame.page.request;
+        ++pfBrowse_.page;
+        pfBrowse_.cursor = frame.page.nextCursor;
+        if (pfBrowse_.kind == BrowseKind::Notifications || pfBrowse_.kind == BrowseKind::History)
+            pfBrowse_.aux = frame.page.nextAux;
+    } else {
+        return false;
+    }
+    prefetch_ = true;
+    prefetchPromoted_ = false;
+    startJob(job);
+    if (!busy_) prefetch_ = false;
+    return busy_;
+}
+
+void App::finishPrefetch() {
+    const bool promoted = prefetchPromoted_;
+    const bool cancelled = transfer_cancel != 0;
+    bool ok = jobResult_ == 0 && !cancelled && navigation_.contains(jobRouteId_);
+    // Browse pages only append while their own page is still on top.
+    if (ok && job_ == Job::Browse) ok = hasBrowse() && navigation_.current().id == jobRouteId_;
+    if (ok) {
+        commitPrefetch(promoted);
+    } else {
+        if (!cancelled) {
+            // Fail quietly while the reader is still away from the end; retry a bit later.
+            prefetchRetryAt_ = static_cast<uint64_t>(sceKernelGetSystemTimeWide()) + 5000000;
+            if (promoted) {
+                navigation_.current().error = jobTypedError_;
+                if (job_ == Job::Browse && hasBrowse()) browseState().error = jobTypedError_;
+                status_ = jobError_.empty() ? (network_error[0] ? network_error : "载入失败，△ 重试")
+                                            : jobError_;
+            }
+        }
+        job_ = Job::None;
+    }
+    prefetch_ = prefetchPromoted_ = false;
+    transfer_cancel = 0;
+    const Job next = queuedJob_;
+    queuedJob_ = Job::None;
+    if (pendingBack_) {
+        pendingBack_ = false;
+        back();
+    } else if (next != Job::None) {
+        startJob(next);
+    }
+}
+
+void App::commitPrefetch(bool promoted) {
+    const size_t rootSelection = root().selection;
+    const size_t browseSelection = hasBrowse() ? browseState().selection : 0;
+    const std::string status = status_;
+    if (job_ == Job::Browse) browseAppending_ = true;
+    else jobPage_ = pfPage_;
+    commitJob();  // appends exactly like an explicit load...
+    if (!promoted) {  // ...but leaves the reader where they were
+        root().selection = rootSelection;
+        if (hasBrowse()) browseState().selection = browseSelection;
+        status_ = status;
+    }
+    coverDirty_ = true;
+}
+
 void App::loadNextPage() {
     if (busy() || !hasMore()) return;
+    // The reader reached the end while the prefetch is still in flight: wait for it.
+    const Job want = root().tab == Tab::Search ? Job::Search
+                     : root().tab == Tab::Hots ? Job::Hots : Job::Recommend;
+    if (prefetch_ && !prefetchPromoted_ && job_ == want &&
+        (want != Job::Search || pfGeneration_ == searchGeneration_)) {
+        prefetchPromoted_ = true;
+        status_ = std::string(jobLabel(static_cast<int>(want))) + "…";
+        return;
+    }
     if (root().tab == Tab::Search) {
         if (root().query.empty()) return;
         startSearch();
@@ -984,7 +1192,9 @@ void App::updateCoverQueue() {
                                 ? browseState().selection : root().selection;
     const bool posters = hasBrowse() &&
                          isPgcPosterPage(browseState().page.request.kind);
-    const bool grid = screen() == Screen::Home && root().tab != Tab::Search;
+    const bool videoGrid = hasBrowse() && preferences_.homeStyle == HomeStyle::Tiles &&
+                           isVideoListPage(browseState().page);
+    const bool grid = (screen() == Screen::Home && root().tab != Tab::Search && !preferences_.metro()) || videoGrid;
     // Include the preceding row while the selected row scrolls into view.
     const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
                                                           : (selected > 2 ? selected - 2 : 0);
@@ -1018,7 +1228,7 @@ void App::updateCoverQueue() {
             enqueue(list[i].bvid, normalizePicture(list[i].picture, true));
     } else if (screen() == Screen::Mine) {
         const size_t total = history_.size() + later_.size();
-        for (size_t i = first; i < total && i < first + 2; ++i) {
+        for (size_t i = first; i < total && i < first + (preferences_.metro() ? kPageSize : 2); ++i) {
             const auto &card = i < history_.size() ? history_[i] : later_[i - history_.size()];
             enqueue(card.bvid, normalizePicture(card.picture, true));
         }
@@ -1027,6 +1237,11 @@ void App::updateCoverQueue() {
         for (size_t i = first; i < items.size() && i < first + (posters ? 4 : kPageSize); ++i) {
             const auto &item = items[i];
             if (item.picture.empty()) continue;
+            if (item.next.kind == BrowseKind::Video && !item.bvid.empty()) {
+                // Video rows share the home feed's cover files.
+                enqueue(item.bvid, normalizePicture(item.picture, true));
+                continue;
+            }
             auto url = normalizePicture(item.picture, false);
             const auto suffix = url.find('@');
             if (suffix != std::string::npos) url.resize(suffix);
@@ -1107,7 +1322,7 @@ void App::startJob(Job job) {
     stagedDetail_ = VideoDetailView{};
     stagedPlayback_ = BiliPlayback{};
     busy_ = true;
-    if (job != Job::HistoryReport)
+    if (job != Job::HistoryReport && !prefetch_)
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
     workerApp = this;
     worker_ = sceKernelCreateThread("wiliwili_job", workerEntry, 0x22, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
@@ -1130,6 +1345,7 @@ void App::startJob(Job job) {
 }
 
 void App::poll() {
+    if (tileLaunching() && tileLaunchMs() >= kTileLaunchMs) tileFinishLaunch();
     updateCoverQueue();
     if (coverActive_) {
         if (!jobFinished_) return;
@@ -1160,13 +1376,17 @@ void App::poll() {
                    static_cast<uint64_t>(sceKernelGetSystemTimeWide()) >= authPollAt_) {
             jobAuthKey_ = authView_.key;
             startJob(Job::AuthPoll);
-        } else if (!playbackReady_) startCover();
+        } else if (!playbackReady_ && !startPrefetchIfWanted()) startCover();
         return;
     }
     if (!jobFinished_)
         return;
     joinJob();
     busy_ = false;
+    if (prefetch_) {
+        finishPrefetch();
+        return;
+    }
     if (job_ == Job::HistoryReport) {
         if (jobResult_ != 0 && !transfer_cancel && jobTypedError_)
             logError(CLIENT_PATH("/last-error.txt"), jobTypedError_);
@@ -1389,17 +1609,18 @@ void App::runJob() {
             jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_);
         }
     } else if (job_ == Job::Browse) {
-        auto result = communityService_.load(jobBrowse_, sessions_.current());
+        const BrowseRequest &request = prefetch_ ? pfBrowse_ : jobBrowse_;
+        auto result = communityService_.load(request, sessions_.current());
         if (!result) { jobTypedError_ = result.error; jobResult_ = -1; }
         else {
             stagedBrowse_ = std::move(result.value);
-            if (jobBrowse_.kind == BrowseKind::Conversation &&
+            if (request.kind == BrowseKind::Conversation &&
                 !stagedBrowse_.nextCursor.empty() &&
-                stagedBrowse_.nextCursor != jobBrowse_.cursor) {
+                stagedBrowse_.nextCursor != request.cursor) {
                 CommunityWrite ack;
                 ack.action = CommunityAction::Acknowledge;
-                ack.id = jobBrowse_.id;
-                ack.type = jobBrowse_.aux.empty() ? 1 : std::stoi(jobBrowse_.aux);
+                ack.id = request.id;
+                ack.type = request.aux.empty() ? 1 : std::stoi(request.aux);
                 ack.text = stagedBrowse_.nextCursor;
                 // Wiliwili acknowledges the returned max_seqno without blocking
                 // display on the acknowledgment response.
@@ -1453,9 +1674,10 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Recommend) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
         bool responded = false;
         bilibili::BilibiliClient::get_recommend(
-            jobPage_, static_cast<int>(kPageSize), jobPage_ == 1 ? 3 : 4, "V1", 3, 2,
+            page, static_cast<int>(kPageSize), page == 1 ? 3 : 4, "V1", 3, 2,
             [&](bilibili::RecommendVideoListResultWrapper result) {
                 for (const auto& item : result.item) {
                     VideoCard card = fromRecommend(item);
@@ -1467,10 +1689,10 @@ void App::runJob() {
             [&](const std::string& message, int code) {
                 jobError_ = message + " (" + std::to_string(code) + ")";
             });
-        if (!responded || (jobPage_ == 1 && stagedCards_.empty())) {
+        if (!responded || (page == 1 && stagedCards_.empty())) {
             stagedCards_.clear();
             BiliHome fallback{};
-            if (bili_home(jobPage_, &fallback) == 0) {
+            if (bili_home(page, &fallback) == 0) {
                 for (int i = 0; i < fallback.count; ++i) {
                     VideoCard card;
                     card.bvid = fallback.videos[i].bvid;
@@ -1493,9 +1715,10 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Hots) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
         bool responded = false;
         bilibili::BilibiliClient::get_hots_all(
-            jobPage_, static_cast<int>(kPageSize),
+            page, static_cast<int>(kPageSize),
             [&](bilibili::HotsAllVideoListResult result, bool noMore) {
                 for (const auto& item : result) {
                     VideoCard card = fromHots(item);
@@ -1507,10 +1730,10 @@ void App::runJob() {
             [&](const std::string& message, int code) {
                 jobError_ = message + " (" + std::to_string(code) + ")";
             });
-        if (!responded || (jobPage_ == 1 && stagedCards_.empty())) {
+        if (!responded || (page == 1 && stagedCards_.empty())) {
             stagedCards_.clear();
             BiliHome fallback{};
-            if (bili_home(jobPage_, &fallback) == 0) {
+            if (bili_home(page, &fallback) == 0) {
                 for (int i = 0; i < fallback.count; ++i) {
                     VideoCard card;
                     card.bvid = fallback.videos[i].bvid;
@@ -1533,8 +1756,11 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Search) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
+        const std::string query = prefetch_ ? pfQuery_ : jobQuery_;
+        const uint64_t generation = prefetch_ ? pfGeneration_ : jobSearchGeneration_;
         auto result = searchService_.search(
-            {jobQuery_, static_cast<unsigned>(jobPage_), jobSearchGeneration_});
+            {query, static_cast<unsigned>(page), generation});
         if (!result) {
             jobTypedError_ = result.error;
             jobResult_ = -1;
@@ -1615,6 +1841,11 @@ void App::runJob() {
                         char buffer[32]{};
                         std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", std::localtime(&stamp));
                         item.time = buffer;
+                    }
+                    for (const auto& nested : reply.replies) {
+                        if (item.preview.size() >= 2) break;
+                        ReplyPreview preview{nested.member.uname, trim(decodeEntities(nested.content.message))};
+                        if (!preview.author.empty() && !preview.message.empty()) item.preview.push_back(std::move(preview));
                     }
                     item.like = static_cast<int>(reply.like);
                     item.top = top;

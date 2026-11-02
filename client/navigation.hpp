@@ -48,6 +48,19 @@ struct VideoDetailView {
     uint64_t favorite = 0;
 };
 
+// Two reply previews shown under an expanded comment.
+struct ReplyPreview {
+    std::string author, message;
+};
+
+// Per-page state of a comment list (video comments or a reply thread).
+struct CommentUi {
+    bool expanded = false;  // the selected comment shows its whole text
+    bool menuOpen = false;  // action card over the list
+    int menuIndex = 0;
+    int inner = 0;          // first visible message line while expanded
+};
+
 struct CommentItem {
     uint64_t id = 0;
     std::string author;
@@ -58,6 +71,7 @@ struct CommentItem {
     bool uploader = false;
     std::string mid, root, parent;
     int replies = 0, action = 0;
+    std::vector<ReplyPreview> preview;
 };
 
 // Only the root changes tabs. Every child is an independent page instance.
@@ -82,6 +96,7 @@ struct CommentsRoute {
     size_t selected = 0;
     int scroll = 0, scrollLimit = 0, next = 0;
     bool end = true;
+    CommentUi ui;
 };
 struct BrowseRoute {
     static constexpr Screen kind = Screen::Browse;
@@ -91,6 +106,7 @@ struct BrowseRoute {
     int scroll = 0, scrollLimit = 0;
     AppError error;
     bool confirmingDelete = false;
+    CommentUi ui;
 };
 struct LoginRoute { static constexpr Screen kind = Screen::Login; };
 struct SettingsRoute {

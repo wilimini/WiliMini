@@ -11,11 +11,14 @@ if [ ! -f "$source/CMakeLists.txt" ]; then
     exit 1
 fi
 
+# Native ME playback does not need PPSSPP's FFmpeg; the legacy sceMpeg backend does.
+ffmpeg=${PPSSPP_USE_FFMPEG:-ON}
+
 cmake -S "$source" -B "$build" \
     -DHEADLESS=ON \
     -DHEADLESS_CROSS=ON \
-    -DUSE_FFMPEG=ON \
-    -DBUILD_BUNDLED_FFMPEG=ON \
+    -DUSE_FFMPEG="$ffmpeg" \
+    -DBUILD_BUNDLED_FFMPEG="$ffmpeg" \
     -DUSE_DISCORD=OFF \
     -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build" --target PPSSPPHeadless --parallel "${JOBS:-4}"
