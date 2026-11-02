@@ -357,7 +357,7 @@ static void http_timing(CURL *curl, const char *kind) {
     curl_easy_getinfo(curl,CURLINFO_TOTAL_TIME,&total);
     curl_easy_getinfo(curl,CURLINFO_NUM_CONNECTS,&connections);
     curl_easy_getinfo(curl,CURLINFO_RESPONSE_CODE,&status);
-    WLOG_I(WLC_NET,"HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f",
+    WLOG_D(WLC_NET,"HTTP timing kind=%s status=%ld new_connections=%ld dns_ms=%.1f connect_ms=%.1f tls_ms=%.1f first_ms=%.1f total_ms=%.1f",
            kind,status,connections,dns*1000,connect*1000,tls*1000,first*1000,total*1000);
 #else
     (void)curl;(void)kind;
@@ -388,7 +388,7 @@ static int request(const char *url,Sink *sink) {
     }
 #ifdef BILI_NETWORK_DIAGNOSTICS
     /* Never print login keys, signed queries, Cookie headers or Set-Cookie. */
-    WLOG_I(WLC_NET,"HTTP request started");
+    WLOG_D(WLC_NET,"HTTP request started");
     curl_easy_setopt(c,CURLOPT_VERBOSE,0L);
 #endif
     char detail[CURL_ERROR_SIZE]={0};
@@ -1400,10 +1400,10 @@ static void stream_report(BiliStreamCache *s) {
     uint64_t span=s->prof.last_data_us>s->prof.first_data_us?s->prof.last_data_us-s->prof.first_data_us:0;
     uint64_t elapsed=s->prof.finished_us>s->prof.started_us?s->prof.finished_us-s->prof.started_us:0;
     uint64_t rate=span?(uint64_t)s->prof.bytes*1000000u/span:0;
-    WLOG_I(WLC_NET,"STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu",
+    WLOG_D(WLC_NET,"STREAM http connect_us=%llu first_byte_us=%llu total_us=%llu speed_bps=%llu",
            (unsigned long long)s->prof.connect_us,(unsigned long long)s->prof.first_byte_us,
            (unsigned long long)s->prof.http_total_us,(unsigned long long)s->prof.http_speed_bps);
-    WLOG_I(WLC_NET,"STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu",
+    WLOG_D(WLC_NET,"STREAM dl writes=%u bytes=%u elapsed_us=%llu span_us=%llu rate_bps=%llu callback_us=%llu backpressure_us=%llu waits=%u lock_us=%llu copy_us=%llu min_us=%llu wake_us=%llu unlock_us=%llu wake_errors=%u max_chunk=%u max_gap_us=%llu stalls=%u stall_us=%llu",
            s->prof.writes,s->prof.bytes,(unsigned long long)elapsed,(unsigned long long)span,
            (unsigned long long)rate,(unsigned long long)s->prof.callback_us,
            (unsigned long long)s->prof.backpressure_us,s->prof.waits,
@@ -1416,7 +1416,7 @@ static void stream_report(BiliStreamCache *s) {
         StreamReader *r=&s->readers[i];
         if(!r->tid)continue;
         uint64_t copy_bps=r->copy_us?(uint64_t)r->bytes*1000000u/r->copy_us:0;
-        WLOG_I(WLC_NET,"STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu",
+        WLOG_D(WLC_NET,"STREAM reader slot=%d tid=0x%08x calls=%u bytes=%u waits=%u wait_us=%llu max_wait_us=%llu lock_us=%llu copy_us=%llu copy_bps=%llu",
                i,(unsigned)r->tid,r->calls,r->bytes,r->waits,
                (unsigned long long)r->wait_us,(unsigned long long)r->max_wait_us,
                (unsigned long long)r->lock_us,(unsigned long long)r->copy_us,
