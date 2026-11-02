@@ -104,6 +104,15 @@ int main(int argc, char** argv) {
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"input_method":1})";
     assert(!pspapp::loadPreferences(path, value));
+    // The analog stick defaults to on, round-trips and is validated.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && value.analogStick);
+    value.analogStick = false;
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences stickRestored;
+    assert(pspapp::loadPreferences(path, stickRestored) && !stickRestored.analogStick);
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"analog_stick":"yes"})";
+    assert(!pspapp::loadPreferences(path, value));
     // The boolean written by the first tile build means the Tiles style.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"tile_home":true})";
     assert(pspapp::loadPreferences(path, value) && value.homeStyle == pspapp::HomeStyle::Tiles);

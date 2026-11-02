@@ -89,6 +89,7 @@ void App::changeSetting() {
         case SettingItem::InputMethod:
             next.inputMethod = next.inputMethod == InputMethod::Pinyin ? InputMethod::System : InputMethod::Pinyin;
             break;
+        case SettingItem::AnalogStick: next.analogStick = !next.analogStick; break;
         case SettingItem::LogLevel:
             next.logLevel = next.logLevel == LogVerbosity::Error ? LogVerbosity::Warn
                           : next.logLevel == LogVerbosity::Warn ? LogVerbosity::Info

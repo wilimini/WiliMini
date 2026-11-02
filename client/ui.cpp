@@ -8,6 +8,7 @@
 #include "assets/wiliwili/sidebar.hpp"
 #include "settings_pages.hpp"
 #include "pinyin_ime.hpp"
+#include <analog_stick.h>
 #include "preferences.hpp"
 
 #include <algorithm>
@@ -62,6 +63,7 @@ int bodySize = 14;
 // Text-entry settings, refreshed with every UI frame so a dialog sees the current values.
 pspapp::InputMethod inputMethodPreference = pspapp::InputMethod::Pinyin;
 bool confirmWithCirclePreference = false;
+bool analogStickPreference = true;
 pspapp::Locale uiLocale = pspapp::Locale::ZhHans;
 bool showCovers = true;
 
@@ -69,6 +71,7 @@ void applyPreferences(const pspapp::Preferences& settings) {
     bodySize = settings.bodySize;
     inputMethodPreference = settings.inputMethod;
     confirmWithCirclePreference = settings.confirmWithCircle;
+    analogStickPreference = settings.analogStick;
     uiLocale = settings.locale;
     showCovers = settings.showCovers;
     kBackground = settings.darkTheme ? color(35, 37, 42) : color(242, 243, 245);
@@ -2045,6 +2048,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
+            pspapp::TextId::settings_analog_stick,
             pspapp::TextId::settings_log_level,
             pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
@@ -2083,6 +2087,7 @@ void drawUtility(const pspapp::App& app) {
                                                           : pspapp::TextId::value_language_en, locale),
             pspapp::text(preferences.inputMethod == pspapp::InputMethod::Pinyin ? pspapp::TextId::value_input_pinyin
                                                                                 : pspapp::TextId::value_input_system, locale),
+            pspapp::text(preferences.analogStick ? pspapp::TextId::value_stick_on : pspapp::TextId::value_off, locale),
             preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
                 : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
                 : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
@@ -2630,6 +2635,7 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
     unsigned frame = 0;
     unsigned previous = ~0u;
     uint64_t repeatAt = 0, backRepeatAt = 0;
+    StickNav stickNav{};
     bool done = false, accepted = false;
 
     auto room = [&](const std::string& extra) { return utf8Length(text) + utf8Length(extra) <= limit; };
@@ -2759,6 +2765,13 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
                 backRepeatAt = now + 70000;
             }
         } else if (pressed & backButton) backRepeatAt = now + 400000;
+        // The analog stick moves the key cursor (and pages through candidates) like the d-pad.
+        if (analogStickPreference && previous != ~0u) {
+            int stickDirection = STICK_NONE;
+            if (stick_nav_update(&stickNav, pad.Lx, pad.Ly, 1, 3000, 12000, static_cast<int64_t>(now), &stickDirection) > 0)
+                pressed |= stickDirection == STICK_UP ? PSP_CTRL_UP : stickDirection == STICK_DOWN ? PSP_CTRL_DOWN
+                         : stickDirection == STICK_LEFT ? PSP_CTRL_LEFT : PSP_CTRL_RIGHT;
+        } else stick_nav_reset(&stickNav);
         previous = pad.Buttons;
 
         if (pressed & PSP_CTRL_START) { flushRaw(); done = accepted = true; }

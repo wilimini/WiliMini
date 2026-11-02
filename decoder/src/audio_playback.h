@@ -188,7 +188,7 @@ static int audio_output_thread(SceSize size, void *arg)
         int16_t *dma = audio.dma_pcm[audio.blocks % 4];
         memcpy(dma, audio.pcm[slot], sizeof(audio.dma_pcm[0]));
         sceKernelDcacheWritebackRange(dma, sizeof(audio.dma_pcm[0]));
-        int ret = sceAudioSRCOutputBlocking(PSP_AUDIO_VOLUME_MAX, dma);
+        int ret = sceAudioSRCOutputBlocking(playback_volume(), dma);
         if (ret < 0) { audio.error = ret; break; }
         uint64_t returned = sceKernelGetSystemTimeWide();
         if (!audio.first_return_us) audio.first_return_us = returned;

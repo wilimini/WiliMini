@@ -126,7 +126,7 @@ int controlledPlaybackTest() {
                 if (!audioInput.open(std::string(CLIENT_ROOT) + "/" + config.at("audio").get<std::string>())) break;
                 options.audio_source = &audioInput.source;
             }
-            PspVideoSettings settings{16, 3, {16, 32, 64}, 1, 1, 75, 0, 0};
+            PspVideoSettings settings{16, 3, {16, 32, 64}, 1, 1, 75, 0, 0, 0};
             std::vector<std::pair<std::string, uint64_t>> overlayRequests;
             std::unique_ptr<pspapp::PlaybackOsd> osd;
             std::unique_ptr<PlaybackTestPresentation> presentation;

@@ -28,6 +28,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     const bool en = preferences.locale == Locale::EnUs;
     seeking_ = en ? "Seek preview" : "跳转预览";
     buffering_ = en ? "Seeking..." : "正在定位…";
+    volume_ = en ? "Volume" : "音量";
     menuLabels_[0] = en ? "Quality" : "画质";
     menuLabels_[1] = en ? "Danmaku" : "弹幕";
     menuLabels_[2] = en ? "Density" : "密度";
@@ -53,7 +54,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
     for (const auto& label : menuLabels_) cache(label);
     for (const auto& label : density_) cache(label);
-    cache(seeking_);
+    cache(seeking_); cache(volume_);
     cache("0123456789:/- ?p%..."); cache(title_);
     overlayMessages_[1] = en ? "Danmaku unavailable" : "弹幕加载失败";
     overlayMessages_[2] = en ? "Subtitles unavailable" : "字幕加载失败";
@@ -544,6 +545,17 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
             text(174, 117, status.buffering ? buffering_ : seeking_, white, 314, 12);
             text(174, 137, times, white, 314, 12);
         }
+    }
+    if (status.volume_flash) {
+        // Bar and percentage while the stick changes the volume.
+        const int level = 100 - std::clamp(status.settings.volume_cut, 0, 100);
+        char percent[12];
+        std::snprintf(percent, sizeof(percent), "%d%%", level);
+        rectangle(372, 62, 92, 36, 0x99000000);
+        text(380, 66, volume_, white, 440, 12);
+        text(434, 66, percent, white, 462, 12);
+        rectangle(380, 86, 76, 4, 0xff777777);
+        rectangle(380, 86, level * 76 / 100, 4, pink);
     }
     if (!haveFrame_) text(16, 191, startupLabels_[status.startup_stage == PSP_VIDEO_STAGE_AUDIO_INIT ? 1 :
         status.startup_stage == PSP_VIDEO_STAGE_PLAY ? 2 : 0], white, 464, 14);

@@ -148,6 +148,8 @@
   "settings_input_method": "输入法",
   "value_input_system": "系统键盘",
   "value_input_pinyin": "内置拼音",
+  "settings_analog_stick": "模拟摇杆",
+  "value_stick_on": "开启",
   "ime_done": "完成",
   "ime_space": "空格",
   "ime_hint": "方向键移动  {confirm} 输入  {back} 删除  □ 空格/选字  △ 中/EN  L/R 翻页  START 完成  SELECT 取消",

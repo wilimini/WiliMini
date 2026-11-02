@@ -148,6 +148,8 @@
   "settings_input_method": "Input method",
   "value_input_system": "System keyboard",
   "value_input_pinyin": "Built-in pinyin",
+  "settings_analog_stick": "Analog stick",
+  "value_stick_on": "On",
   "ime_done": "Done",
   "ime_space": "Space",
   "ime_hint": "D-pad move  {confirm} type  {back} delete  □ space/pick  △ 中/EN  L/R page  START done  SELECT cancel",
