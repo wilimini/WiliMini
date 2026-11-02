@@ -43,6 +43,7 @@ static PspVideoPixelFormat output_pixel_format = PSP_VIDEO_PIXEL_FORMAT_RGB565;
 static size_t rgb_pixel_bytes = 2;
 static int seek_requested;
 static volatile int playback_seeking;
+static volatile int seek_pending; /* re-target requested while a seek runs; guarded by controls_lock */
 static unsigned playback_seeks;
 static int native_seek_enabled;
 static int quality_requested;
@@ -122,8 +123,12 @@ static int video_cancel_thread(SceSize size, void *arg) {
             if (pad.Buttons & PSP_CTRL_SQUARE) keys |= PC_DANMAKU;
             if (pad.Buttons & PSP_CTRL_LTRIGGER) keys |= PC_REWIND;
             if (pad.Buttons & PSP_CTRL_RTRIGGER) keys |= PC_FORWARD;
-            if (playback_seeking || video_stage != PSP_VIDEO_STAGE_PLAY)
+            /* Seek keys stay live while a native seek is in flight so repeated
+             * presses accumulate; only the pre-play stages ignore them. */
+            if (video_stage != PSP_VIDEO_STAGE_PLAY ||
+                (playback_seeking && !native_seek_enabled))
                 keys &= ~(PC_LEFT | PC_RIGHT | PC_REWIND | PC_FORWARD);
+            int chained = 0;
             sceKernelWaitSema(controls_lock, 1, NULL);
             if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
@@ -132,9 +137,18 @@ static int video_cancel_thread(SceSize size, void *arg) {
                 seek_target_ms = controls.preview_ms;
                 seek_paused = controls.paused;
                 seek_requested = 1;
+                /* A seek is already running: the player thread re-targets
+                 * it instead of starting a second one. */
+                if (native_seek_enabled && playback_seeking) {
+                    chained = 1;
+                    seek_pending = 1;
+                    controls.seeking = 0;
+                    controls.position_ms = seek_target_ms;
+                    controls.visible = 1;
+                }
             }
             sceKernelSignalSema(controls_lock, 1);
-            if (action == PC_SEEK) {
+            if (action == PC_SEEK && !chained) {
                 if (native_seek_enabled) begin_playback_seek(); else psp_video_stop();
             }
             else if (action == PC_EXIT || action == PC_QUALITY) psp_video_stop();
@@ -247,7 +261,10 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     if (quit_requested) return AVERROR_EXIT;
     rgb_startup_ready = 0;
     interrupt_source_reads(0);
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    seek_pending = 0; /* the target read below already includes it */
     playback_start_ms = seek_target_ms;
+    sceKernelSignalSema(controls_lock, 1);
     playback_position_us = playback_start_ms * 1000;
     av_packet_unref(packet);
     av_frame_unref(frame);
@@ -258,16 +275,18 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     ret = audio_open(video_source, audio_io_source ? audio_io_source : video_io_source, run_path);
     if (ret < 0) return ret;
     sceKernelWaitSema(controls_lock, 1, NULL);
-    controls.position_ms = playback_start_ms;
+    const int again = seek_pending;
+    if (!again) controls.position_ms = playback_start_ms;
     controls.visible = 1;
     controls.hide_at = sceKernelGetSystemTimeWide() + 3000000;
+    if (!again) playback_seeking = 0; /* cleared under the lock so a late press cannot be lost */
     sceKernelSignalSema(controls_lock, 1);
     ++rgb_generation;
     rgb_seek_preview = 1;
-    seek_requested = 0;
+    if (!again) seek_requested = 0;
     ++playback_seeks;
-    playback_seeking = 0;
-    WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained", playback_seeks, (long long)playback_start_ms);
+    WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained%s", playback_seeks,
+           (long long)playback_start_ms, again ? " retarget=1" : "");
     return 0;
 #else
     (void)format; (void)codec; (void)packet; (void)frame; (void)run_path;
@@ -1035,6 +1054,7 @@ decode_again:
             if (ret < 0) goto done;
             catchup_to_key = 0;
             stats->eof = 0;
+            if (playback_seeking) continue; /* re-targeted while seeking */
         }
         unsigned begin = tick_us();
         ret = av_read_frame(format, packet);
