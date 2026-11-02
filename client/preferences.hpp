@@ -17,6 +17,7 @@ enum class SettingItem : std::size_t {
     ConfirmWithCircle,
     Language,
     InputMethod,
+    AnalogStick,
     LogLevel,
     LogFiles,
     Wifi,
@@ -64,6 +65,9 @@ struct Preferences {
     // Chosen in Settings; old files default to Classic.
     HomeStyle homeStyle = HomeStyle::Classic;
     InputMethod inputMethod = InputMethod::Pinyin;
+    // The analog stick scrolls lists, moves the keyboard cursor and scrubs/sets volume in the
+    // player. Switch it off if a worn stick drifts; the d-pad always works.
+    bool analogStick = true;
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in

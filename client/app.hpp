@@ -348,7 +348,7 @@ private:
     bool playbackPaused_ = false;
     int playbackQuality_ = 16;
     uint64_t playbackOverlayCid_ = 0;
-    PspVideoSettings playerSettings_{16, 1, {16, 0, 0}, 1, 1, 75, 0, 0};
+    PspVideoSettings playerSettings_{16, 1, {16, 0, 0}, 1, 1, 75, 0, 0, 0};
 
     Job job_ = Job::None;
     Job queuedJob_ = Job::None;

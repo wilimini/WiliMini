@@ -18,6 +18,8 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Ithird_party/nlohmann \
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/pinyin_ime_test.cpp client/pinyin_ime.cpp -o "$out/pinyin-ime-test"
 "$out/pinyin-ime-test" client/assets/ime/pinyin.dat
+${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/analog_stick_test.c -o "$out/analog-stick-test"
+"$out/analog-stick-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 echo "All host checks passed"

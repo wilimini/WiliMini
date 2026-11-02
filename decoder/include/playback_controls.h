@@ -2,6 +2,7 @@
 #define WILI_PLAYBACK_CONTROLS_H
 #include <stdint.h>
 #include "psp_video.h"
+#include "analog_stick.h"
 #include <string.h>
 
 /* Platform-independent input and virtual clock. Caller serializes access. */
@@ -15,6 +16,10 @@ typedef struct {
     PspVideoSettings settings;
     int64_t position_ms, duration_ms, preview_ms;
     int64_t paused_at, paused_total, hide_at, repeat_at, commit_at;
+    /* Analog stick deflection (-127..127) set by the caller before pc_input. Horizontal scrubs
+     * the video, vertical changes the volume; both only add to the d-pad. */
+    int stick_x, stick_y;
+    int64_t stick_at, volume_progress, volume_flash_until;
 } PlaybackControls;
 static inline int64_t pc_clock(const PlaybackControls *s, int64_t now) {
     return (s->paused ? s->paused_at : now) - s->paused_total;
@@ -130,7 +135,37 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
             s->preview_ms = s->duration_ms > 1000 ? s->duration_ms - 1000 : 0;
         return PC_SEEK;
     }
-    if (s->seekable && (direction == PC_LEFT || direction == PC_RIGHT)) {
+    const int ax = s->stick_x < 0 ? -s->stick_x : s->stick_x, ay = s->stick_y < 0 ? -s->stick_y : s->stick_y;
+    int64_t stick_dt = s->stick_at ? now - s->stick_at : 0;
+    if (stick_dt < 0) stick_dt = 0;
+    if (stick_dt > 100000) stick_dt = 100000; /* a stalled frame must not jump the video */
+    const int scrubbing = !direction && s->seekable && ax && ax > ay;
+    if (!direction && ay && ay >= ax) {
+        /* Up is louder. The change accumulates so a gentle tilt moves a percent at a time. */
+        const int sign = s->stick_y < 0 ? 1 : -1;
+        if (s->volume_progress && (s->volume_progress < 0) != (sign < 0)) s->volume_progress = 0;
+        s->volume_progress += (int64_t)sign * stick_rate_milli(ay, 8000, 40000) * stick_dt;
+        while (s->volume_progress >= 1000000000LL || s->volume_progress <= -1000000000LL) {
+            const int step = s->volume_progress > 0 ? 1 : -1;
+            s->volume_progress -= step * 1000000000LL;
+            s->settings.volume_cut -= step;
+            if (s->settings.volume_cut < 0) s->settings.volume_cut = 0;
+            if (s->settings.volume_cut > 100) s->settings.volume_cut = 100;
+            s->volume_flash_until = now + 1500000;
+            s->visible = 1; s->hide_at = now + 3000000;
+        }
+    } else s->volume_progress = 0;
+    if (scrubbing) {
+        if (!s->seeking) s->preview_ms = s->position_ms;
+        s->preview_ms += (int64_t)(s->stick_x < 0 ? -1 : 1) * stick_scrub_ms_per_second(ax) * stick_dt / 1000000;
+        if (s->preview_ms < 0) s->preview_ms = 0;
+        if (s->duration_ms > 0 && s->preview_ms >= s->duration_ms)
+            s->preview_ms = s->duration_ms > 1000 ? s->duration_ms - 1000 : 0;
+        s->seeking = s->visible = 1;
+        s->commit_at = 0;
+    }
+    s->stick_at = ax || ay ? now : 0;
+    if (!scrubbing && s->seekable && (direction == PC_LEFT || direction == PC_RIGHT)) {
         if (direction != s->direction || now >= s->repeat_at) {
             if (!s->seeking) s->preview_ms = s->position_ms;
             s->preview_ms += direction == PC_LEFT ? -1000 : 1000;
@@ -141,7 +176,7 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
             s->seeking = s->visible = 1;
         }
         s->commit_at = 0;
-    } else if (s->seeking) {
+    } else if (s->seeking && !scrubbing) {
         if (!s->commit_at) s->commit_at = now + 400000;
         if (now >= s->commit_at) return PC_SEEK;
     }

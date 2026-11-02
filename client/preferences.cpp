@@ -124,6 +124,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
             else if (value == "system") loaded.inputMethod = InputMethod::System;
             else return false;
         }
+        const auto stick = root.find("analog_stick");
+        if (stick != root.end()) {
+            if (!stick->is_boolean()) return false;
+            loaded.analogStick = stick->get<bool>();
+        }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -159,6 +164,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"log_files", preferences.saveLogFiles},
         {"home_style", homeStyleCode(preferences.homeStyle)},
         {"input_method", inputMethodCode(preferences.inputMethod)},
+        {"analog_stick", preferences.analogStick},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");

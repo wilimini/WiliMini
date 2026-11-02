@@ -34,6 +34,9 @@ typedef struct {
     int quality, quality_count, qualities[3];
     int danmaku_enabled, danmaku_density, danmaku_opacity;
     int subtitle_track, subtitle_count; /* 0 is off; tracks are 1-based. */
+    /* Playback volume reduction in percent: 0 is full volume, 100 is silent. Stored as a
+     * reduction so zero-initialised settings stay audible. */
+    int volume_cut;
 } PspVideoSettings;
 typedef struct {
     int64_t position_ms, duration_ms, preview_ms;
@@ -42,6 +45,7 @@ typedef struct {
     PspVideoSettings settings;
     int startup_stage;
     int menu_value; /* Preview only; settings retain applied values until confirmation. */
+    int volume_flash; /* Nonzero for a moment after the volume changed. */
 } PspVideoStatus;
 typedef struct {
     void *opaque;
@@ -70,6 +74,7 @@ typedef struct {
     const PspVideoPresenter *presenter; /* NULL preserves diagnostic display */
     int start_paused;
     const PspVideoSettings *settings;
+    int analog_stick; /* Nonzero lets the stick scrub (left/right) and set the volume (up/down). */
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

@@ -65,6 +65,20 @@ static int playback_is_paused(void) {
     sceKernelSignalSema(controls_lock, 1);
     return value;
 }
+/* Output volume for the audio thread: the player's own attenuation, squared so equal tilts
+ * of the stick sound like equal steps. Full volume without a presenter. */
+#if PSP_AUDIO
+#define PLAYBACK_VOLUME_FULL 0x8000 /* PSP_AUDIO_VOLUME_MAX */
+static int playback_volume(void) {
+    if (controls_lock < 0) return PLAYBACK_VOLUME_FULL;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    int cut = controls.settings.volume_cut;
+    sceKernelSignalSema(controls_lock, 1);
+    if (cut <= 0) return PLAYBACK_VOLUME_FULL;
+    if (cut >= 100) return 0;
+    return PLAYBACK_VOLUME_FULL * (100 - cut) * (100 - cut) / 10000;
+}
+#endif
 static int present_video(const void *pixels, PspVideoPixelFormat format);
 static void playback_metadata(int64_t duration_ms, int seekable) {
     if (controls_lock < 0) return;
@@ -86,6 +100,7 @@ static const PspVideoSource *audio_io_source;
 static int client_playback;
 extern const unsigned avpriv_psp_approx_reconstruction_v2;
 static unsigned cancel_button = PSP_CTRL_CIRCLE;
+static int analog_stick_enabled;
 static int64_t playback_start_ms, playback_position_us, video_origin_us;
 static int64_t first_video_us;
 extern int avpriv_psp_cabac_mode(void) __attribute__((weak));
@@ -125,11 +140,13 @@ static int video_cancel_thread(SceSize size, void *arg) {
             if (pad.Buttons & PSP_CTRL_RTRIGGER) keys |= PC_FORWARD;
             /* Seek keys stay live while a native seek is in flight so repeated
              * presses accumulate; only the pre-play stages ignore them. */
-            if (video_stage != PSP_VIDEO_STAGE_PLAY ||
-                (playback_seeking && !native_seek_enabled))
-                keys &= ~(PC_LEFT | PC_RIGHT | PC_REWIND | PC_FORWARD);
+            const int seek_masked = video_stage != PSP_VIDEO_STAGE_PLAY ||
+                (playback_seeking && !native_seek_enabled);
+            if (seek_masked) keys &= ~(PC_LEFT | PC_RIGHT | PC_REWIND | PC_FORWARD);
             int chained = 0;
             sceKernelWaitSema(controls_lock, 1, NULL);
+            controls.stick_x = analog_stick_enabled && !seek_masked ? stick_deflection(pad.Lx) : 0;
+            controls.stick_y = analog_stick_enabled ? stick_deflection(pad.Ly) : 0;
             if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
             if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
@@ -243,7 +260,8 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
         controls.paused, controls.visible, controls.seeking, controls.seekable, playback_seeking,
         controls.menu_open, controls.menu_row,
         controls.settings.quality_count > 0 ? controls.settings.qualities[controls.quality_index] : 0,
-        controls.settings, video_stage, controls.menu_value};
+        controls.settings, video_stage, controls.menu_value,
+        controls.volume_flash_until > sceKernelGetSystemTimeWide()};
     sceKernelSignalSema(controls_lock, 1);
     return presenter->present(presenter->opaque, pixels, format, &status);
 }
@@ -1356,6 +1374,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     video_io_source=options->source;
     audio_io_source=options->audio_source;
     cancel_button = options->cancel_button == PSP_VIDEO_CANCEL_CROSS ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
+    analog_stick_enabled = options->analog_stick != 0;
     playback_start_ms = options->start_ms > 0 ? options->start_ms : 0;
     playback_position_us = 0;
     first_video_us = -1;

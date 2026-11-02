@@ -18,6 +18,7 @@
 #include "ui.hpp"
 #include "playback_osd.hpp"
 #include "storage_paths.h"
+#include <analog_stick.h>
 #include <psp_runtime.h>
 #include <wili_log.h>
 #ifdef BILI_DEVICE_PLAYBACK_TEST
@@ -128,7 +129,7 @@ int main(int argc, char** argv) {
     if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
     scePowerSetClockFrequency(333, 333, 166);
     sceCtrlSetSamplingCycle(0);
-    sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
     sceIoMkdir(CLIENT_PATH("/cache"), 0777);
 
     ui_init();
@@ -191,6 +192,7 @@ int main(int argc, char** argv) {
     unsigned previous = 0;
     unsigned heldDirection = 0;
     int64_t repeatAt = 0;
+    StickNav stickNav{};
 
     while (!exiting) {
         app.poll();
@@ -214,6 +216,7 @@ int main(int argc, char** argv) {
                 ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
             options.cancel_button = app.preferences().confirmWithCircle
                 ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
+            options.analog_stick = app.preferences().analogStick;
             options.backend = BILI_PPSSPP_SCE_MPEG &&
                               psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
@@ -260,6 +263,19 @@ int main(int argc, char** argv) {
             pressed |= (adjustingSetting || app.commentPage()) ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
             repeatAt = now + (app.preferences().slowRepeat ? 180000 : 90000);
         }
+        // The stick adds steps to `pressed`; it never creates a held direction, so a drifting
+        // stick cannot trigger confirm, back or values that must not repeat.
+        if (app.preferences().analogStick && previous != ~0u) {
+            // Left/right keep another meaning on comment pages and settings rows (like, replies,
+            // changing values), so there the stick only scrolls.
+            const bool horizontal = !app.commentPage() && !app.utilityPage();
+            int stickDirection = STICK_NONE;
+            const int steps = stick_nav_update(&stickNav, pad.Lx, pad.Ly, horizontal, 3000, 11000, now, &stickDirection);
+            if (steps > 0) {
+                pressed |= stickDirection == STICK_UP ? PSP_CTRL_UP : stickDirection == STICK_DOWN ? PSP_CTRL_DOWN
+                         : stickDirection == STICK_LEFT ? PSP_CTRL_LEFT : PSP_CTRL_RIGHT;
+            }
+        } else stick_nav_reset(&stickNav);
         previous = pad.Buttons;
         const unsigned confirmButton = app.preferences().confirmWithCircle ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
         const unsigned backButton = app.preferences().confirmWithCircle ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
