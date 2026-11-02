@@ -211,9 +211,17 @@ private:
         HistoryReport
     };
 
+    // Jobs that never block input. A new foreground job cancels them and takes over.
     bool backgroundJob() const {
-        return job_ == Job::HistoryReport && queuedJob_ == Job::None && !coverActive_;
+        return ((job_ == Job::HistoryReport) || (prefetch_ && !prefetchPromoted_)) &&
+               queuedJob_ == Job::None && !coverActive_;
     }
+    // Next-page prefetch for video lists: runs between cover downloads, appends silently
+    // without moving the selection, and is promoted to a normal load if the user reaches
+    // the end first.
+    bool startPrefetchIfWanted();
+    void finishPrefetch();
+    void commitPrefetch(bool promoted);
     void startJob(Job job);
     void runJob();
     void commitJob();
@@ -262,6 +270,13 @@ private:
     size_t coverPage_ = 0, coverDepth_ = 0;
 
     BrowseRequest jobBrowse_;
+    // Prefetch requests are private to the worker so foreground actions can keep editing job*_.
+    bool prefetch_ = false, prefetchPromoted_ = false;
+    int pfPage_ = 1;
+    std::string pfQuery_;
+    uint64_t pfGeneration_ = 0;
+    BrowseRequest pfBrowse_;
+    uint64_t prefetchRetryAt_ = 0;
     BrowsePage stagedBrowse_;
     CommunityWrite jobWrite_, jobHistoryWrite_;
     uint64_t jobRouteId_ = 0;

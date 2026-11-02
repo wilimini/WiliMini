@@ -53,6 +53,12 @@ void App::browseMore() {
   if (busy() || !hasBrowse() || !browseState().page.hasMore)
     return;
   auto &frame = browseState();
+  // The prefetch for this page is still in flight: show the normal loading state and wait.
+  if (prefetch_ && !prefetchPromoted_ && job_ == Job::Browse &&
+      jobRouteId_ == navigation_.current().id) {
+    prefetchPromoted_ = true;
+    return;
+  }
   jobBrowse_ = frame.page.request;
   ++jobBrowse_.page;
   jobBrowse_.cursor = frame.page.nextCursor;

@@ -1049,8 +1049,115 @@ void App::startSearch() {
     startJob(Job::Search);
 }
 
+bool App::startPrefetchIfWanted() {
+    // Start loading the next page while the reader is still a few rows away from the end.
+    constexpr size_t kLookahead = 5;
+    if (busy_ || coverActive_ || queuedJob_ != Job::None || playbackReady_ || !network_ready() ||
+        tileHubVisible() || tileLaunching() || navigation_.current().playbackFailed ||
+        navigation_.current().error)
+        return false;
+    if (static_cast<uint64_t>(sceKernelGetSystemTimeWide()) < prefetchRetryAt_) return false;
+    Job job = Job::None;
+    if (screen() == Screen::Home) {
+        const Tab tab = root().tab;
+        if (tab == Tab::Mine || !hasMore()) return false;
+        if (tab == Tab::Search && (root().searchView != SearchView::Results || root().query.empty()))
+            return false;
+        const size_t total = cards().size();
+        if (!total || root().selection + kLookahead < total) return false;
+        if (tab == Tab::Search) {
+            job = Job::Search;
+            pfPage_ = searchPage_;
+            pfQuery_ = root().query;
+            pfGeneration_ = searchGeneration_;
+        } else if (tab == Tab::Hots) {
+            job = Job::Hots;
+            pfPage_ = hotsPage_;
+        } else {
+            job = Job::Recommend;
+            pfPage_ = recommendPage_;
+        }
+        if (job != Job::Search && pfPage_ < 2) return false;
+    } else if (screen() == Screen::Browse && hasBrowse()) {
+        const auto &frame = browseState();
+        if (frame.error || !frame.page.hasMore || !isVideoListPage(frame.page) ||
+            frame.selection + kLookahead < frame.page.items.size())
+            return false;
+        job = Job::Browse;
+        pfBrowse_ = frame.page.request;
+        ++pfBrowse_.page;
+        pfBrowse_.cursor = frame.page.nextCursor;
+        if (pfBrowse_.kind == BrowseKind::Notifications || pfBrowse_.kind == BrowseKind::History)
+            pfBrowse_.aux = frame.page.nextAux;
+    } else {
+        return false;
+    }
+    prefetch_ = true;
+    prefetchPromoted_ = false;
+    startJob(job);
+    if (!busy_) prefetch_ = false;
+    return busy_;
+}
+
+void App::finishPrefetch() {
+    const bool promoted = prefetchPromoted_;
+    const bool cancelled = transfer_cancel != 0;
+    bool ok = jobResult_ == 0 && !cancelled && navigation_.contains(jobRouteId_);
+    // Browse pages only append while their own page is still on top.
+    if (ok && job_ == Job::Browse) ok = hasBrowse() && navigation_.current().id == jobRouteId_;
+    if (ok) {
+        commitPrefetch(promoted);
+    } else {
+        if (!cancelled) {
+            // Fail quietly while the reader is still away from the end; retry a bit later.
+            prefetchRetryAt_ = static_cast<uint64_t>(sceKernelGetSystemTimeWide()) + 5000000;
+            if (promoted) {
+                navigation_.current().error = jobTypedError_;
+                if (job_ == Job::Browse && hasBrowse()) browseState().error = jobTypedError_;
+                status_ = jobError_.empty() ? (network_error[0] ? network_error : "载入失败，△ 重试")
+                                            : jobError_;
+            }
+        }
+        job_ = Job::None;
+    }
+    prefetch_ = prefetchPromoted_ = false;
+    transfer_cancel = 0;
+    const Job next = queuedJob_;
+    queuedJob_ = Job::None;
+    if (pendingBack_) {
+        pendingBack_ = false;
+        back();
+    } else if (next != Job::None) {
+        startJob(next);
+    }
+}
+
+void App::commitPrefetch(bool promoted) {
+    const size_t rootSelection = root().selection;
+    const size_t browseSelection = hasBrowse() ? browseState().selection : 0;
+    const std::string status = status_;
+    if (job_ == Job::Browse) browseAppending_ = true;
+    else jobPage_ = pfPage_;
+    commitJob();  // appends exactly like an explicit load...
+    if (!promoted) {  // ...but leaves the reader where they were
+        root().selection = rootSelection;
+        if (hasBrowse()) browseState().selection = browseSelection;
+        status_ = status;
+    }
+    coverDirty_ = true;
+}
+
 void App::loadNextPage() {
     if (busy() || !hasMore()) return;
+    // The reader reached the end while the prefetch is still in flight: wait for it.
+    const Job want = root().tab == Tab::Search ? Job::Search
+                     : root().tab == Tab::Hots ? Job::Hots : Job::Recommend;
+    if (prefetch_ && !prefetchPromoted_ && job_ == want &&
+        (want != Job::Search || pfGeneration_ == searchGeneration_)) {
+        prefetchPromoted_ = true;
+        status_ = std::string(jobLabel(static_cast<int>(want))) + "…";
+        return;
+    }
     if (root().tab == Tab::Search) {
         if (root().query.empty()) return;
         startSearch();
@@ -1215,7 +1322,7 @@ void App::startJob(Job job) {
     stagedDetail_ = VideoDetailView{};
     stagedPlayback_ = BiliPlayback{};
     busy_ = true;
-    if (job != Job::HistoryReport)
+    if (job != Job::HistoryReport && !prefetch_)
         status_ = std::string(jobLabel(static_cast<int>(job))) + "…";
     workerApp = this;
     worker_ = sceKernelCreateThread("wiliwili_job", workerEntry, 0x22, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
@@ -1269,13 +1376,17 @@ void App::poll() {
                    static_cast<uint64_t>(sceKernelGetSystemTimeWide()) >= authPollAt_) {
             jobAuthKey_ = authView_.key;
             startJob(Job::AuthPoll);
-        } else if (!playbackReady_) startCover();
+        } else if (!playbackReady_ && !startPrefetchIfWanted()) startCover();
         return;
     }
     if (!jobFinished_)
         return;
     joinJob();
     busy_ = false;
+    if (prefetch_) {
+        finishPrefetch();
+        return;
+    }
     if (job_ == Job::HistoryReport) {
         if (jobResult_ != 0 && !transfer_cancel && jobTypedError_)
             logError(CLIENT_PATH("/last-error.txt"), jobTypedError_);
@@ -1498,17 +1609,18 @@ void App::runJob() {
             jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_);
         }
     } else if (job_ == Job::Browse) {
-        auto result = communityService_.load(jobBrowse_, sessions_.current());
+        const BrowseRequest &request = prefetch_ ? pfBrowse_ : jobBrowse_;
+        auto result = communityService_.load(request, sessions_.current());
         if (!result) { jobTypedError_ = result.error; jobResult_ = -1; }
         else {
             stagedBrowse_ = std::move(result.value);
-            if (jobBrowse_.kind == BrowseKind::Conversation &&
+            if (request.kind == BrowseKind::Conversation &&
                 !stagedBrowse_.nextCursor.empty() &&
-                stagedBrowse_.nextCursor != jobBrowse_.cursor) {
+                stagedBrowse_.nextCursor != request.cursor) {
                 CommunityWrite ack;
                 ack.action = CommunityAction::Acknowledge;
-                ack.id = jobBrowse_.id;
-                ack.type = jobBrowse_.aux.empty() ? 1 : std::stoi(jobBrowse_.aux);
+                ack.id = request.id;
+                ack.type = request.aux.empty() ? 1 : std::stoi(request.aux);
                 ack.text = stagedBrowse_.nextCursor;
                 // Wiliwili acknowledges the returned max_seqno without blocking
                 // display on the acknowledgment response.
@@ -1562,9 +1674,10 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Recommend) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
         bool responded = false;
         bilibili::BilibiliClient::get_recommend(
-            jobPage_, static_cast<int>(kPageSize), jobPage_ == 1 ? 3 : 4, "V1", 3, 2,
+            page, static_cast<int>(kPageSize), page == 1 ? 3 : 4, "V1", 3, 2,
             [&](bilibili::RecommendVideoListResultWrapper result) {
                 for (const auto& item : result.item) {
                     VideoCard card = fromRecommend(item);
@@ -1576,10 +1689,10 @@ void App::runJob() {
             [&](const std::string& message, int code) {
                 jobError_ = message + " (" + std::to_string(code) + ")";
             });
-        if (!responded || (jobPage_ == 1 && stagedCards_.empty())) {
+        if (!responded || (page == 1 && stagedCards_.empty())) {
             stagedCards_.clear();
             BiliHome fallback{};
-            if (bili_home(jobPage_, &fallback) == 0) {
+            if (bili_home(page, &fallback) == 0) {
                 for (int i = 0; i < fallback.count; ++i) {
                     VideoCard card;
                     card.bvid = fallback.videos[i].bvid;
@@ -1602,9 +1715,10 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Hots) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
         bool responded = false;
         bilibili::BilibiliClient::get_hots_all(
-            jobPage_, static_cast<int>(kPageSize),
+            page, static_cast<int>(kPageSize),
             [&](bilibili::HotsAllVideoListResult result, bool noMore) {
                 for (const auto& item : result) {
                     VideoCard card = fromHots(item);
@@ -1616,10 +1730,10 @@ void App::runJob() {
             [&](const std::string& message, int code) {
                 jobError_ = message + " (" + std::to_string(code) + ")";
             });
-        if (!responded || (jobPage_ == 1 && stagedCards_.empty())) {
+        if (!responded || (page == 1 && stagedCards_.empty())) {
             stagedCards_.clear();
             BiliHome fallback{};
-            if (bili_home(jobPage_, &fallback) == 0) {
+            if (bili_home(page, &fallback) == 0) {
                 for (int i = 0; i < fallback.count; ++i) {
                     VideoCard card;
                     card.bvid = fallback.videos[i].bvid;
@@ -1642,8 +1756,11 @@ void App::runJob() {
         }
         jobResult_ = transfer_cancel ? -1 : 0;
     } else if (job_ == Job::Search) {
+        const int page = prefetch_ ? pfPage_ : jobPage_;
+        const std::string query = prefetch_ ? pfQuery_ : jobQuery_;
+        const uint64_t generation = prefetch_ ? pfGeneration_ : jobSearchGeneration_;
         auto result = searchService_.search(
-            {jobQuery_, static_cast<unsigned>(jobPage_), jobSearchGeneration_});
+            {query, static_cast<unsigned>(page), generation});
         if (!result) {
             jobTypedError_ = result.error;
             jobResult_ = -1;
