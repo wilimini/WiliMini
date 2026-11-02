@@ -31,7 +31,6 @@
 #include <psprtc.h>
 #include <psputility.h>
 #include <psputility_osk.h>
-#include <psputility_sysparam.h>
 
 extern "C" {
 #include <jpeglib.h>
@@ -61,7 +60,7 @@ constexpr uint32_t kBlue = color(0, 174, 236);
 constexpr uint32_t kBlack = color(0, 0, 0);
 int bodySize = 14;
 // Text-entry settings, refreshed with every UI frame so a dialog sees the current values.
-pspapp::InputMethod inputMethodPreference = pspapp::InputMethod::Auto;
+pspapp::InputMethod inputMethodPreference = pspapp::InputMethod::Pinyin;
 bool confirmWithCirclePreference = false;
 pspapp::Locale uiLocale = pspapp::Locale::ZhHans;
 bool showCovers = true;
@@ -2083,8 +2082,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
                                                           : pspapp::TextId::value_language_en, locale),
             pspapp::text(preferences.inputMethod == pspapp::InputMethod::Pinyin ? pspapp::TextId::value_input_pinyin
-                         : preferences.inputMethod == pspapp::InputMethod::System ? pspapp::TextId::value_input_system
-                                                                                  : pspapp::TextId::value_input_auto, locale),
+                                                                                : pspapp::TextId::value_input_system, locale),
             preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
                 : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
                 : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
@@ -2870,13 +2868,7 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
     return accepted;
 }
 
-bool builtInKeyboardWanted() {
-    if (inputMethodPreference == pspapp::InputMethod::System) return false;
-    if (inputMethodPreference == pspapp::InputMethod::Pinyin) return true;
-    int language = 0;
-    sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_LANGUAGE, &language);
-    return language != PSP_SYSTEMPARAM_LANGUAGE_CHINESE_SIMPLIFIED && language != PSP_SYSTEMPARAM_LANGUAGE_CHINESE_TRADITIONAL;
-}
+bool builtInKeyboardWanted() { return inputMethodPreference == pspapp::InputMethod::Pinyin; }
 
 } // namespace
 

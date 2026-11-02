@@ -90,13 +90,16 @@ int main(int argc, char** argv) {
     }
     // The input method defaults to Auto, round-trips and is validated.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
-    assert(pspapp::loadPreferences(path, value) && value.inputMethod == pspapp::InputMethod::Auto);
-    for (auto method : {pspapp::InputMethod::Pinyin, pspapp::InputMethod::System, pspapp::InputMethod::Auto}) {
+    assert(pspapp::loadPreferences(path, value) && value.inputMethod == pspapp::InputMethod::Pinyin);
+    for (auto method : {pspapp::InputMethod::System, pspapp::InputMethod::Pinyin}) {
         value.inputMethod = method;
         assert(pspapp::savePreferences(path, value));
         pspapp::Preferences methodRestored;
         assert(pspapp::loadPreferences(path, methodRestored) && methodRestored.inputMethod == method);
     }
+    // An earlier build wrote "auto"; it loads as the built-in keyboard.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"input_method":"auto"})";
+    assert(pspapp::loadPreferences(path, value) && value.inputMethod == pspapp::InputMethod::Pinyin);
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"input_method":"kana"})";
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"input_method":1})";

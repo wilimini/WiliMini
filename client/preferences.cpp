@@ -19,7 +19,7 @@ const char* homeStyleCode(HomeStyle style) {
 }
 
 const char* inputMethodCode(InputMethod method) {
-    return method == InputMethod::System ? "system" : method == InputMethod::Pinyin ? "pinyin" : "auto";
+    return method == InputMethod::System ? "system" : "pinyin";
 }
 
 const char* logVerbosityCode(LogVerbosity level) {
@@ -119,9 +119,9 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         if (input != root.end()) {
             if (!input->is_string()) return false;
             const std::string value = input->get<std::string>();
-            if (value == "auto") loaded.inputMethod = InputMethod::Auto;
+            // "auto" was written by an earlier build; it now means the built-in keyboard.
+            if (value == "auto" || value == "pinyin") loaded.inputMethod = InputMethod::Pinyin;
             else if (value == "system") loaded.inputMethod = InputMethod::System;
-            else if (value == "pinyin") loaded.inputMethod = InputMethod::Pinyin;
             else return false;
         }
         loaded.logChannels = root.value("log_channels", std::string());

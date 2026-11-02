@@ -44,9 +44,8 @@ const char* logVerbosityCode(LogVerbosity level);
 enum class HomeStyle : int { Classic = 0, Tiles = 1, Metro = 2 };
 const char* homeStyleCode(HomeStyle style);
 
-// Text entry. Auto uses the system keyboard on Chinese firmware (it has its own pinyin input)
-// and the built-in pinyin keyboard elsewhere; the other two force one of them.
-enum class InputMethod : int { Auto = 0, System = 1, Pinyin = 2 };
+// Text entry: the built-in pinyin keyboard (default) or the PSP system keyboard.
+enum class InputMethod : int { Pinyin = 0, System = 1 };
 const char* inputMethodCode(InputMethod method);
 
 struct Preferences {
@@ -64,7 +63,7 @@ struct Preferences {
     bool saveLogFiles = false;
     // Chosen in Settings; old files default to Classic.
     HomeStyle homeStyle = HomeStyle::Classic;
-    InputMethod inputMethod = InputMethod::Auto;
+    InputMethod inputMethod = InputMethod::Pinyin;
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
