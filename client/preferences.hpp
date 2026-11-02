@@ -16,6 +16,7 @@ enum class SettingItem : std::size_t {
     MeBackend,
     ConfirmWithCircle,
     Language,
+    InputMethod,
     LogLevel,
     LogFiles,
     Wifi,
@@ -43,6 +44,10 @@ const char* logVerbosityCode(LogVerbosity level);
 enum class HomeStyle : int { Classic = 0, Tiles = 1, Metro = 2 };
 const char* homeStyleCode(HomeStyle style);
 
+// Text entry: the built-in pinyin keyboard (default) or the PSP system keyboard.
+enum class InputMethod : int { Pinyin = 0, System = 1 };
+const char* inputMethodCode(InputMethod method);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -58,6 +63,7 @@ struct Preferences {
     bool saveLogFiles = false;
     // Chosen in Settings; old files default to Classic.
     HomeStyle homeStyle = HomeStyle::Classic;
+    InputMethod inputMethod = InputMethod::Pinyin;
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in

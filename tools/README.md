@@ -98,6 +98,7 @@ PPSSPP 启动与 UI 测试不能替代真实 ME 播放验证。
 
 `sh tools/test-host.sh` 依次运行全部主机检查（内存配置、日志、ME 桥、HTTP 传输、弹幕、字幕、播放控件）。
 `python3 tools/ppsspp/test-ui-smoke.py` 在 PPSSPP 中以四种首页样式启动客户端并检查截图，不需要账号、网络或固件。
+`python3 tools/ppsspp/test-ime-smoke.py` 在 PPSSPP 中用方向键在内置拼音键盘上输入 “nihao”，检查光标所在按键和候选词栏。
 `.github/workflows/test.yml` 在每个 PR 上运行：主机检查；以及 PPSSPP（固定提交，开启 ME 模拟）+ 原生 ME 的
 播放套件（PSP-1000 与 Slim 两种机型）、播放控件回放和 UI 冒烟测试。ME 镜像由
 `tools/ppsspp/prepare-me-firmware.py` 在运行时从官方 6.61 更新包解出并校验 SHA-256，不缓存、不上传、不打包；

@@ -18,6 +18,10 @@ const char* homeStyleCode(HomeStyle style) {
     return style == HomeStyle::Metro ? "metro" : style == HomeStyle::Tiles ? "tiles" : "classic";
 }
 
+const char* inputMethodCode(InputMethod method) {
+    return method == InputMethod::System ? "system" : "pinyin";
+}
+
 const char* logVerbosityCode(LogVerbosity level) {
     switch (level) {
         case LogVerbosity::Error: return "error";
@@ -111,6 +115,15 @@ bool loadPreferences(const char* path, Preferences& preferences) {
             else if (value == "metro") loaded.homeStyle = HomeStyle::Metro;
             else return false;
         }
+        const auto input = root.find("input_method");
+        if (input != root.end()) {
+            if (!input->is_string()) return false;
+            const std::string value = input->get<std::string>();
+            // "auto" was written by an earlier build; it now means the built-in keyboard.
+            if (value == "auto" || value == "pinyin") loaded.inputMethod = InputMethod::Pinyin;
+            else if (value == "system") loaded.inputMethod = InputMethod::System;
+            else return false;
+        }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -145,6 +158,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"log_level", logVerbosityCode(preferences.logLevel)},
         {"log_files", preferences.saveLogFiles},
         {"home_style", homeStyleCode(preferences.homeStyle)},
+        {"input_method", inputMethodCode(preferences.inputMethod)},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");

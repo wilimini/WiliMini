@@ -7,6 +7,8 @@
 #include "comment_layout.hpp"
 #include "assets/wiliwili/sidebar.hpp"
 #include "settings_pages.hpp"
+#include "pinyin_ime.hpp"
+#include "preferences.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +26,7 @@
 #include <pspdisplay.h>
 #include <pspgu.h>
 #include <pspkernel.h>
+#include <pspctrl.h>
 #include <psppower.h>
 #include <psprtc.h>
 #include <psputility.h>
@@ -56,10 +59,17 @@ uint32_t kPink = color(204, 65, 113);
 constexpr uint32_t kBlue = color(0, 174, 236);
 constexpr uint32_t kBlack = color(0, 0, 0);
 int bodySize = 14;
+// Text-entry settings, refreshed with every UI frame so a dialog sees the current values.
+pspapp::InputMethod inputMethodPreference = pspapp::InputMethod::Pinyin;
+bool confirmWithCirclePreference = false;
+pspapp::Locale uiLocale = pspapp::Locale::ZhHans;
 bool showCovers = true;
 
 void applyPreferences(const pspapp::Preferences& settings) {
     bodySize = settings.bodySize;
+    inputMethodPreference = settings.inputMethod;
+    confirmWithCirclePreference = settings.confirmWithCircle;
+    uiLocale = settings.locale;
     showCovers = settings.showCovers;
     kBackground = settings.darkTheme ? color(35, 37, 42) : color(242, 243, 245);
     kPanel = settings.darkTheme ? color(42, 44, 50) : color(255, 255, 255);
@@ -2034,7 +2044,8 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
-            pspapp::TextId::settings_language, pspapp::TextId::settings_log_level,
+            pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
+            pspapp::TextId::settings_log_level,
             pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
             pspapp::TextId::settings_about};
@@ -2070,6 +2081,8 @@ void drawUtility(const pspapp::App& app) {
                 {{"button", preferences.confirmButton()}}),
             pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
                                                           : pspapp::TextId::value_language_en, locale),
+            pspapp::text(preferences.inputMethod == pspapp::InputMethod::Pinyin ? pspapp::TextId::value_input_pinyin
+                                                                                : pspapp::TextId::value_input_system, locale),
             preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
                 : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
                 : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
@@ -2517,8 +2530,363 @@ void ui_render(const pspapp::App& app) {
     presentFrame();
 }
 
+// ---------------------------------------------------------------------------------------------
+// Built-in pinyin keyboard. The PSP system keyboard only offers Chinese input when the console
+// language is Chinese, so this screen provides pinyin input on any firmware. It is drawn with the
+// same CPU primitives as the rest of the UI and driven by the d-pad.
+// ---------------------------------------------------------------------------------------------
+namespace {
+
+struct ImeKeySpec {
+    enum Kind { Char, Shift, Backspace, Mode, Symbols, Space, Done } kind;
+    std::string label;
+    int units; // width in tenths of a key
+};
+
+using ImeRows = std::vector<std::vector<ImeKeySpec>>;
+
+ImeRows imeRows(bool symbols, bool chinese, const std::string& spaceLabel, const std::string& doneLabel) {
+    ImeRows rows(4);
+    auto chars = [](std::vector<ImeKeySpec>& row, const char* const* items, size_t count) {
+        for (size_t i = 0; i < count; ++i) row.push_back({ImeKeySpec::Char, items[i], 10});
+    };
+    if (!symbols) {
+        static const char* const first[] = {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"};
+        static const char* const second[] = {"a", "s", "d", "f", "g", "h", "j", "k", "l"};
+        static const char* const third[] = {"z", "x", "c", "v", "b", "n", "m"};
+        chars(rows[0], first, 10);
+        chars(rows[1], second, 9);
+        rows[2].push_back({ImeKeySpec::Shift, "Aa", 15});
+        chars(rows[2], third, 7);
+        rows[2].push_back({ImeKeySpec::Backspace, "\xE2\x86\x90", 15});
+    } else {
+        static const char* const digits[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"};
+        static const char* const cnA[] = {"\xEF\xBC\x8C", "\xE3\x80\x82", "\xEF\xBC\x9F", "\xEF\xBC\x81",
+            "\xE3\x80\x81", "\xEF\xBC\x9A", "\xEF\xBC\x9B", "\xE2\x80\xA6", "\xEF\xBD\x9E", "\xC2\xB7"};
+        static const char* const cnB[] = {"\xEF\xBC\x88", "\xEF\xBC\x89", "\xE3\x80\x8A", "\xE3\x80\x8B",
+            "\xE2\x80\x9C", "\xE2\x80\x9D", "\xE2\x80\x98", "\xE2\x80\x99", "\xE2\x80\x94"};
+        static const char* const enA[] = {",", ".", "?", "!", "'", ":", ";", "-", "_", "/"};
+        static const char* const enB[] = {"(", ")", "\"", "@", "#", "&", "*", "+", "="};
+        chars(rows[0], digits, 10);
+        if (chinese) { chars(rows[1], cnA, 10); chars(rows[2], cnB, 9); }
+        else { chars(rows[1], enA, 10); chars(rows[2], enB, 9); }
+        rows[2].push_back({ImeKeySpec::Backspace, "\xE2\x86\x90", 10});
+    }
+    rows[3].push_back({ImeKeySpec::Mode, chinese ? "\xE4\xB8\xAD" : "EN", 15});
+    rows[3].push_back({ImeKeySpec::Symbols, symbols ? "ABC" : "123", 15});
+    rows[3].push_back({ImeKeySpec::Char, chinese ? "\xEF\xBC\x8C" : ",", 10});
+    rows[3].push_back({ImeKeySpec::Space, spaceLabel, 30});
+    rows[3].push_back({ImeKeySpec::Char, chinese ? "\xE3\x80\x82" : ".", 10});
+    rows[3].push_back({ImeKeySpec::Done, doneLabel, 20});
+    return rows;
+}
+
+constexpr int kImeKeyX = 20, kImeKeyUnit = 44, kImeKeyY = 122, kImeKeyH = 28, kImeKeyPitch = 30;
+
+struct ImeRect { int x, w; };
+
+ImeRect imeKeyRect(const std::vector<ImeKeySpec>& row, size_t index) {
+    int total = 0, before = 0;
+    for (size_t i = 0; i < row.size(); ++i) {
+        total += row[i].units;
+        if (i < index) before += row[i].units;
+    }
+    const int start = kImeKeyX + (10 * kImeKeyUnit - total * kImeKeyUnit / 10) / 2;
+    const int x = start + before * kImeKeyUnit / 10;
+    const int right = start + (before + row[index].units) * kImeKeyUnit / 10;
+    return {x, right - x - 3};
+}
+
+// Splits UTF-8 text into single characters.
+std::vector<std::string> imeChars(const std::string& text) {
+    std::vector<std::string> out;
+    for (size_t i = 0; i < text.size();) {
+        size_t length = 1;
+        const unsigned char lead = static_cast<unsigned char>(text[i]);
+        if (lead >= 0xF0) length = 4; else if (lead >= 0xE0) length = 3; else if (lead >= 0xC0) length = 2;
+        out.push_back(text.substr(i, length));
+        i += length;
+    }
+    return out;
+}
+
+// Runs the keyboard until the user finishes or cancels. `text` is edited in place.
+bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp::PinyinDictionary& dictionary) {
+    using namespace pspapp;
+    const Locale locale = uiLocale;
+    const std::string spaceLabel = pspapp::text(TextId::ime_space, locale);
+    const std::string doneLabel = pspapp::text(TextId::ime_done, locale);
+    const std::string hint = formatText(TextId::ime_hint, locale,
+        {{"confirm", buttonGlyph(confirmWithCirclePreference ? ControllerButton::Circle : ControllerButton::Cross)},
+         {"back", buttonGlyph(confirmWithCirclePreference ? ControllerButton::Cross : ControllerButton::Circle)}});
+    const unsigned confirmButton = confirmWithCirclePreference ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
+    const unsigned backButton = confirmWithCirclePreference ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
+
+    PinyinIme ime(dictionary);
+    bool chinese = true, shift = false, symbols = false, inCandidates = false;
+    size_t row = 0, col = 0, candidateCursor = 0;
+    std::vector<size_t> pageStarts{0};
+    ImeRows rows = imeRows(symbols, chinese, spaceLabel, doneLabel);
+    unsigned frame = 0;
+    unsigned previous = ~0u;
+    uint64_t repeatAt = 0, backRepeatAt = 0;
+    bool done = false, accepted = false;
+
+    auto room = [&](const std::string& extra) { return utf8Length(text) + utf8Length(extra) <= limit; };
+    auto append = [&](const std::string& extra) { if (!extra.empty() && room(extra)) text += extra; };
+    auto resetPaging = [&] { pageStarts.assign(1, 0); candidateCursor = 0; inCandidates = false; };
+    auto rebuildRows = [&] {
+        rows = imeRows(symbols, chinese, spaceLabel, doneLabel);
+        row = std::min(row, rows.size() - 1);
+        col = std::min(col, rows[row].size() - 1);
+    };
+    auto pageEnd = [&](size_t start) {
+        const auto& list = ime.candidates();
+        int used = 0;
+        size_t i = start;
+        for (; i < list.size() && i - start < 9; ++i) {
+            const int width = bitmapMeasure(list[i].text, 16) + 16;
+            if (i > start && used + width > 396) break;
+            used += width;
+        }
+        return i;
+    };
+    auto pick = [&](size_t index) {
+        if (ime.choose(index)) append(ime.takeCommit());
+        resetPaging();
+    };
+    auto flushRaw = [&] { if (ime.composing()) { append(ime.commitRaw()); resetPaging(); } };
+    auto flushBest = [&] {
+        if (!ime.candidates().empty() && ime.choose(pageStarts.back())) append(ime.takeCommit());
+        flushRaw();
+        resetPaging();
+    };
+    auto backspace = [&](bool fromBackButton) {
+        if (ime.composing()) {
+            ime.backspace();
+            if (ime.buffer().empty()) append(ime.takeCommit());
+            resetPaging();
+        } else if (!text.empty()) utf8PopBack(text);
+        else if (fromBackButton) done = true;
+    };
+    auto pressKey = [&](const ImeKeySpec& key) {
+        switch (key.kind) {
+            case ImeKeySpec::Char: {
+                const bool letter = !symbols && key.label.size() == 1 && std::isalpha(static_cast<unsigned char>(key.label[0]));
+                if (letter && chinese && !shift) {
+                    if (ime.addLetter(key.label[0])) resetPaging();
+                } else if (letter) {
+                    flushRaw();
+                    append(shift ? std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(key.label[0]))))
+                                 : key.label);
+                    shift = false;
+                } else {
+                    flushBest();
+                    append(key.label);
+                }
+                break;
+            }
+            case ImeKeySpec::Shift: shift = !shift; break;
+            case ImeKeySpec::Backspace: backspace(false); break;
+            case ImeKeySpec::Mode: flushRaw(); chinese = !chinese; rebuildRows(); break;
+            case ImeKeySpec::Symbols: flushBest(); symbols = !symbols; rebuildRows(); break;
+            case ImeKeySpec::Space:
+                if (ime.composing()) {
+                    if (!ime.candidates().empty()) pick(pageStarts.back()); else flushRaw();
+                } else append(" ");
+                break;
+            case ImeKeySpec::Done: flushRaw(); done = accepted = true; break;
+        }
+    };
+    auto move = [&](int dx, int dy) {
+        if (inCandidates) {
+            const auto& list = ime.candidates();
+            if (dy > 0) { inCandidates = false; return; }
+            if (dx < 0) {
+                if (candidateCursor > pageStarts.back()) --candidateCursor;
+                else if (pageStarts.size() > 1) { pageStarts.pop_back(); candidateCursor = pageEnd(pageStarts.back()) - 1; }
+            } else if (dx > 0) {
+                if (candidateCursor + 1 < pageEnd(pageStarts.back())) ++candidateCursor;
+                else if (pageEnd(pageStarts.back()) < list.size()) {
+                    pageStarts.push_back(pageEnd(pageStarts.back()));
+                    candidateCursor = pageStarts.back();
+                }
+            }
+            return;
+        }
+        if (dx) {
+            const size_t count = rows[row].size();
+            col = (col + count + (dx < 0 ? count - 1 : 1)) % count;
+        } else if (dy < 0 && row == 0) {
+            if (!ime.candidates().empty()) { inCandidates = true; candidateCursor = pageStarts.back(); }
+        } else if (dy) {
+            const ImeRect now = imeKeyRect(rows[row], col);
+            const int centre = now.x + now.w / 2;
+            row = static_cast<size_t>(std::max(0, std::min(static_cast<int>(rows.size()) - 1, static_cast<int>(row) + dy)));
+            int best = 1 << 30;
+            for (size_t i = 0; i < rows[row].size(); ++i) {
+                const ImeRect rect = imeKeyRect(rows[row], i);
+                const int distance = std::abs(rect.x + rect.w / 2 - centre);
+                if (distance < best) { best = distance; col = i; }
+            }
+        }
+    };
+    auto pageCandidates = [&](int direction) {
+        if (ime.candidates().empty()) return;
+        if (direction > 0 && pageEnd(pageStarts.back()) < ime.candidates().size()) {
+            pageStarts.push_back(pageEnd(pageStarts.back()));
+            candidateCursor = pageStarts.back();
+        } else if (direction < 0 && pageStarts.size() > 1) {
+            pageStarts.pop_back();
+            candidateCursor = pageStarts.back();
+        }
+    };
+
+    while (!done) {
+        SceCtrlData pad{};
+        sceCtrlPeekBufferPositive(&pad, 1);
+        const uint64_t now = sceKernelGetSystemTimeWide();
+        unsigned pressed = pad.Buttons & ~previous;
+        const unsigned direction = pad.Buttons & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_UP | PSP_CTRL_DOWN);
+        if (!(pressed & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_UP | PSP_CTRL_DOWN))) {
+            if (direction && now >= repeatAt && direction == (previous & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_UP | PSP_CTRL_DOWN)))
+                { pressed |= direction; repeatAt = now + 90000; }
+        } else repeatAt = now + 350000;
+        // Holding the back button keeps deleting; the first press is handled below.
+        if ((pad.Buttons & backButton) && (previous & backButton) && !inCandidates) {
+            if (now >= backRepeatAt && (ime.composing() || !text.empty())) {
+                backspace(false);
+                backRepeatAt = now + 70000;
+            }
+        } else if (pressed & backButton) backRepeatAt = now + 400000;
+        previous = pad.Buttons;
+
+        if (pressed & PSP_CTRL_START) { flushRaw(); done = accepted = true; }
+        else if (pressed & PSP_CTRL_SELECT) done = true;
+        else if (pressed & backButton) {
+            if (inCandidates) inCandidates = false; else backspace(true);
+        } else if (pressed & confirmButton) {
+            if (inCandidates) pick(candidateCursor); else pressKey(rows[row][col]);
+        } else if (pressed & PSP_CTRL_SQUARE) {
+            pressKey({ImeKeySpec::Space, "", 0});
+        } else if (pressed & PSP_CTRL_TRIANGLE) {
+            flushRaw(); chinese = !chinese; rebuildRows();
+        } else if (pressed & PSP_CTRL_LTRIGGER) pageCandidates(-1);
+        else if (pressed & PSP_CTRL_RTRIGGER) pageCandidates(1);
+        else if (pressed & PSP_CTRL_LEFT) move(-1, 0);
+        else if (pressed & PSP_CTRL_RIGHT) move(1, 0);
+        else if (pressed & PSP_CTRL_UP) move(0, -1);
+        else if (pressed & PSP_CTRL_DOWN) move(0, 1);
+
+        // ----- draw -----
+        ui_dialog_frame();
+        drawText(20, 4, 0.85f, kText, title, 330);
+        const std::string counter = std::to_string(utf8Length(text) + utf8Length(ime.preedit())) + " / " + std::to_string(limit);
+        drawText(380, 6, 0.5f, kTextDim, counter, 80);
+
+        // Text field: the last two lines, with the pre-edit part in the accent colour.
+        fillRect(20, 26, 440, 46, kPanel);
+        std::vector<std::pair<std::string, bool>> glyphs;
+        for (auto& c : imeChars(text)) glyphs.push_back({c, false});
+        for (auto& c : imeChars(ime.preedit())) glyphs.push_back({c, true});
+        std::vector<size_t> lineStarts{0};
+        int lineX = 0;
+        for (size_t i = 0; i < glyphs.size(); ++i) {
+            const int width = bitmapMeasure(glyphs[i].first, 16);
+            if (lineX + width > 420) { lineStarts.push_back(i); lineX = 0; }
+            lineX += width;
+        }
+        const size_t firstLine = lineStarts.size() > 2 ? lineStarts.size() - 2 : 0;
+        int caretX = 28, caretY = 30;
+        for (size_t line = firstLine; line < lineStarts.size(); ++line) {
+            const size_t end = line + 1 < lineStarts.size() ? lineStarts[line + 1] : glyphs.size();
+            int x = 28;
+            const int y = 30 + static_cast<int>(line - firstLine) * 20;
+            for (size_t i = lineStarts[line]; i < end; ++i) {
+                const int width = bitmapMeasure(glyphs[i].first, 16);
+                drawText(x, y, 1.0f, glyphs[i].second ? kPink : kText, glyphs[i].first, 24);
+                if (glyphs[i].second) fillRect(x, y + 17, width, 1, kPink);
+                x += width;
+            }
+            caretX = x;
+            caretY = y;
+        }
+        if ((frame / 30) % 2 == 0) fillRect(caretX, caretY + 1, 2, 16, kText);
+
+        // Composing letters and the candidate bar.
+        fillRect(20, 96, 440, 24, kPanel);
+        if (ime.composing()) {
+            drawText(26, 76, 0.7f, kTextDim, ime.buffer().empty() ? ime.chosen() : ime.buffer(), 420);
+            const auto& list = ime.candidates();
+            const size_t start = pageStarts.back(), end = pageEnd(start);
+            int x = 24;
+            for (size_t i = start; i < end; ++i) {
+                const int width = bitmapMeasure(list[i].text, 16) + 16;
+                const bool selected = inCandidates && i == candidateCursor;
+                if (selected) fillRect(x - 4, 97, width, 22, kPink);
+                else if (i == start && !inCandidates) fillRect(x - 4, 117, width, 2, kPink);
+                drawText(x + 4, 99, 1.0f, selected ? color(255, 255, 255) : kText, list[i].text, width);
+                x += width;
+            }
+            if (start > 0) drawText(446, 100, 0.7f, kTextDim, "<", 12);
+            if (end < list.size()) drawText(452, 100, 0.7f, kTextDim, ">", 12);
+        }
+
+        // Keys.
+        for (size_t r = 0; r < rows.size(); ++r) {
+            for (size_t c = 0; c < rows[r].size(); ++c) {
+                const ImeRect rect = imeKeyRect(rows[r], c);
+                const int y = kImeKeyY + static_cast<int>(r) * kImeKeyPitch;
+                const bool selected = !inCandidates && r == row && c == col;
+                const auto& key = rows[r][c];
+                const bool active = (key.kind == ImeKeySpec::Shift && shift);
+                const uint32_t face = selected ? kPink : active ? kLine : kPanelRaised;
+                fillRect(rect.x, y, rect.w, kImeKeyH, face);
+                std::string label = key.label;
+                if (key.kind == ImeKeySpec::Char && label.size() == 1 && shift && !symbols)
+                    label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+                const uint32_t ink = selected ? color(255, 255, 255) : kText;
+                const bool small = key.kind != ImeKeySpec::Char;
+                const int size = small ? 12 : 16;
+                const int width = bitmapMeasure(label, size);
+                drawText(rect.x + std::max(0, (rect.w - width) / 2), y + (small ? 8 : 6), small ? 0.5f : 1.0f, ink, label, rect.w);
+            }
+        }
+        drawText(8, 250, 0.5f, kTextDim, hint, 464);
+        ui_dialog_present();
+        ++frame;
+    }
+    // Wait for the buttons to be released so the caller does not see this press.
+    for (int guard = 0; guard < 120; ++guard) {
+        SceCtrlData pad{};
+        sceCtrlPeekBufferPositive(&pad, 1);
+        if (!(pad.Buttons & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE | PSP_CTRL_START | PSP_CTRL_SELECT | PSP_CTRL_SQUARE | PSP_CTRL_TRIANGLE)))
+            break;
+        ui_dialog_frame();
+        ui_dialog_present();
+    }
+    return accepted;
+}
+
+bool builtInKeyboardWanted() { return inputMethodPreference == pspapp::InputMethod::Pinyin; }
+
+} // namespace
+
 std::string ui_input_text(const std::string& title, const std::string& initial, bool* confirmed) {
     if (confirmed) *confirmed = false;
+    if (builtInKeyboardWanted()) {
+        pspapp::PinyinDictionary dictionary;
+        if (dictionary.open(CLIENT_PATH("/pinyin.dat"))) {
+            constexpr size_t kLimit = 96;
+            std::string text = initial;
+            while (pspapp::utf8Length(text) > kLimit) pspapp::utf8PopBack(text);
+            const bool accepted = imeScreen(title, text, kLimit, dictionary);
+            if (!accepted) return initial;
+            if (confirmed) *confirmed = true;
+            return text;
+        }
+        // No dictionary in the package: fall back to the system keyboard.
+    }
     SceUtilityOskParams params{};
     SceUtilityOskData data{};
     unsigned short description[128]{};

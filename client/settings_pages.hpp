@@ -12,6 +12,7 @@ inline constexpr LicenseEntry settingsLicenses[] = {
     {"curl", "curl.txt"},
     {"二维码生成器 · MIT", "qrcodegen.txt"},
     {"ME bridge · MIST", "me-mist.txt"},
+    {"rime-ice 拼音词库 · GPL", "rime-ice.txt"},
 };
 inline constexpr size_t settingsLicenseCount = sizeof(settingsLicenses) / sizeof(settingsLicenses[0]);
 } // namespace pspapp
