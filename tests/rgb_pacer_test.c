@@ -20,6 +20,7 @@ typedef unsigned SceUInt;
 #define AVERROR(e) (-(e))
 #define WARMUP_FRAMES 30
 static volatile int quit_requested;
+static size_t rgb_pixel_bytes = 2;
 static int failure, live_allocations, semaphores, thread_created, thread_started;
 static size_t allocated_bytes;
 static int (*worker_entry)(SceSize, void*);
@@ -88,21 +89,24 @@ static uint64_t sceKernelGetSystemTimeWide(void) { return 1000000000; }
 static int64_t audio_clock_us(void) { return 1000000000; }
 static int audio_playback_failed(void) { return 0; }
 static int sceDmacMemcpy(void* dst, const void* src, size_t bytes) {
-    (void)dst; (void)src; assert(bytes == 512 * 270 * 4); return 0;
+    (void)dst; (void)src; assert(bytes == 512 * 270 * rgb_pixel_bytes); return 0;
 }
 static void sceKernelDcacheWritebackInvalidateRange(void* ptr, size_t bytes) {
     assert((uintptr_t)ptr % 64 == 0 && bytes == allocated_bytes);
 }
 static const void *presenter;
+static int output_pixel_format;
 static int playback_seeking;
 static int playback_is_paused(void) { return 0; }
-static int present_video(const uint32_t *pixels) { (void)pixels; return 0; }
+static int present_video(const void *pixels, int format) { (void)pixels; (void)format; return 0; }
 #define memalign queue_alloc
 #define free queue_free
 #include "../decoder/src/rgb_pacer.h"
 #undef free
 
 int main(void) {
+    (void)presentation_pts_us;
+    for (rgb_pixel_bytes = 4; rgb_pixel_bytes >= 2; rgb_pixel_bytes -= 2) {
     for (failure = 1; failure <= 4; ++failure) {
         assert(rgb_start() < 0);
         rgb_close(); rgb_release();
@@ -112,13 +116,13 @@ int main(void) {
     for (int repeat = 0; repeat < 3; ++repeat) for (unsigned slots = 2; slots <= 8; slots *= 2) {
         rgb_slots = slots;
         assert(rgb_start() == 0);
-        assert(allocated_bytes == slots * 512 * 272 * 4);
+        assert(allocated_bytes == slots * 512 * 272 * rgb_pixel_bytes);
         assert(rgb_start() == AVERROR(EBUSY));
         rgb_startup_ready = 1;
         for (int frame = 0; frame < 32; ++frame) {
             const int slot = rgb_acquire();
             assert(slot >= 0 && (unsigned)slot < slots);
-            rgb_pixels[slot][0] = frame;
+            ((uint8_t*)rgb_pixels)[(size_t)slot * 512 * 272 * rgb_pixel_bytes] = (uint8_t)frame;
             rgb_publish(frame);
         }
         rgb_close();
@@ -127,6 +131,7 @@ int main(void) {
         assert(live_allocations == 1);
         rgb_release();
         assert(!rgb_pixels && !live_allocations);
+    }
     }
     puts("RGB queues 2/4/8: repeated playback, alignment and failure cleanup passed");
 }
