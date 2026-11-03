@@ -86,6 +86,7 @@ static int sceKernelDeleteThread(int id) { (void)id; thread_created = 0; return 
 static void sceKernelDelayThread(unsigned us) { usleep(us); }
 static void sceKernelDelayThreadCB(unsigned us) { usleep(us); }
 static uint64_t sceKernelGetSystemTimeWide(void) { return 1000000000; }
+static unsigned sceKernelGetSystemTimeLow(void) { return 1000000000u; }
 static int64_t audio_clock_us(void) { return 1000000000; }
 static int audio_playback_failed(void) { return 0; }
 static int sceDmacMemcpy(void* dst, const void* src, size_t bytes) {
