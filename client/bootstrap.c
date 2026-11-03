@@ -71,11 +71,12 @@ int main(int argc,char **argv){
     if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
     static char settings[4097];
     const int settings_length=read_settings(root,settings,sizeof(settings));
-    /* wili-server streams use sceMpeg, which owns the Media Engine: with the stream server on,
-     * no ME bridge is loaded and the client must not touch the ME (it is told with --no-me). */
-    const int stream_server=wili_stream_server_from_settings(settings,(size_t)settings_length);
-    if(stream_server)WLOG_I(WLC_LOADER,"stream_server=on; ME bridge not loaded");
-    if(!sce_mpeg && !stream_server){
+    /* The sceMpeg "backend" (needed by the stream server) is not a bridge: sceMpeg owns the Media
+     * Engine, so no ME bridge or core is loaded at all and the client is told with --no-me. */
+    const int sce_backend=!sce_mpeg && saved_me_backend(settings,settings_length)==WILI_ME_BACKEND_SCE_MPEG;
+    const int stream_server=sce_backend;
+    if(sce_backend)WLOG_I(WLC_LOADER,"me_backend=sce-mpeg; no ME bridge loaded");
+    if(!sce_mpeg && !sce_backend){
         int backend=saved_me_backend(settings,settings_length);
         r=start_bridge(root,backend);
         if(r<0 && backend!=WILI_ME_BACKEND_MIST){

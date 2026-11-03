@@ -84,7 +84,11 @@ void App::changeSetting() {
                     ? PlaybackPixelFormat::Rgba8888 : PlaybackPixelFormat::Auto;
             break;
         case SettingItem::MeBackend:
-            next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
+            next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore
+                           : next.meBackend == MeBackend::CustomCore ? MeBackend::SceMpeg : MeBackend::Mist;
+            // The stream server only works with sceMpeg; leaving it turns the server off.
+            if (next.meBackend != MeBackend::SceMpeg) next.streamServer = false;
+            else next.meBackendBeforeStream = MeBackend::CustomCore;
             break;
         case SettingItem::InputMethod:
             next.inputMethod = next.inputMethod == InputMethod::Pinyin ? InputMethod::System : InputMethod::Pinyin;
@@ -95,7 +99,17 @@ void App::changeSetting() {
                           : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
             break;
         case SettingItem::LogFiles: next.saveLogFiles = !next.saveLogFiles; break;
-        case SettingItem::StreamServer: next.streamServer = !next.streamServer; break;
+        case SettingItem::StreamServer:
+            next.streamServer = !next.streamServer;
+            // Streaming is decoded by sceMpeg, which needs the ME to itself: select that backend now
+            // (the loader then starts no bridge after a restart) and go back when it is switched off.
+            if (next.streamServer) {
+                if (next.meBackend != MeBackend::SceMpeg) next.meBackendBeforeStream = next.meBackend;
+                next.meBackend = MeBackend::SceMpeg;
+            } else if (next.meBackend == MeBackend::SceMpeg) {
+                next.meBackend = next.meBackendBeforeStream;
+            }
+            break;
         case SettingItem::StreamPreset:
             next.streamPreset = next.streamPreset == StreamPreset::Performance ? StreamPreset::Balanced
                               : next.streamPreset == StreamPreset::Balanced ? StreamPreset::Quality
@@ -136,8 +150,8 @@ void App::changeSetting() {
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)
                 ? text(TextId::settings_saved_me_backend, preferences_.locale)
             : text(TextId::settings_saved, preferences_.locale);
-    // The loader decides at start-up whether to load the ME bridge, so this needs a restart.
-    if (selected == SettingItem::StreamServer)
+    // The loader decides at start-up whether to load an ME bridge, so a change needs a restart.
+    if (selected == SettingItem::StreamServer && activeMeBackend_ != static_cast<int>(preferences_.meBackend))
         status_ = text(TextId::stream_status_restart, preferences_.locale);
 }
 

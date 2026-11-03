@@ -170,7 +170,10 @@ int main(int argc, char** argv) {
         app.setActiveMeBackend(psp_video_me_backend());
         WLOG_I(WLC_CLIENT, "me_backend=%d", app.activeMeBackend());
     } else {
-        WLOG_I(WLC_CLIENT, "me_backend=none (sceMpeg owns the Media Engine)");
+        // Under the emulator the value stays unknown; on a PSP it is the sceMpeg "backend".
+        if (!(BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP))
+            app.setActiveMeBackend(static_cast<int>(pspapp::MeBackend::SceMpeg));
+        WLOG_I(WLC_CLIENT, "me_backend=sce-mpeg (no ME bridge; sceMpeg owns the Media Engine)");
     }
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
@@ -245,6 +248,15 @@ int main(int argc, char** argv) {
                             : BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_SCE_MPEG
                                   : PSP_VIDEO_BACKEND_NATIVE_ME;
+            // The stream server needs sceMpeg to have the Media Engine to itself, i.e. a start with the
+            // sce-mpeg backend and no bridge. Enabling it in this session is not enough.
+            if (options.backend == PSP_VIDEO_BACKEND_SCE_MPEG && !noMe) {
+                ui_resume();
+                app.finishPlayback(-1, 0, 0, 0, PSP_VIDEO_STAGE_SETUP, 0);
+                app.setStatus(pspapp::text(pspapp::TextId::stream_status_restart, app.preferences().locale));
+                previous = ~0u;
+                continue;
+            }
             if (options.backend == PSP_VIDEO_BACKEND_NATIVE_ME && noMe) {
                 // Live rooms and other direct playback need the ME decoder, which is off while the
                 // stream server is on. Fail cleanly instead of calling into an absent bridge.

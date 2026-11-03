@@ -120,10 +120,12 @@ packet checks and PSP packaging; playback on hardware still needs verification.
   arguments (512-pixel frame width, mode 0), and that Main/CAVLC at level 3.0 with one reference
   frame decodes. `profile=cabac` may be rejected by the firmware's decoder.
 - Only server streams use sceMpeg. Direct playback still uses the ME decoder.
-- sceMpeg owns the Media Engine, so with *Stream server* on the loader starts **no ME bridge** at
-  all (settings.json `stream_server: true`, applied after a restart) and the client never calls
-  into it. Everything else, including scaling, colour conversion, audio and drawing, runs on the CPU
-  and GE. Live rooms need the ME decoder and are refused while the stream server is on.
+- sceMpeg is the third **ME backend** (Settings → ME backend: MIST, Custom Core, sceMpeg). It owns
+  the Media Engine, so with it selected the loader starts **no ME bridge or core at all** and the
+  client never calls into one; changing it needs a restart of WiliMini. Turning *Stream server* on
+  selects it (and turning the server off, or choosing another ME backend, goes back), but the
+  server only plays after that restart. Scaling, colour conversion, audio and drawing run on the
+  CPU and GE. Live rooms need the ME decoder and are refused while sceMpeg is selected.
 - Preset sizes and bitrates (384×216/700 k, 480×272/1000 k, 480×272/1500 k) are starting
   points and need tuning on a PSP.
 - Bilibili may throttle or change its API; the proxy passes JSON through, so most changes

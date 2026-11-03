@@ -2055,8 +2055,9 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
         const std::string meBackend = pspapp::text(
-            preferences.meBackend == pspapp::MeBackend::CustomCore ? pspapp::TextId::value_me_custom_core
-                                                                   : pspapp::TextId::value_me_mist, locale);
+            preferences.meBackend == pspapp::MeBackend::SceMpeg ? pspapp::TextId::value_me_sce_mpeg
+            : preferences.meBackend == pspapp::MeBackend::CustomCore ? pspapp::TextId::value_me_custom_core
+                                                                     : pspapp::TextId::value_me_mist, locale);
         // A saved change only takes effect after the loader picks the other bridge PRX.
         const bool meRestart = app.activeMeBackend() >= 0 &&
             app.activeMeBackend() != static_cast<int>(preferences.meBackend);

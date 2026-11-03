@@ -216,5 +216,6 @@
   "stream_err_upstream": "The server could not fetch this video from Bilibili",
   "stream_err_bad_request": "The server refused the request · Update WiliMini and wili-server",
   "stream_err_no_me": "Live rooms need the ME decoder, which is off while the stream server is on · Turn it off in Settings and reopen WiliMini",
-  "stream_status_restart": "Saved · Quit (START) and reopen WiliMini to apply: the Media Engine is off while the stream server is on"
+  "stream_status_restart": "Saved · Quit (START) and reopen WiliMini to apply · sceMpeg needs the Media Engine to itself, so no ME bridge is loaded",
+  "value_me_sce_mpeg": "sceMpeg (no ME)"
 }

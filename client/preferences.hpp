@@ -38,7 +38,10 @@ inline constexpr std::size_t settingsVisibleRows = 11;
 
 // Values match ME_BACKEND_* in decoder/me/me_bridge.h and client/me_backend_select.h.
 // The bootstrap loads the matching bridge PRX, so a change applies on next launch.
-enum class MeBackend : int { Mist = 0, CustomCore = 1 };
+// SceMpeg is not an ME bridge at all: the firmware's sceMpeg owns the Media Engine, so the loader
+// starts no bridge and the ME decoder is unavailable until the setting is changed back and
+// WiliMini is restarted. The stream server needs it.
+enum class MeBackend : int { Mist = 0, CustomCore = 1, SceMpeg = 2 };
 enum class PlaybackPixelFormat : int { Auto = 0, Rgb565 = 1, Rgba8888 = 2 };
 bool playbackUsesRgb565(PlaybackPixelFormat format);
 const char* meBackendCode(MeBackend backend);
@@ -71,6 +74,8 @@ struct Preferences {
     int playbackBufferFrames = defaultPlaybackBufferFrames();
     PlaybackPixelFormat playbackPixelFormat = PlaybackPixelFormat::Auto;
     MeBackend meBackend = MeBackend::CustomCore;
+    // What turning the stream server off goes back to (never SceMpeg).
+    MeBackend meBackendBeforeStream = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     Locale locale = Locale::ZhHans;
     LogVerbosity logLevel = LogVerbosity::Info;

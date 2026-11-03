@@ -8,6 +8,8 @@
  * pspapp::MeBackend in client/preferences.hpp. */
 #define WILI_ME_BACKEND_MIST 0
 #define WILI_ME_BACKEND_CUSTOM_CORE 1
+/* Not a bridge: sceMpeg owns the Media Engine, so no bridge PRX is loaded. */
+#define WILI_ME_BACKEND_SCE_MPEG 2
 
 #define WILI_ME_BRIDGE_MIST "me_bridge.prx"
 #define WILI_ME_BRIDGE_CUSTOM_CORE "me_bridge_custom_core.prx"
@@ -18,7 +20,8 @@ static inline const char *wili_me_bridge_file(int backend) {
 }
 
 static inline const char *wili_me_backend_name(int backend) {
-    return backend == WILI_ME_BACKEND_CUSTOM_CORE ? "custom-core" : "mist";
+    return backend == WILI_ME_BACKEND_SCE_MPEG ? "sce-mpeg"
+         : backend == WILI_ME_BACKEND_CUSTOM_CORE ? "custom-core" : "mist";
 }
 
 /* The loader runs before the C++ client, so it only looks for the
@@ -44,30 +47,16 @@ static inline int wili_me_backend_from_settings(const char *text, size_t length)
         if (p + sizeof(custom) - 1 < length && memcmp(text + p, custom, sizeof(custom) - 1) == 0 &&
             text[p + sizeof(custom) - 1] == '"')
             return WILI_ME_BACKEND_CUSTOM_CORE;
+        static const char sce[] = "sce-mpeg";
+        if (p + sizeof(sce) - 1 < length && memcmp(text + p, sce, sizeof(sce) - 1) == 0 &&
+            text[p + sizeof(sce) - 1] == '"')
+            return WILI_ME_BACKEND_SCE_MPEG;
         if (p + sizeof(mist) - 1 < length && memcmp(text + p, mist, sizeof(mist) - 1) == 0 &&
             text[p + sizeof(mist) - 1] == '"')
             return WILI_ME_BACKEND_MIST;
         return WILI_ME_BACKEND_CUSTOM_CORE;
     }
     return WILI_ME_BACKEND_CUSTOM_CORE;
-}
-
-/* True when settings.json has "stream_server": true. wili-server streams are decoded by sceMpeg,
- * which owns the Media Engine, so the loader then starts no ME bridge at all. */
-static inline int wili_stream_server_from_settings(const char *text, size_t length) {
-    static const char key[] = "\"stream_server\"";
-    if (!text) return 0;
-    const size_t key_length = sizeof(key) - 1;
-    for (size_t i = 0; i + key_length <= length; ++i) {
-        if (memcmp(text + i, key, key_length) != 0) continue;
-        size_t p = i + key_length;
-        while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
-        if (p >= length || text[p] != ':') return 0;
-        ++p;
-        while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
-        return p + 4 <= length && memcmp(text + p, "true", 4) == 0;
-    }
-    return 0;
 }
 
 #endif

@@ -11,7 +11,7 @@ bool playbackUsesRgb565(PlaybackPixelFormat format) {
 }
 
 const char* meBackendCode(MeBackend backend) {
-    return backend == MeBackend::CustomCore ? "custom-core" : "mist";
+    return backend == MeBackend::SceMpeg ? "sce-mpeg" : backend == MeBackend::CustomCore ? "custom-core" : "mist";
 }
 
 const char* homeStyleCode(HomeStyle style) {
@@ -84,6 +84,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         const std::string meBackend = root.value("me_backend", std::string("custom-core"));
         if (meBackend == "mist") loaded.meBackend = MeBackend::Mist;
         else if (meBackend == "custom-core") loaded.meBackend = MeBackend::CustomCore;
+        else if (meBackend == "sce-mpeg") loaded.meBackend = MeBackend::SceMpeg;
+        else return false;
+        const std::string before = root.value("me_backend_before_stream", std::string("custom-core"));
+        if (before == "mist") loaded.meBackendBeforeStream = MeBackend::Mist;
+        else if (before == "custom-core") loaded.meBackendBeforeStream = MeBackend::CustomCore;
         else return false;
         if (!root.contains("confirm_button")) {
             loaded.confirmWithCircle = root.value("confirm_with_circle", false);
@@ -195,6 +200,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"playback_pixel_format", preferences.playbackPixelFormat == PlaybackPixelFormat::Auto ? "auto" :
              preferences.playbackPixelFormat == PlaybackPixelFormat::Rgb565 ? "rgb565" : "rgba8888"},
         {"me_backend", meBackendCode(preferences.meBackend)},
+        {"me_backend_before_stream", meBackendCode(preferences.meBackendBeforeStream)},
         {"confirm_with_circle", preferences.confirmWithCircle},
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
         {"locale", localeCode(preferences.locale)},
