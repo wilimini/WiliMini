@@ -2,8 +2,9 @@
 """Drive the built-in pinyin keyboard in PPSSPP and check what it draws.
 
 Needs only PPSSPPHeadless and a built package (no account, network or ME firmware). The home
-page's SQUARE button opens the keyboard (Settings -> Input method is Auto; the emulated console
-language is not Chinese). The script types "nihao" with the d-pad by mirroring the keyboard's
+page's SQUARE button opens the keyboard (the built-in keyboard is the default input method). On a
+machine with real network access (CI) the client is busy connecting for up to 20 emulated seconds
+after start and ignores buttons, so the script waits START_AT seconds. The script types "nihao" with the d-pad by mirroring the keyboard's
 navigation, then checks the screenshots. Pixel checks use the light theme's accent colour, so
 they fail if the cursor is not on the key the script aimed for or no candidate is highlighted.
 """
@@ -15,7 +16,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pngcheck import count_color, png_colors  # noqa: E402
+from pngcheck import count_color, png_colors, png_rows  # noqa: E402
 
 root = Path(__file__).resolve().parents[2]
 out = Path(os.environ.get('BILI_IME_SMOKE_RESULTS', root / 'results/ime-smoke'))
@@ -78,7 +79,10 @@ class Pad:
         raise ValueError(letter)
 
 
-pad = Pad(15.0)
+# Startup connects Wi-Fi for up to 20 s (200 x 100 ms in network_connect) and a busy screen
+# ignores buttons; presses at 15 s were lost on CI, where the emulator has a real network.
+START_AT = 40.0
+pad = Pad(START_AT)
 pad.press(SQUARE, 2.0)
 for letter in 'nihao':
     pad.type(letter)
@@ -87,7 +91,9 @@ shot_typed = pad.t
 pad.press(SQUARE, 1.0)          # space commits the first candidate
 shot_committed = pad.t
 pad.press(START, 1.5)           # done: the search runs with the typed text
-shots = {'typed': shot_typed, 'committed': shot_committed, 'after': pad.t}
+# 'before' and 'opened' are only diagnostics: they show what was on screen when the first button
+# was pressed and just after, since CI screenshots cannot be opened from the authoring environment.
+shots = {'before': START_AT - 0.5, 'opened': START_AT + 1.5, 'typed': shot_typed, 'committed': shot_committed, 'after': pad.t}
 
 memstick = Path(tempfile.mkdtemp(prefix='ime-', dir=root / 'build/headless'))
 subprocess.run([sys.executable, str(root / 'tools/ppsspp/seed-ui-fixture.py'), str(memstick)], check=True)
@@ -128,6 +134,40 @@ try:
           'back on the search page')
 except (OSError, AssertionError, KeyError, ValueError) as error:
     check('screenshots readable', False, str(error))
+
+
+def sketch(path, columns=60, rows=17):
+    """A coarse brightness picture of a screenshot (' .:-=+*#%@' from dark to light)."""
+    width, height, pixels = png_rows(path)
+    shades = ' .:-=+*#%@'
+    lines = []
+    for r in range(rows):
+        line = ''
+        for c in range(columns):
+            x0, x1 = c * 480 // columns, (c + 1) * 480 // columns
+            y0, y1 = r * 272 // rows, (r + 1) * 272 // rows
+            total = count = 0
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    total += sum(pixels[y][x]) // 3
+                    count += 1
+            line += shades[min(9, total // count * 10 // 256)]
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 if failures:
+    for name in ('before', 'opened', 'typed'):
+        try:
+            print(f'--- {name}.png at {shots[name]:.1f}s')
+            print(sketch(paths[name]))
+        except (OSError, AssertionError, KeyError, ValueError) as error:
+            print(f'--- {name}.png unreadable: {error}')
+    # CI cannot open the screenshots, so show the emulator log next to the verdict.
+    try:
+        print("--- last lines of", out / 'run.log')
+        print('\n'.join((out / 'run.log').read_text(errors='replace').splitlines()[-60:]))
+    except OSError:
+        pass
     sys.exit('IME smoke failed: ' + ', '.join(failures))
 print('IME smoke passed')
