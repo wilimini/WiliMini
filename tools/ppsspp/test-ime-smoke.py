@@ -2,8 +2,8 @@
 """Drive the built-in pinyin keyboard in PPSSPP and check what it draws.
 
 Needs only PPSSPPHeadless and a built package (no account, network or ME firmware). The home
-page's SQUARE button opens the keyboard (Settings -> Input method is Auto; the emulated console
-language is not Chinese). The script types "nihao" with the d-pad by mirroring the keyboard's
+page's SQUARE button opens the keyboard (the built-in keyboard is the default input method). The
+run is offline so the app is never busy connecting when the first button is pressed. The script types "nihao" with the d-pad by mirroring the keyboard's
 navigation, then checks the screenshots. Pixel checks use the light theme's accent colour, so
 they fail if the cursor is not on the key the script aimed for or no candidate is highlighted.
 """
@@ -95,6 +95,7 @@ paths = {name: out / (name + '.png') for name in shots}
 for path in paths.values():
     path.unlink(missing_ok=True)
 env = dict(os.environ, BILI_HEADLESS_MEMSTICK=str(memstick), BILI_HEADLESS_PLAYER='ppsspp-sceMpeg',
+           BILI_HEADLESS_OFFLINE='1',
            BILI_HEADLESS_TIMEOUT='240', BILI_HEADLESS_TIMEOUT_EMULATED=str(int(pad.t) + 1),
            BILI_HEADLESS_PRESS_SCRIPT=','.join(pad.script),
            BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{shots[n]:.2f}:{paths[n]}' for n in shots))
@@ -129,5 +130,11 @@ try:
 except (OSError, AssertionError, KeyError, ValueError) as error:
     check('screenshots readable', False, str(error))
 if failures:
+    # CI cannot open the screenshots, so show the emulator log next to the verdict.
+    try:
+        print('--- last lines of', out / 'run.log')
+        print('\n'.join((out / 'run.log').read_text(errors='replace').splitlines()[-30:]))
+    except OSError:
+        pass
     sys.exit('IME smoke failed: ' + ', '.join(failures))
 print('IME smoke passed')
