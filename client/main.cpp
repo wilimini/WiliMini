@@ -48,9 +48,12 @@ void logMemory(const char* phase) {
 }
 
 int exitCallback(int, int, void*) {
+    WLOG_I(WLC_CLIENT, "home_exit callback_enter playback_active=%d", playbackActive);
     exiting = 1;
     transfer_cancel = 1;
+    WLOG_I(WLC_CLIENT, "home_exit stop_begin");
     psp_video_stop();
+    WLOG_I(WLC_CLIENT, "home_exit stop_end playback_active=%d", playbackActive);
     if (!playbackActive) return 0;
     // This callback runs on its own thread and survives a hung playback. Give
     // the cooperative teardown (which restores the Media Engine) a chance to
@@ -72,7 +75,11 @@ int exitCallback(int, int, void*) {
 int callbackThread(SceSize, void*) {
     const int id = sceKernelCreateCallback("wiliwili_exit", exitCallback, nullptr);
     sceKernelRegisterExitCallback(id);
-    sceKernelSleepThreadCB();
+    WLOG_I(WLC_CLIENT, "exit_callback registered id=%d thread=%d", id, sceKernelGetThreadId());
+    while (!exiting) {
+        sceKernelDelayThreadCB(2000000);
+        if (playbackActive) psp_video_log_health();
+    }
     return 0;
 }
 
@@ -433,8 +440,11 @@ int main(int argc, char** argv) {
     }
 
     transfer_cancel = 1;
+    WLOG_I(WLC_CLIENT, "shutdown app_begin");
     app.shutdown();
+    WLOG_I(WLC_CLIENT, "shutdown network_begin");
     network_close();
+    WLOG_I(WLC_CLIENT, "shutdown ui_begin");
     ui_shutdown();
     logMemory("shutdown");
     wili_log_sink_shutdown(); // writes pending lines and stops the writer thread

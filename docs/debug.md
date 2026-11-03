@@ -93,3 +93,22 @@ the benchmark runner and the lab build always save results, because that is thei
 - Only folders named `run-NNN` are ever deleted; other files in `results/` are left alone.
 - Other writes are not part of this switch: `settings.json`, the cover cache, session
   files, and `last-error.txt` when an error occurs.
+
+## Playback freezes and HOME exit diagnostics
+
+While playback is active, the exit-callback thread samples `PLAYER health` every
+2 seconds without taking playback locks. `operation` and `age_ms` identify the
+last playback call; RGB and audio produced/consumed counters show whether workers
+still advance. Samples are approximate, not a synchronized snapshot. An increasing
+age can also mean a legitimate network wait or pause; compare consecutive samples.
+These INFO lines use the existing asynchronous sink and require Save logs and
+results to be enabled for files. They do not write each frame to the Memory Stick.
+
+`CLIENT home_exit callback_enter`, `stop_begin`/`stop_end`, and `PLAYER stop`
+markers bracket HOME cancellation. Cleanup logs bracket ME finish/shutdown, RGB
+draining, audio thread joins and controller joins. The last begin without its end
+narrows the blocked call. The existing 5 second exit limit still starts after
+`psp_video_stop()` returns. This instrumentation does not change that policy.
+A stalled logger, unscheduled thread or system exit can still lose the last lines;
+missing lines alone do not prove which call blocked. Save `logs/wili.log`, the
+current run directory and `build.json` before another launch.

@@ -10,7 +10,8 @@
  * (pspmpeg.h; the AVCODEC and MPEGBASE AV modules are loaded by the bootstrap). The
  * library takes an MPEG program stream, so every H.264 access unit that FFmpeg
  * demuxes from the FLV is wrapped into a PES packet here and fed through a ring
- * buffer, with a synthesized PSMF header in front. Audio stays with FFmpeg's AAC
+ * buffer, with PSMF private-stream-2 frame descriptors and a synthesized header.
+ * Audio stays with FFmpeg's AAC
  * decoder and the existing clock. The same code runs on PPSSPP's sceMpeg HLE, which
  * accepts PS but not MP4 access units or sceMpegGetAvcNalAu.
  *
@@ -124,16 +125,36 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
                 else mux->error = ret;
                 break;
             }
+            /* PSMF's frame descriptor has a 21-bit access-unit length. */
+            if (!mux->size || mux->size > 0x001fffffu) {
+                mux->error = AVERROR_INVALIDDATA;
+                break;
+            }
         }
         uint8_t *p = (uint8_t *)output + written * 2048;
         memset(p, 0xff, 2048); memcpy(p, pack, sizeof(pack));
         int first = mux->offset == 0;
+        p += 14;
+        unsigned remaining = 2034;
+        if (first) {
+            /* Firmware GetAvcAu also consumes channel BF/01/E0/00. Its
+             * payload has a 14-byte prefix, then channel (3 bytes), frame
+             * count (1 byte), and a big-endian attribute/length per AU.
+             * Place it BEFORE the matching video PES. Ordinary MPEG-PS
+             * demuxers (including PPSSPP's) do not require this table. */
+            memset(p, 0, 28);
+            p[2] = 1; p[3] = 0xbf; AV_WB16(p + 4, 22);
+            p[6] = 1; p[7] = 0xe0;
+            p[20] = 1; p[21] = 0xe0; p[23] = 1;
+            AV_WB32(p + 24, mux->size);
+            p += 28;
+            remaining -= 28;
+        }
         unsigned header = first ? 19 : 9;
         unsigned n = mux->size - mux->offset;
-        if (n > 2034 - header) n = 2034 - header;
-        unsigned pad = 2034 - header - n;
+        if (n > remaining - header) n = remaining - header;
+        unsigned pad = remaining - header - n;
         unsigned stuffing = pad < 6 ? pad : 0;
-        p += 14;
         p[0]=0; p[1]=0; p[2]=1; p[3]=0xe0;
         AV_WB16(p+4, header + stuffing + n - 6);
         p[6]=0x80; p[7]=first ? 0xc0 : 0; p[8]=(first ? 10 : 0) + stuffing;
@@ -243,27 +264,45 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, "");
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_PLAY;
-    unsigned page = 0, empty = 0;
+    unsigned page = 0, empty = 0, no_data = 0;
     while (!quit_requested) {
+        playback_operation_set("sce_ring_available");
         int available = sceMpegRingbufferAvailableSize(&ring);
         if (available < 0) { ret = available; break; }
         if (!mux.eof && available) {
+            playback_operation_set("sce_ring_put");
             ret = sceMpegRingbufferPut(&ring,available,available);
             if (ret < 0) break;
         }
         if (mux.error) { ret = mux.error; break; }
         SceInt32 unknown = 0, got = 0;
+        playback_operation_set("sce_get_au");
         ret = sceMpegGetAvcAu(&mpeg,stream,&au,&unknown);
         if (ret < 0) {
             if (mux.eof && (unsigned)ret == 0x80618001u) {
                 stats->eof = 1;
                 ret = stats->total_frames ? 0 : AVERROR_INVALIDDATA;
+            } else if ((unsigned)ret == 0x80618001u && ++no_data <= 64 &&
+                       sceMpegRingbufferAvailableSize(&ring) > 0) {
+                /* An AU can span refills. Keep cancellation responsive and
+                 * bound retries so malformed input cannot spin forever. */
+                sceKernelDelayThreadCB(1000);
+                continue;
             }
+            if (ret < 0)
+                WLOG_E(WLC_PLAYER, "sceMpegGetAvcAu failed 0x%08x frames=%u eof=%d retries=%u",
+                       (unsigned)ret, stats->total_frames, mux.eof, no_data);
             break;
         }
+        no_data = 0;
         void *pixels = rgb;
+        playback_operation_set("sce_decode");
         ret = sceMpegAvcDecode(&mpeg,&au,stride,&pixels,&got);
-        if (ret < 0) break;
+        if (ret < 0) {
+            WLOG_E(WLC_PLAYER, "sceMpegAvcDecode failed 0x%08x au_bytes=%u",
+                   (unsigned)ret, (unsigned)au.iAuSize);
+            break;
+        }
         if (!got) {
             if (++empty > 64) { ret = AVERROR_INVALIDDATA; break; }
             continue;
@@ -271,8 +310,13 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         empty = 0;
         /* PPSSPP updates the AU with the reordered output timestamp. */
         int64_t pts_us = (((int64_t)au.iPtsMSB << 32 | au.iPts) - 90000) * 1000000 / 90000;
+        if (stats->total_frames < 3 || stats->total_frames % 60 == 0)
+            WLOG_I(WLC_PLAYER, "sce_frame frames=%u got=%d pts_us=%lld audio_us=%lld size=%dx%d stride=%d format=%d",
+                   stats->total_frames, (int)got, (long long)pts_us,
+                   (long long)audio_clock_us(), width, height, stride, (int)output_pixel_format);
         if (pts_us < playback_start_ms * 1000) continue;
         if (first_video_us < 0) first_video_us = pts_us;
+        playback_operation_set("sce_audio_wait");
         while (!quit_requested && !audio.error) {
             int64_t clock = audio_clock_us();
             /* When audio ends before video, let the remaining video follow
@@ -287,6 +331,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         }
         if (quit_requested) break;
         if (audio.error) { ret = audio.error; break; }
+        playback_operation_set("sce_scale");
         void *vram = (void *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * rgb_pixel_bytes);
         memset(vram,0,512*272*rgb_pixel_bytes);
         int w=480, h=(int)((int64_t)height*480/width);
@@ -295,7 +340,14 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
             if (output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565) {
                 uint16_t *dst=(uint16_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
                 const uint16_t *src=(const uint16_t *)rgb+(y*height/h)*stride;
-                for (int x=0;x<w;++x) dst[x]=src[x*width/w];
+                for (int x=0;x<w;++x) {
+                    uint16_t p = src[x*width/w];
+                    /* sceMpeg emits PSP BGR565; the presenter's RGB565
+                     * contract has red in the high five bits. Direct
+                     * display already expects the firmware's ordering. */
+                    dst[x] = presenter ? (uint16_t)((p & 0x07e0) |
+                                      ((p & 31) << 11) | (p >> 11)) : p;
+                }
             } else {
                 uint32_t *dst=(uint32_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
                 const uint32_t *src=(const uint32_t *)rgb+(y*height/h)*stride;
@@ -303,6 +355,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
             }
         }
         if (presenter) {
+            playback_operation_set("sce_present");
             ret = present_video(vram, output_pixel_format);
             if (ret < 0) break;
         } else {
@@ -320,6 +373,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         if (options->sample && stats->total_frames >= 300) break;
     }
  done:
+    playback_operation_set("sce_cleanup_audio");
     if (audio_started) {
         int64_t origin = audio.format ? source_origin_us(audio.format) : 0;
         audio_close(stats->eof && ret >= 0);
@@ -333,6 +387,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         }
     }
     if (created) {
+        playback_operation_set("sce_cleanup_mpeg");
         if (es) sceMpegFreeAvcEsBuf(&mpeg,es);
         /* PSPSDK declares the first argument as SceMpeg, but the firmware
          * and PPSSPP ABI take the address of the handle, like Delete. */

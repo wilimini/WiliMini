@@ -103,6 +103,8 @@ typedef struct {
 } PspVideoResult;
 int psp_video_play(const PspVideoOptions *options, PspVideoResult *result);
 void psp_video_stop(void);
+/* Sample playback progress without acquiring playback locks or writing files. */
+void psp_video_log_health(void);
 /* ME_BACKEND_* of the bridge PRX loaded by the bootstrap, or -1 when native
  * ME is not in use. Call only after the bootstrap's bridge load succeeded. */
 int psp_video_me_backend(void);

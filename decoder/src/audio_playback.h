@@ -322,6 +322,7 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
 
 static void audio_close(int drain)
 {
+    WLOG_I(WLC_PLAYER, "audio_close begin drain=%d stop=%d error=%d", drain, audio.stop, audio.error);
     if (drain && audio.output_thread >= 0 && !audio.error && !quit_requested) {
         unsigned active_wait = 0;
         while (!quit_requested) {
@@ -348,7 +349,9 @@ static void audio_close(int drain)
     }
     SceUID threads[] = {audio.decoder_thread, audio.output_thread};
     for (unsigned i = 0; i < 2; ++i) if (threads[i] >= 0) {
+        WLOG_I(WLC_PLAYER, "audio_close join_begin role=%s thread=%d", i ? "output" : "decoder", threads[i]);
         sceKernelWaitThreadEndCB(threads[i], NULL);
+        WLOG_I(WLC_PLAYER, "audio_close join_end role=%s", i ? "output" : "decoder");
         sceKernelDeleteThread(threads[i]);
     }
     audio.decoder_thread = audio.output_thread = -1;

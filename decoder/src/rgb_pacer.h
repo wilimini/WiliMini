@@ -150,7 +150,16 @@ static void rgb_publish(int64_t pts)
 }
 static int rgb_finish(void)
 {
-    while (rgb_consumed != rgb_produced) sceKernelDelayThreadCB(1000);
+    unsigned last_report = sceKernelGetSystemTimeLow();
+    while (rgb_consumed != rgb_produced) {
+        unsigned now = sceKernelGetSystemTimeLow();
+        if (now - last_report >= 2000000u) {
+            WLOG_W(WLC_PLAYER, "rgb_finish waiting produced=%u consumed=%u stop=%d error=%d thread=%d",
+                   rgb_produced, rgb_consumed, rgb_stop, rgb_error, rgb_thread);
+            last_report = now;
+        }
+        sceKernelDelayThreadCB(1000);
+    }
     return rgb_error;
 }
 static void rgb_close(void)

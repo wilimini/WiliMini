@@ -101,6 +101,15 @@ a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures ba
 decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
 reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
 
+Each access unit also has a PSMF private-stream-2 (`0xBF`, channel `01 E0 00`)
+descriptor before its video PES packets. The descriptor supplies the complete Annex B
+frame length, including any SPS/PPS prepended to a keyframe. Ordinary MPEG-PS video
+packets alone are insufficient for the firmware's `sceMpegGetAvcAu`; it can return
+`0x80618001` (`NO_DATA`) even when the video bytes have arrived. The client retries
+with a refill when space is available, with a bounded retry count. Errors now identify
+whether `sceMpegGetAvcAu` or `sceMpegAvcDecode` failed. This correction has passed host
+packet checks and PSP packaging; playback on hardware still needs verification.
+
 ## Status and limits
 
 - Tested on a PC: the Go packages (including real ffmpeg transcodes), the C module, preference

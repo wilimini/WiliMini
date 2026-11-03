@@ -32,7 +32,9 @@ static unsigned me_submitted, me_completed;
 static int me_render_finish(void)
 {
     if (!me_pending) return 0;
+    playback_operation_set("me_wait");
     int ret = meLabWait();
+    playback_operation_set("me_wait_done");
     if (ret < 0) {
         if (!PSP_ME_RENDER_QUEUE) playback_diagnostic("me_task_wait_failed", ret);
         return ret;
@@ -107,7 +109,9 @@ static int me_render_submit(const AVFrame *frame)
     int ret = me_render_finish();
     if (ret < 0) return ret;
 #if PSP_AUDIO && PSP_RGB_PACE
+    playback_operation_set("rgb_acquire");
     int slot = rgb_acquire();
+    playback_operation_set("rgb_acquired");
     if (slot < 0) return slot;
     me_output = rgb_slot_pixels((unsigned)slot);
 #if PSP_ME_RENDER_QUEUE
