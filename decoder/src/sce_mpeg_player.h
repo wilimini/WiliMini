@@ -227,8 +227,11 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     initialized = 1;
     int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(EMU_RING_PACKETS);
     if (state_size <= 0 || ring_size <= 0) { ret = -1; goto done; }
+    /* The Media Engine writes pictures straight into this buffer, so it must be a whole
+     * number of cache lines and the CPU's cached view has to be dropped around each decode. */
+    const size_t rgb_bytes = ((size_t)stride * ((height + 15) & ~15) * rgb_pixel_bytes + 63) & ~(size_t)63;
     state = memalign(64, state_size); ring_data = memalign(64, ring_size);
-    rgb = memalign(64, stride * ((height + 15) & ~15) * rgb_pixel_bytes);
+    rgb = memalign(64, rgb_bytes);
     if (!state || !ring_data || !rgb) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegRingbufferConstruct(&ring, EMU_RING_PACKETS, ring_data, ring_size, emu_ring_read, &mux);
     if (ret < 0) goto done;
@@ -297,7 +300,9 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         no_data = 0;
         void *pixels = rgb;
         playback_operation_set("sce_decode");
+        sceKernelDcacheWritebackInvalidateRange(rgb, rgb_bytes);
         ret = sceMpegAvcDecode(&mpeg,&au,stride,&pixels,&got);
+        sceKernelDcacheInvalidateRange(rgb, rgb_bytes);
         if (ret < 0) {
             WLOG_E(WLC_PLAYER, "sceMpegAvcDecode failed 0x%08x au_bytes=%u",
                    (unsigned)ret, (unsigned)au.iAuSize);

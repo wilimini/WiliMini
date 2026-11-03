@@ -130,7 +130,9 @@ int main(int argc, char** argv) {
     WLOG_I(WLC_CLIENT, "root=%s", root);
     WLOG_I(WLC_CLIENT, "heap_kib=%d default_rgb_frames=%d",
            BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
-    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
+    // This thread formats log lines (HOME exit and the 2 s playback health samples): vsnprintf
+    // plus the line buffer overflow the old 4 KiB stack, so give it room.
+    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x4000,
                                                PSP_THREAD_ATTR_USER, nullptr);
     if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
     scePowerSetClockFrequency(333, 333, 166);
