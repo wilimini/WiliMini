@@ -214,5 +214,7 @@
   "stream_err_busy": "服务器正忙 · 请先停止另一路串流",
   "stream_err_ffmpeg": "服务器未安装 ffmpeg",
   "stream_err_upstream": "服务器无法从哔哩哔哩获取该视频",
-  "stream_err_bad_request": "服务器拒绝了请求 · 请更新 WiliMini 和 wili-server"
+  "stream_err_bad_request": "服务器拒绝了请求 · 请更新 WiliMini 和 wili-server",
+  "stream_err_no_me": "直播需要 ME 解码器，而开启流媒体服务器时 ME 已关闭 · 请在设置中关闭后重新打开 WiliMini",
+  "stream_status_restart": "已保存 · 退出（START）并重新打开 WiliMini 后生效：开启流媒体服务器时不使用 Media Engine"
 }

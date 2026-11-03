@@ -176,7 +176,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     SceMpegStream *stream = NULL;
     SceMpegAu au __attribute__((aligned(64)));
     void *state = NULL, *ring_data = NULL, *es = NULL;
-    void *rgb = NULL;
+    void *rgb = NULL, *frame = NULL;
     VideoSourceIO input = {0};
     EmuMux mux = {0};
     uint8_t header[2048] __attribute__((aligned(64))) = {0};
@@ -232,7 +232,23 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     const size_t rgb_bytes = ((size_t)stride * ((height + 15) & ~15) * rgb_pixel_bytes + 63) & ~(size_t)63;
     state = memalign(64, state_size); ring_data = memalign(64, ring_size);
     rgb = memalign(64, rgb_bytes);
-    if (!state || !ring_data || !rgb) { ret = AVERROR(ENOMEM); goto done; }
+    /* The picture is placed and converted here, in cached RAM, on the CPU. The presenter then
+     * reads it from RAM; going through VRAM (uncached) made both sides several times slower. */
+    const size_t frame_bytes = (size_t)512 * 272 * rgb_pixel_bytes;
+    frame = memalign(64, frame_bytes);
+    if (!state || !ring_data || !rgb || !frame) { ret = AVERROR(ENOMEM); goto done; }
+    memset(frame, 0, frame_bytes); /* the borders stay black: only the picture area is rewritten */
+    int out_w = 480, out_h = (int)((int64_t)height * 480 / width);
+    if (out_h > 272) { out_h = 272; out_w = (int)((int64_t)width * 272 / height); }
+    if (out_w < 2) out_w = 2;
+    if (out_h < 1) out_h = 1;
+    const int direct = out_w == width && out_h == height; /* the usual case: no scaling */
+    const int off_x = (480 - out_w) / 2, off_y = (272 - out_h) / 2;
+    uint16_t xmap[480], ymap[272];
+    if (!direct) {
+        for (int x = 0; x < out_w; ++x) xmap[x] = (uint16_t)(x * width / out_w);
+        for (int y = 0; y < out_h; ++y) ymap[y] = (uint16_t)(y * height / out_h);
+    }
     ret = sceMpegRingbufferConstruct(&ring, EMU_RING_PACKETS, ring_data, ring_size, emu_ring_read, &mux);
     if (ret < 0) goto done;
     constructed = 1;
@@ -337,33 +353,42 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         if (quit_requested) break;
         if (audio.error) { ret = audio.error; break; }
         playback_operation_set("sce_scale");
-        void *vram = (void *)(0x44000000 + (presenter ? 2 : page) * 512 * 272 * rgb_pixel_bytes);
-        memset(vram,0,512*272*rgb_pixel_bytes);
-        int w=480, h=(int)((int64_t)height*480/width);
-        if (h>272) { h=272; w=(int)((int64_t)width*272/height); }
-        for (int y=0;y<h;++y) {
-            if (output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565) {
-                uint16_t *dst=(uint16_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
-                const uint16_t *src=(const uint16_t *)rgb+(y*height/h)*stride;
-                for (int x=0;x<w;++x) {
-                    uint16_t p = src[x*width/w];
-                    /* sceMpeg emits PSP BGR565; the presenter's RGB565
-                     * contract has red in the high five bits. Direct
-                     * display already expects the firmware's ordering. */
-                    dst[x] = presenter ? (uint16_t)((p & 0x07e0) |
-                                      ((p & 31) << 11) | (p >> 11)) : p;
+        const size_t bpp = rgb_pixel_bytes;
+        /* sceMpeg emits PSP BGR565; the presenter's RGB565 contract has red in the high five
+         * bits. Direct display already expects the firmware's ordering. */
+        const int swap_rb = presenter != NULL;
+        for (int y = 0; y < out_h; ++y) {
+            const uint8_t *srow = (const uint8_t *)rgb + (size_t)(direct ? y : ymap[y]) * stride * bpp;
+            uint8_t *drow = (uint8_t *)frame + ((size_t)(y + off_y) * 512 + off_x) * bpp;
+            if (bpp == 4) {
+                if (direct) memcpy(drow, srow, (size_t)out_w * 4);
+                else {
+                    const uint32_t *sp = (const uint32_t *)srow; uint32_t *dp = (uint32_t *)drow;
+                    for (int x = 0; x < out_w; ++x) dp[x] = sp[xmap[x]];
+                }
+            } else if (direct && swap_rb && !(out_w & 1) && !(off_x & 1)) {
+                const uint32_t *sp = (const uint32_t *)srow; uint32_t *dp = (uint32_t *)drow;
+                for (int x = 0; x < out_w / 2; ++x) {
+                    const uint32_t v = sp[x]; /* two pixels at once */
+                    dp[x] = (v & 0x07e007e0u) | ((v & 0x001f001fu) << 11) | ((v >> 11) & 0x001f001fu);
                 }
             } else {
-                uint32_t *dst=(uint32_t *)vram+(y+(272-h)/2)*512+(480-w)/2;
-                const uint32_t *src=(const uint32_t *)rgb+(y*height/h)*stride;
-                for (int x=0;x<w;++x) dst[x]=src[x*width/w];
+                const uint16_t *sp = (const uint16_t *)srow; uint16_t *dp = (uint16_t *)drow;
+                for (int x = 0; x < out_w; ++x) {
+                    const uint16_t px = direct ? sp[x] : sp[xmap[x]];
+                    dp[x] = swap_rb ? (uint16_t)((px & 0x07e0) | ((px & 31) << 11) | (px >> 11)) : px;
+                }
             }
         }
+        /* The presenter and the DMA engine read this buffer through RAM, not our cache. */
+        sceKernelDcacheWritebackRange(frame, frame_bytes);
         if (presenter) {
             playback_operation_set("sce_present");
-            ret = present_video(vram, output_pixel_format);
+            ret = present_video(frame, output_pixel_format);
             if (ret < 0) break;
         } else {
+            void *vram = (void *)(0x44000000 + (size_t)page * frame_bytes);
+            memcpy(vram, frame, frame_bytes);
             sceDisplayWaitVblankStart();
             sceDisplaySetFrameBuf(vram,512,
                 output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
@@ -401,7 +426,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     }
     if (constructed) sceMpegRingbufferDestruct(&ring);
     if (initialized) sceMpegFinish();
-    free(rgb); free(ring_data); free(state);
+    free(frame); free(rgb); free(ring_data); free(state);
     av_packet_free(&mux.packet); av_free(mux.parameters); av_free(mux.data);
     source_close(&mux.format,&input);
     if (run_path[0]) {

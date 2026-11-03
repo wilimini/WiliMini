@@ -47,6 +47,9 @@ void logMemory(const char* phase) {
            sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
 }
 
+// True when the loader started no ME bridge; native-ME playback is then impossible.
+bool noMe = false;
+
 int exitCallback(int, int, void*) {
     WLOG_I(WLC_CLIENT, "home_exit callback_enter playback_active=%d", playbackActive);
     exiting = 1;
@@ -158,9 +161,16 @@ int main(int argc, char** argv) {
     return playbackTest;
 #endif
     pspapp::App app;
-    if (!(BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP)) {
+    // No ME bridge is loaded under the emulator's sceMpeg or with the stream server on (see
+    // bootstrap.c); then nothing here may call into it.
+    noMe = BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
+    for (int i = 1; i < argc; ++i)
+        if (argv && argv[i] && std::strcmp(argv[i], "--no-me") == 0) noMe = true;
+    if (!noMe) {
         app.setActiveMeBackend(psp_video_me_backend());
         WLOG_I(WLC_CLIENT, "me_backend=%d", app.activeMeBackend());
+    } else {
+        WLOG_I(WLC_CLIENT, "me_backend=none (sceMpeg owns the Media Engine)");
     }
     ui_startup_status("正在读取设置与本地缓存…");
     app.init();
@@ -235,6 +245,15 @@ int main(int argc, char** argv) {
                             : BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
                                   ? PSP_VIDEO_BACKEND_SCE_MPEG
                                   : PSP_VIDEO_BACKEND_NATIVE_ME;
+            if (options.backend == PSP_VIDEO_BACKEND_NATIVE_ME && noMe) {
+                // Live rooms and other direct playback need the ME decoder, which is off while the
+                // stream server is on. Fail cleanly instead of calling into an absent bridge.
+                ui_resume();
+                app.finishPlayback(-1, 0, 0, 0, PSP_VIDEO_STAGE_SETUP, 0);
+                app.setStatus(pspapp::text(pspapp::TextId::stream_err_no_me, app.preferences().locale));
+                previous = ~0u;
+                continue;
+            }
             auto osd = std::make_unique<pspapp::PlaybackOsd>(app.playbackTitle(), app.preferences());
             osd->enableNetwork(app.playbackCard().bvid, app.playbackCard().cid, app.playbackCard().aid);
             options.presenter = osd->presenter();

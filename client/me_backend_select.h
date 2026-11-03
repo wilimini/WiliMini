@@ -52,4 +52,22 @@ static inline int wili_me_backend_from_settings(const char *text, size_t length)
     return WILI_ME_BACKEND_CUSTOM_CORE;
 }
 
+/* True when settings.json has "stream_server": true. wili-server streams are decoded by sceMpeg,
+ * which owns the Media Engine, so the loader then starts no ME bridge at all. */
+static inline int wili_stream_server_from_settings(const char *text, size_t length) {
+    static const char key[] = "\"stream_server\"";
+    if (!text) return 0;
+    const size_t key_length = sizeof(key) - 1;
+    for (size_t i = 0; i + key_length <= length; ++i) {
+        if (memcmp(text + i, key, key_length) != 0) continue;
+        size_t p = i + key_length;
+        while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
+        if (p >= length || text[p] != ':') return 0;
+        ++p;
+        while (p < length && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n')) ++p;
+        return p + 4 <= length && memcmp(text + p, "true", 4) == 0;
+    }
+    return 0;
+}
+
 #endif

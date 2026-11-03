@@ -136,9 +136,9 @@ void App::changeSetting() {
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)
                 ? text(TextId::settings_saved_me_backend, preferences_.locale)
             : text(TextId::settings_saved, preferences_.locale);
-    if (selected == SettingItem::StreamServer && preferences_.streamServer)
-        status_ = text(preferences_.serverReady() ? TextId::stream_status_enabled
-                                                  : TextId::stream_status_incomplete, preferences_.locale);
+    // The loader decides at start-up whether to load the ME bridge, so this needs a restart.
+    if (selected == SettingItem::StreamServer)
+        status_ = text(TextId::stream_status_restart, preferences_.locale);
 }
 
 bool App::streamTarget(StreamTarget& target, long long startMs) const {
