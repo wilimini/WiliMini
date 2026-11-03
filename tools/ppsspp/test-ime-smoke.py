@@ -2,8 +2,9 @@
 """Drive the built-in pinyin keyboard in PPSSPP and check what it draws.
 
 Needs only PPSSPPHeadless and a built package (no account, network or ME firmware). The home
-page's SQUARE button opens the keyboard (the built-in keyboard is the default input method). The
-run is offline so the app is never busy connecting when the first button is pressed. The script types "nihao" with the d-pad by mirroring the keyboard's
+page's SQUARE button opens the keyboard (the built-in keyboard is the default input method). On a
+machine with real network access (CI) the client is busy connecting for up to 20 emulated seconds
+after start and ignores buttons, so the script waits START_AT seconds. The script types "nihao" with the d-pad by mirroring the keyboard's
 navigation, then checks the screenshots. Pixel checks use the light theme's accent colour, so
 they fail if the cursor is not on the key the script aimed for or no candidate is highlighted.
 """
@@ -78,7 +79,10 @@ class Pad:
         raise ValueError(letter)
 
 
-pad = Pad(15.0)
+# Startup connects Wi-Fi for up to 20 s (200 x 100 ms in network_connect) and a busy screen
+# ignores buttons; presses at 15 s were lost on CI, where the emulator has a real network.
+START_AT = 40.0
+pad = Pad(START_AT)
 pad.press(SQUARE, 2.0)
 for letter in 'nihao':
     pad.type(letter)
@@ -89,7 +93,7 @@ shot_committed = pad.t
 pad.press(START, 1.5)           # done: the search runs with the typed text
 # 'before' and 'opened' are only diagnostics: they show what was on screen when the first button
 # was pressed and just after, since CI screenshots cannot be opened from the authoring environment.
-shots = {'before': 14.5, 'opened': 16.5, 'typed': shot_typed, 'committed': shot_committed, 'after': pad.t}
+shots = {'before': START_AT - 0.5, 'opened': START_AT + 1.5, 'typed': shot_typed, 'committed': shot_committed, 'after': pad.t}
 
 memstick = Path(tempfile.mkdtemp(prefix='ime-', dir=root / 'build/headless'))
 subprocess.run([sys.executable, str(root / 'tools/ppsspp/seed-ui-fixture.py'), str(memstick)], check=True)
@@ -97,7 +101,6 @@ paths = {name: out / (name + '.png') for name in shots}
 for path in paths.values():
     path.unlink(missing_ok=True)
 env = dict(os.environ, BILI_HEADLESS_MEMSTICK=str(memstick), BILI_HEADLESS_PLAYER='ppsspp-sceMpeg',
-           BILI_HEADLESS_OFFLINE='1',
            BILI_HEADLESS_TIMEOUT='240', BILI_HEADLESS_TIMEOUT_EMULATED=str(int(pad.t) + 1),
            BILI_HEADLESS_PRESS_SCRIPT=','.join(pad.script),
            BILI_HEADLESS_SCREENSHOT_AT=','.join(f'{shots[n]:.2f}:{paths[n]}' for n in shots))

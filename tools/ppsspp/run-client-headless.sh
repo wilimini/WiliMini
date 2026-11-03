@@ -54,10 +54,7 @@ fi
 for artifact in EBOOT.PBP wili_mini.prx wili_mini_1000.prx me_bridge.prx me_bridge_custom_core.prx cacert.pem build.json wqy.bmf title.bmf pinyin.dat; do
     cp -f "$package/$artifact" "$memstick/PSP/GAME/WiliMini/$artifact"
 done
-# BILI_HEADLESS_OFFLINE=1 leaves out the Wi-Fi profile: the app then fails to connect at once
-# instead of spending its first seconds busy connecting (and answering the host's real network
-# when there is one, as on CI), so scripted button presses are never swallowed by a busy screen.
-if [ "${BILI_HEADLESS_OFFLINE:-0}" != 1 ] && [ ! -f "$memstick/PSP/GAME/WiliMini/wifi-profile.txt" ]; then
+if [ ! -f "$memstick/PSP/GAME/WiliMini/wifi-profile.txt" ]; then
     printf '1\n' > "$memstick/PSP/GAME/WiliMini/wifi-profile.txt"
 fi
 
