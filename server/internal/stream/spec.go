@@ -1,6 +1,7 @@
-// Package stream turns a Bilibili video into something the PSP's decoder
-// handles: 480x272 H.264 (CAVLC/Baseline or CABAC/Main) plus AAC in FLV, produced
-// by an ffmpeg child process whose stdout is the HTTP response.
+// Package stream turns a Bilibili video into something the PSP's sceMpeg decoder
+// handles: H.264 Main profile (CAVLC by default) up to 480x272 with both sides a
+// multiple of 16, plus AAC, in FLV, produced by an ffmpeg child process whose
+// stdout is the HTTP response.
 package stream
 
 import (
@@ -107,7 +108,7 @@ func ParseRequest(q url.Values) (Request, error) {
 	return r, nil
 }
 
-// EncoderProfile resolves auto: CAVLC decodes cheapest on the PSP.
+// EncoderProfile resolves auto to CAVLC, which is what the PSP's video format uses.
 func (r Request) EncoderProfile() Profile {
 	if r.Profile == ProfileCABAC {
 		return ProfileCABAC
@@ -164,17 +165,21 @@ func BuildArgs(r Request, in Inputs, ua string) []string {
 		input(in.Audio)
 		args = append(args, "-map", "0:v:0", "-map", "1:a:0")
 	}
-	scale := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+	// Fit inside the box, then pad to whole macroblocks: the PSP decoder wants a coded size
+	// that is a multiple of 16 and no cropping, and padding keeps the picture undistorted.
+	scale := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,"+
+		"pad=w=ceil(iw/16)*16:h=ceil(ih/16)*16:x=(ow-iw)/2:y=(oh-ih)/2:color=black,setsar=1",
 		r.Width, r.Height)
 	args = append(args, "-vf", scale, "-fpsmax", strconv.Itoa(r.FPS), "-pix_fmt", "yuv420p")
 
-	profile, cabac := "baseline", "0"
+	// Main profile in both cases; CAVLC (the default) is the PSP's native video format.
+	profile, cabac := "main", "0"
 	if r.EncoderProfile() == ProfileCABAC {
-		profile, cabac = "main", "1"
+		cabac = "1"
 	}
-	// No B-frames, two references and a two-second GOP keep decoding cheap and
-	// make restart-based seeking land close to the requested time.
-	x264 := fmt.Sprintf("cabac=%s:bframes=0:ref=2:keyint=%d:min-keyint=%d:scenecut=0:rc-lookahead=10",
+	// No B-frames, one reference frame and a two-second GOP keep decoding cheap, stay within
+	// what the firmware decoder accepts, and make restart-based seeking land close to the target.
+	x264 := fmt.Sprintf("cabac=%s:bframes=0:ref=1:keyint=%d:min-keyint=%d:scenecut=0:rc-lookahead=10",
 		cabac, r.FPS*2, r.FPS)
 	args = append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-profile:v", profile, "-level:v", "3.0",

@@ -1,11 +1,21 @@
-#ifndef WILI_PPSSPP_PLAYER_H
-#define WILI_PPSSPP_PLAYER_H
+#ifndef WILI_SCE_MPEG_PLAYER_H
+#define WILI_SCE_MPEG_PLAYER_H
 #include <pspmpeg.h>
+#include <psp_runtime.h>
 #include <libavutil/intreadwrite.h>
 
 /* Included by player.c to share source IO, cancellation and the AAC clock.
- * Only this backend synthesizes PSMF/PS: PSP firmware keeps using the ME path.
- * PPSSPP's sceMpeg HLE accepts PS, not MP4 access units or GetAvcNalAu. */
+ *
+ * Video is decoded by the firmware's sceMpeg library through its public, user-mode API
+ * (pspmpeg.h; the AVCODEC and MPEGBASE AV modules are loaded by the bootstrap). The
+ * library takes an MPEG program stream, so every H.264 access unit that FFmpeg
+ * demuxes from the FLV is wrapped into a PES packet here and fed through a ring
+ * buffer, with a synthesized PSMF header in front. Audio stays with FFmpeg's AAC
+ * decoder and the existing clock. The same code runs on PPSSPP's sceMpeg HLE, which
+ * accepts PS but not MP4 access units or sceMpegGetAvcNalAu.
+ *
+ * The stream is expected to be what wili-server sends: AVC Main profile with CAVLC,
+ * no B-frames, level 3.0, dimensions that are multiples of 16, at most 480x272. */
 #define EMU_RING_PACKETS 256
 #define EMU_MAX_AU (4 * 1024 * 1024)
 typedef struct {
@@ -138,7 +148,7 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
     return written;
 }
 
-static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
+static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) {
     int ret = 0, initialized = 0, created = 0, constructed = 0, audio_started = 0;
     SceMpeg mpeg = NULL;
     SceMpegRingbuffer ring = {0};
@@ -155,7 +165,9 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     ret = select_run_dir(run_path, sizeof(run_path));
     if (ret < 0) return ret;
     video_stage = PSP_VIDEO_STAGE_SOURCE;
-    WLOG_I(WLC_PLAYER, "backend=ppsspp-sceMpeg");
+    const int emulator = psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
+    const char *backend_name = emulator ? "ppsspp-sceMpeg" : "psp-sceMpeg";
+    WLOG_I(WLC_PLAYER, "backend=%s", backend_name);
     ret = source_open(&mux.format, SOURCE, video_io_source, &input);
     if (ret < 0) goto done;
     ret = avformat_find_stream_info(mux.format, NULL);
@@ -166,8 +178,15 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     playback_metadata(mux.format->duration == AV_NOPTS_VALUE ? 0 : mux.format->duration / 1000,
                       !mux.format->pb || (mux.format->pb->seekable & AVIO_SEEKABLE_NORMAL));
     AVCodecParameters *par = mux.format->streams[mux.stream]->codecpar;
-    width = par->width; height = par->height; stride = (width + 15) & ~15;
-    if (par->codec_id != AV_CODEC_ID_H264 || width <= 0 || height <= 0 || width > 1280 || height > 720) {
+    width = par->width; height = par->height;
+    /* The firmware's frame buffers are 512 pixels wide (a multiple of 64 pixels). Its AVC
+     * decoder handles up to 720x480; the emulator takes larger pictures. */
+    stride = emulator ? ((width + 15) & ~15) : 512;
+    const int max_width = emulator ? 1280 : 480, max_height = emulator ? 720 : 272;
+    if (par->codec_id != AV_CODEC_ID_H264 || width <= 0 || height <= 0 ||
+        width > max_width || height > max_height) {
+        WLOG_E(WLC_PLAYER, "sceMpeg: unsupported stream %dx%d codec=%d (limit %dx%d)",
+               width, height, (int)par->codec_id, max_width, max_height);
         ret = AVERROR(ENOSYS); goto done;
     }
     ret = source_start_at(mux.format, mux.stream, playback_start_ms);
@@ -180,7 +199,10 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
         if ((int)i != mux.stream) mux.format->streams[i]->discard = AVDISCARD_ALL;
     video_stage = PSP_VIDEO_STAGE_VIDEO_INIT;
     ret = sceMpegInit();
-    if (ret < 0) goto done;
+    if (ret < 0) {
+        WLOG_E(WLC_PLAYER, "sceMpegInit failed 0x%08x; are the AV modules loaded?", (unsigned)ret);
+        goto done;
+    }
     initialized = 1;
     int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(EMU_RING_PACKETS);
     if (state_size <= 0 || ring_size <= 0) { ret = -1; goto done; }
@@ -191,10 +213,13 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
     if (ret < 0) goto done;
     constructed = 1;
     ret = sceMpegCreate(&mpeg, state, state_size, &ring, stride, 0, 0);
-    if (ret < 0) goto done;
+    if (ret < 0) {
+        WLOG_E(WLC_PLAYER, "sceMpegCreate failed 0x%08x", (unsigned)ret);
+        goto done;
+    }
     created = 1;
     /* A streaming PSMF header with one AVC stream. PS timestamps are 90 kHz,
-     * offset by one second as expected by PPSSPP's MediaEngine HLE. */
+     * offset by one second like the first timestamp of a real PSMF file. */
     memcpy(header,"PSMF0015",8); AV_WB32(header+8,2048); AV_WB32(header+12,0x7ffff800);
     AV_WB32(header+0x56,90000);
     AV_WB32(header+0x5c,0x7fffffff);
@@ -323,7 +348,7 @@ static int ppsspp_run_decode(const PspVideoOptions *options, RunStats *stats) {
         char path[224]; snprintf(path,sizeof(path),"%s/summary.json",run_path);
         FILE *log=fopen(path,"wb");
         if (log) {
-            fprintf(log,"{\n  \"backend\": \"ppsspp-sceMpeg\",\n  \"frames\": %u,\n  \"rgb_presented\": %u,\n  \"first_video_us\": %lld,\n  \"error\": %d,\n",stats->total_frames,stats->total_frames,(long long)first_video_us,ret);
+            fprintf(log,"{\n  \"backend\": \"%s\",\n  \"frames\": %u,\n  \"rgb_presented\": %u,\n  \"first_video_us\": %lld,\n  \"error\": %d,\n",backend_name,stats->total_frames,stats->total_frames,(long long)first_video_us,ret);
             if (audio_started) fprintf(log,
                 "  \"audio_error\": %d,\n  \"audio_first_pts_us\": %lld,\n"
                 "  \"audio_submitted_samples\": %llu,\n  \"audio_source_samples\": %llu,\n",

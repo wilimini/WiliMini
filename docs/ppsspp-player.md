@@ -76,7 +76,7 @@ PPSSPP 下加载 AVCODEC、MPEGBASE 模块，跳过 `me_bridge.prx`；包内缺�
 ME bridge 文件也可以启动。真机仍要求完整 ME 包并使用原播放器。
 两条路径共用 `psp_video_play` / `psp_video_stop` API。
 
-模拟器后端位于 `decoder/src/ppsspp_player.h`，作为 `player.c` 的内部实现，
+sceMpeg 后端位于 `decoder/src/sce_mpeg_player.h`（真机上用于 wili-server 串流，见 docs/streaming-server.md），作为 `player.c` 的内部实现，
 复用已有随机访问输入、AAC 输出、控制器取消和音频时钟：
 
 1. FFmpeg 解析 MP4、DASH 或 FLV，保留原 H.264 压缩数据。

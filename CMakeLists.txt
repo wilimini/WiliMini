@@ -161,7 +161,9 @@ add_library(pspvideo STATIC
     decoder/me/me_entry.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
-target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
+# The sceMpeg backend is always built: wili-server streams use it on real PSPs too.
+target_compile_definitions(pspvideo PRIVATE
+    BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}> BILI_SCE_MPEG=1)
 target_include_directories(pspvideo PRIVATE
     "${CMAKE_BINARY_DIR}/generated"
     "${ROOT}/platform/include"
@@ -352,9 +354,9 @@ foreach(client_target wili_mini wili_mini_1000)
         pspnet_apctl pspnet_resolver pspnet_inet pspnet
         psputility psprtc pspkubridge
         pspdebug pspdisplay pspge pspctrl)
-    if(BILI_PPSSPP_SCE_MPEG)
-        target_link_libraries(${client_target} PRIVATE pspmpeg)
-    endif()
+    # User-mode sceMpeg stubs (the kernel-side pspmpeg_driver is not needed). The bootstrap
+    # loads the AVCODEC and MPEGBASE AV modules before this PRX is linked.
+    target_link_libraries(${client_target} PRIVATE pspmpeg)
     set_target_properties(${client_target} PROPERTIES
         OUTPUT_NAME ${client_target}
         SUFFIX ".elf"

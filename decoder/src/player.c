@@ -595,8 +595,11 @@ static int select_run_dir(char *path, size_t length)
 }
 
 
-#if BILI_PPSSPP_SCE_MPEG
-#include "ppsspp_player.h"
+#ifndef BILI_SCE_MPEG
+#define BILI_SCE_MPEG 0
+#endif
+#if BILI_SCE_MPEG
+#include "sce_mpeg_player.h"
 #endif
 
 static void save_results(const char *path, const RunStats *s, int render,
@@ -1410,9 +1413,9 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     RunStats stats = {0};
     char path[128] = {0};
     int ret;
-#if BILI_PPSSPP_SCE_MPEG
-    if (options->backend == PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG)
-        ret = ppsspp_run_decode(options, &stats);
+#if BILI_SCE_MPEG
+    if (options->backend == PSP_VIDEO_BACKEND_SCE_MPEG)
+        ret = sce_mpeg_run_decode(options, &stats);
     else
 #endif
     {

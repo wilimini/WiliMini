@@ -50,8 +50,9 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 ME 渲染队列按所选格式保存 512×272 输出帧：RGB565 每帧 272 KiB，RGBA8888 每帧 544 KiB。
 PSP 真机测试中，RGB565 队列经 presenter 转换到 RGBA8888 OSD 页面后显示正常。
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
-默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`，只有启用
-`BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时才选择 `PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG`。
+默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`。`PSP_VIDEO_BACKEND_SCE_MPEG`（固件 sceMpeg，用户态 API，
+loader 预先加载 AVCODEC/MPEGBASE AV 模块）用于 wili-server 串流（真机和模拟器），不会回退到 ME；
+启用 `BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时它也是默认后端。
 RGB 队列使用一次对齐分配，在播放期间复用，等待显示线程和 ME 停止后才释放。
 音频先于视频 EOF 时，所有 PCM 提交后时钟继续推进，视频可播放至自身结尾。
 若 ME 停止超时，保留其仍可能访问的缓冲，并拒绝再次启动，避免释放后写入。

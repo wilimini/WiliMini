@@ -161,7 +161,7 @@ func ffprobe(t *testing.T, data []byte) probe {
 
 func TestStreamProducesPSPFriendlyFLV(t *testing.T) {
 	f := newFixture(t, 2, 4)
-	for _, tc := range []struct{ profile, want string }{{"cavlc", "Baseline"}, {"cabac", "Main"}} {
+	for _, tc := range []struct{ profile, want string }{{"cavlc", "Main"}, {"cabac", "Main"}} {
 		resp, body := fetch(t, f.front.URL+"/?bvid=BV1xx411c7mD&cid=9&profile="+tc.profile)
 		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "video/x-flv" {
 			t.Fatalf("%s: %d %s %.200s", tc.profile, resp.StatusCode, resp.Header.Get("Content-Type"), body)
@@ -175,8 +175,8 @@ func TestStreamProducesPSPFriendlyFLV(t *testing.T) {
 				if s.CodecName != "h264" || !strings.Contains(s.Profile, tc.want) {
 					t.Errorf("%s: video %s profile %q", tc.profile, s.CodecName, s.Profile)
 				}
-				if s.Width != 480 || s.Height != 270 || s.Width%2 != 0 || s.Height%2 != 0 {
-					t.Errorf("%s: size %dx%d (16:9 inside 480x272, even dims)", tc.profile, s.Width, s.Height)
+				if s.Width != 480 || s.Height != 272 || s.Width%16 != 0 || s.Height%16 != 0 {
+					t.Errorf("%s: size %dx%d (16:9 padded to whole macroblocks)", tc.profile, s.Width, s.Height)
 				}
 				if s.Level != 30 {
 					t.Errorf("%s: level %d", tc.profile, s.Level)

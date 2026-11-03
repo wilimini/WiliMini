@@ -2,12 +2,15 @@
 #define PSP_VIDEO_H
 /* No FFmpeg or UI types cross this boundary. Call on a VFPU-enabled thread.
  * The ME bridge PRX must be loaded before native playback, including PPSSPP.
- * BILI_PPSSPP_SCE_MPEG enables the optional emulator HLE backend instead.
+ * PSP_VIDEO_BACKEND_SCE_MPEG decodes with the firmware's sceMpeg library (user mode: the
+ * AVCODEC and MPEGBASE AV modules must be loaded, see client/bootstrap.c). wili-server
+ * streams use only this backend. BILI_PPSSPP_SCE_MPEG makes it the default under PPSSPP.
  * One player at a time. */
 #include <stdint.h>
 typedef enum {
     PSP_VIDEO_BACKEND_NATIVE_ME = 0,
-    PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG = 1
+    PSP_VIDEO_BACKEND_SCE_MPEG = 1,
+    PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG = PSP_VIDEO_BACKEND_SCE_MPEG /* former name */
 } PspVideoBackend;
 typedef enum {
     PSP_VIDEO_CANCEL_CIRCLE = 0,

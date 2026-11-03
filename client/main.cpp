@@ -220,9 +220,11 @@ int main(int argc, char** argv) {
                 ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
             options.cancel_button = app.preferences().confirmWithCircle
                 ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
-            options.backend = BILI_PPSSPP_SCE_MPEG &&
-                              psp_runtime_detect() == PSP_RUNTIME_PPSSPP
-                                  ? PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG
+            // wili-server streams are decoded by the firmware's sceMpeg and by nothing else:
+            // there is deliberately no fallback to the ME decoder for them.
+            options.backend = prepared.restart_seek ? PSP_VIDEO_BACKEND_SCE_MPEG
+                            : BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
+                                  ? PSP_VIDEO_BACKEND_SCE_MPEG
                                   : PSP_VIDEO_BACKEND_NATIVE_ME;
             auto osd = std::make_unique<pspapp::PlaybackOsd>(app.playbackTitle(), app.preferences());
             osd->enableNetwork(app.playbackCard().bvid, app.playbackCard().cid, app.playbackCard().aid);

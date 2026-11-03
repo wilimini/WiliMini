@@ -32,7 +32,7 @@ must be updated), `wili-server logout` forgets the Bilibili account.
 |---|---|---|
 | API calls | HTTPS to Bilibili, WBI signed on the PSP | `http://<pc>:8787/p/<host>/<path>`, signed on the PC |
 | Account | cookies in `session.json` on the memory stick | on the PC; the PSP keeps nothing |
-| Video | DASH ranges decoded as delivered | one FLV: H.264 (Baseline/CAVLC or Main/CABAC) + AAC, 384×216 to 480×272 |
+| Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main profile (CAVLC) + AAC, up to 480×272, **decoded by the firmware's sceMpeg** |
 | Seeking | in place | the stream is reopened at the new time (`t=`), about a second of delay |
 | Quality menu | Bilibili qualities | fixed by *Stream quality* in Settings |
 | Live rooms | direct | API via the server, media still direct |
@@ -61,9 +61,10 @@ refuses redirects off the allow-list, and forwards `Accept-Encoding` untouched.
 `--read-only` rejects POST.
 
 `/wili/v1/stream` query: `bvid` (or `pgc=1` for bangumi/film), `cid`, `t` (seconds),
-`profile` (`auto|cavlc|cabac`), `w`, `h`, `fps`, `vb`, `ab` (kbps), `qn`. Output is
-`video/x-flv` without a duration, timestamps starting at 0, no B-frames, two reference
-frames, a two-second GOP. Errors are JSON `{"error": code, "message": text}` with a
+`profile` (`auto|cavlc|cabac`; `auto` is `cavlc`, both are Main profile), `w`, `h`, `fps`, `vb`, `ab` (kbps), `qn`. Output is
+`video/x-flv` without a duration, timestamps starting at 0, Main profile level 3.0, no
+B-frames, one reference frame, a two-second GOP, and a picture padded with black to a
+multiple of 16 in both directions (480×270 becomes 480×272), which the PSP decoder wants. Errors are JSON `{"error": code, "message": text}` with a
 status: `401 unauthorized`, `429 rate_limited`, `403 login_required`, `404 no_stream`,
 `503 busy|ffmpeg_missing`, `502 upstream`, `400 bad_request`. A client that starts a
 new stream replaces its previous one; the server caps simultaneous streams (default 2).
@@ -87,13 +88,29 @@ Both only list servers; the token is still required. The wire formats are pinned
   (`bili_prepare_stream_server`), `client/playback.cpp`, `client/app_settings.cpp`.
 - `decoder`: `PspVideoOptions.restart_seek / timeline_offset_ms / timeline_duration_ms`.
 
+## Decoding with sceMpeg
+
+Server streams are decoded by the firmware's sceMpeg library and by nothing else: there is no
+fallback to the Media Engine decoder. It uses only the public, user-mode API (`pspmpeg.h`,
+linked as `libpspmpeg`); the bootstrap loads the `AVCODEC` and `MPEGBASE` AV modules with
+`sceUtilityLoadAvModule` before the client PRX is linked, so no kernel PRX is involved.
+
+sceMpeg consumes an MPEG program stream, so `decoder/src/sce_mpeg_player.h` wraps each H.264
+access unit that FFmpeg demuxes from the FLV into a PES packet, feeds 2048-byte packets through
+a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures back. Audio is
+decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
+reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
+
 ## Status and limits
 
 - Tested on a PC: the Go packages (including real ffmpeg transcodes), the C module, preference
   parsing, and the PSP build. The server has **not** been run against the live Bilibili
   service from the development environment, and nothing here has been run on a real PSP.
-- Playback uses the existing H.264 + AAC decoder path (the live-stream source). Using the
-  firmware's `sceMpeg` decoder on hardware is not part of this change.
+- The sceMpeg path has not run on real hardware. Things only a PSP can confirm: that the
+  firmware accepts the synthesized PSMF header and the PES wrapping, the `sceMpegCreate`
+  arguments (512-pixel frame width, mode 0), and that Main/CAVLC at level 3.0 with one reference
+  frame decodes. `profile=cabac` may be rejected by the firmware's decoder.
+- Only server streams use sceMpeg. Direct playback still uses the ME decoder.
 - Preset sizes and bitrates (384×216/700 k, 480×272/1000 k, 480×272/1500 k) are starting
   points and need tuning on a PSP.
 - Bilibili may throttle or change its API; the proxy passes JSON through, so most changes

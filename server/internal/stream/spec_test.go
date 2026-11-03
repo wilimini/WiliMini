@@ -57,7 +57,7 @@ func TestBuildArgsDash(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-ss 30.000 -user_agent UA", "-i http://v/video", "-i http://v/audio",
-		"-map 0:v:0 -map 1:a:0", "-profile:v baseline", "cabac=0:bframes=0", "-c:a aac", "-ar 44100 -ac 2",
+		"-map 0:v:0 -map 1:a:0", "-profile:v main", "cabac=0:bframes=0:ref=1", "pad=w=ceil(iw/16)*16", "-c:a aac", "-ar 44100 -ac 2",
 		"-f flv", "-fpsmax 30", "force_divisible_by=2", "pipe:1",
 	} {
 		if !strings.Contains(joined, want) {

@@ -55,12 +55,13 @@ int main(int argc,char **argv){
     r=sceUtilityLoadModule(PSP_MODULE_NET_COMMON);
     if(r>=0 || (unsigned)r==SCE_ERROR_MODULE_ALREADY_LOADED)r=sceUtilityLoadModule(PSP_MODULE_NET_INET);
     if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-    if(sce_mpeg){
-        r=sceUtilityLoadModule(PSP_MODULE_AV_AVCODEC);
-        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-        r=sceUtilityLoadModule(PSP_MODULE_AV_MPEGBASE);
-        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-    }else{
+    /* sceMpeg (user mode): the client links its stubs and wili-server streams are decoded
+     * with it, so the AV modules must be resident before the client PRX is linked. */
+    r=sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
+    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    r=sceUtilityLoadAvModule(PSP_AV_MODULE_MPEGBASE);
+    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    if(!sce_mpeg){
         int backend=saved_me_backend(root);
         r=start_bridge(root,backend);
         if(r<0 && backend!=WILI_ME_BACKEND_MIST){
