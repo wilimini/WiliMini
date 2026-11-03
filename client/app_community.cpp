@@ -411,6 +411,11 @@ void App::communityShortcut() {
 void App::clearAccountPages() {
   // Drop private page instances as well as their navigation history.
   const bool login = screen() == Screen::Login;
+  // Settings is a child page too (switching the stream server clears the account pages while
+  // Settings is open): put it back where it was, or its own code would find no route.
+  const bool settings = screen() == Screen::Settings;
+  const size_t settingsSelection = settings ? navigation_.get<SettingsRoute>().selection : 0;
+  const size_t settingsScroll = settings ? navigation_.get<SettingsRoute>().scroll : 0;
   const bool hadBrowse = navigation_.find<BrowseRoute>() != nullptr;
   navigation_.clearChildren();
   if (hadBrowse) {
@@ -419,6 +424,12 @@ void App::clearAccountPages() {
   }
   navigation_.current().focus = FocusArea::Content;
   if (login) navigation_.push<LoginRoute>();
+  if (settings) {
+    auto &page = navigation_.push<SettingsRoute>();
+    page.selection = settingsSelection;
+    page.scroll = settingsScroll;
+    navigation_.current().focus = FocusArea::Content;
+  }
   communityDraft_.clear();
   communityInputPending_ = false;
   communityLoginPending_ = false;
