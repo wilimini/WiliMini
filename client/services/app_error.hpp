@@ -18,7 +18,8 @@ enum class ErrorKind {
     MeInitFailed,
     OutOfMemory,
     IoFailure,
-    Unknown
+    Unknown,
+    StreamServer // detail carries the server's error code ("busy", "login_required", ...)
 };
 enum class ErrorOperation {
     None,

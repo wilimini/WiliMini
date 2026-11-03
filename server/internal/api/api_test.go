@@ -102,6 +102,27 @@ func TestWrongTokensAreRateLimitedPerClient(t *testing.T) {
 	}
 }
 
+func TestLogoutClearsTheAccountInBilibiliEnvelope(t *testing.T) {
+	s, srv := newServer(t)
+	s.Store.Merge([]*http.Cookie{{Name: "SESSDATA", Value: "x"}})
+	if resp, _ := call(t, mustGet(srv.URL+"/wili/v1/logout")); resp.StatusCode != 401 {
+		t.Fatal("logout needs the token")
+	}
+	resp, body := call(t, mustGet(srv.URL+"/wili/v1/logout?k=k7m2q9xa"))
+	var env struct {
+		Code int `json:"code"`
+		Data struct {
+			State string `json:"state"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil || resp.StatusCode != 200 || env.Code != 0 || env.Data.State != "signed_out" {
+		t.Fatalf("%d %s %v", resp.StatusCode, body, err)
+	}
+	if s.Store.LoggedIn() {
+		t.Fatal("still signed in")
+	}
+}
+
 func TestTokenChangesTakeEffectImmediately(t *testing.T) {
 	token := "oldtoken"
 	s, srv := newServer(t)

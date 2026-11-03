@@ -256,7 +256,9 @@ add_library(wili_client_objects OBJECT
     client/psp_clock.c
     client/psp_select.c
     client/psp_dns.c
-    client/dns_packet.c)
+    client/dns_packet.c
+    client/stream_server.c
+    client/server_discovery.c)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(LOCALIZATION_OUTPUTS
     "${CMAKE_BINARY_DIR}/generated/localization.generated.hpp"

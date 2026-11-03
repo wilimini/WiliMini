@@ -202,6 +202,13 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 
 # 开发
 
+## 串流服务器（可选）
+
+PSP 可以把同一 Wi-Fi 下的电脑当作 Bilibili 前端：电脑上的 `wili-server`（Go，见 `server/`）保存账号、
+代理 API，并用 ffmpeg 转码成 PSP 容易解码的 H.264 + AAC。默认关闭；设置 → 流媒体服务器 中开启，
+支持局域网自动发现（mDNS 与 UDP 广播）和配对令牌。协议、设置和限制见 [docs/streaming-server.md](docs/streaming-server.md)。
+该功能尚未在真机上验证。
+
 ## 环境准备
 
 需要安装 PSPSDK 和对应的 PSP 工具链，并设置 `PSPDEV`：

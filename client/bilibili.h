@@ -2,6 +2,7 @@
 #define BILIBILI_H
 #include <stddef.h>
 #include "storage_paths.h"
+#include "stream_server.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,6 +48,11 @@ typedef struct {
     BiliRangeStream *audio;
     BiliLiveStream *live;
     int quality, quality_count, qualities[3];
+    /* Server streams restart at the requested time instead of seeking in place.
+     * Their own clock starts at 0, so the player adds the offset and takes the
+     * duration from the hint (the stream has none). */
+    int restart_seek;
+    long long timeline_offset_ms, timeline_duration_ms;
 } BiliPlayback;
 int bili_parse_home(const char *text, BiliHome *out);
 int bili_parse_stream(const char *text, BiliStream *out);
@@ -54,6 +60,11 @@ int bili_home(int page, BiliHome *out);
 int bili_prepare_playback(const BiliVideo *video, BiliPlayback *out);
 int bili_prepare_stream_playback(const BiliStream *stream, const char *cache_key, BiliPlayback *out);
 int bili_prepare_live_playback(const char *url, BiliPlayback *out);
+/* A transcoded stream from wili-server (FLV over HTTP). Blocks until the first
+ * bytes arrive. On failure returns -1 with the HTTP status (0 = no answer) and
+ * the server's error code ("login_required", "busy", ...) when it gave one. */
+int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_status,
+                               char *error, size_t error_cap);
 const PspVideoSource *bili_live_source(BiliLiveStream *stream, int audio);
 int bili_live_finish(BiliLiveStream *stream);
 int bili_prepare_range_playback(const BiliVideo *video, const BiliMediaUrl *video_url,
@@ -100,6 +111,10 @@ int bili_http_get_response(const char *url, BiliHttpResponse *out, size_t max_by
 int bili_http_post_response(const char *url, const char *form, BiliHttpResponse *out, size_t max_bytes);
 /* Called only between joined jobs; credentials are scoped to API/passport HTTPS. */
 void bili_http_set_session(const char *cookies);
+/* Routes API and image requests through wili-server while it is enabled and
+ * complete (see stream_server.h). Same restriction as bili_http_set_session. */
+void bili_server_configure(const WiliServer *server);
+const WiliServer *bili_server_current(void);
 int bili_http_get_text(const char *url,char **out,size_t max_bytes);
 int bili_http_download(const char *url,const char *path,size_t max_bytes);
 void bili_http_free(void *memory);

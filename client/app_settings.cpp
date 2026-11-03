@@ -95,6 +95,23 @@ void App::changeSetting() {
                           : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
             break;
         case SettingItem::LogFiles: next.saveLogFiles = !next.saveLogFiles; break;
+        case SettingItem::StreamServer: next.streamServer = !next.streamServer; break;
+        case SettingItem::StreamPreset:
+            next.streamPreset = next.streamPreset == StreamPreset::Performance ? StreamPreset::Balanced
+                              : next.streamPreset == StreamPreset::Balanced ? StreamPreset::Quality
+                                                                            : StreamPreset::Performance;
+            break;
+        case SettingItem::StreamProfile:
+            next.streamProfile = next.streamProfile == StreamProfile::Auto ? StreamProfile::Cavlc
+                               : next.streamProfile == StreamProfile::Cavlc ? StreamProfile::Cabac
+                                                                            : StreamProfile::Auto;
+            break;
+        // Search / address / token / test only act on Confirm; see activateUtility().
+        case SettingItem::StreamFind:
+        case SettingItem::StreamAddress:
+        case SettingItem::StreamToken:
+        case SettingItem::StreamTest:
+            return;
         case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
@@ -113,11 +130,203 @@ void App::changeSetting() {
         hubSelection_ = 0;
     }
     if (changed == SettingItem::LogLevel || changed == SettingItem::LogFiles) applyLogPreferences(preferences_);
+    if (changed == SettingItem::StreamServer) applyServerConfig();
     const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
             : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)
                 ? text(TextId::settings_saved_me_backend, preferences_.locale)
             : text(TextId::settings_saved, preferences_.locale);
+    if (selected == SettingItem::StreamServer && preferences_.streamServer)
+        status_ = text(preferences_.serverReady() ? TextId::stream_status_enabled
+                                                  : TextId::stream_status_incomplete, preferences_.locale);
+}
+
+bool App::streamTarget(StreamTarget& target, long long startMs) const {
+    if (!serverStreaming()) return false;
+    target.server = preferences_.serverConfig();
+    target.preset = static_cast<WiliStreamPreset>(preferences_.streamPreset);
+    target.profile = static_cast<WiliStreamProfile>(preferences_.streamProfile);
+    target.startMs = startMs > 0 ? startMs : 0;
+    return true;
+}
+
+// Called after the server settings change: the account is the PC's in server mode and
+// the PSP's own session file otherwise, so reload whichever applies.
+void App::applyServerConfig() {
+    const WiliServer server = preferences_.serverConfig();
+    bili_server_configure(&server);
+    sessions_.clearEphemeral();
+    clearAccountPages();
+    auto restored = authService_.restore();
+    if (restored) {
+        authView_ = std::move(restored.value);
+        sessionCheckPending_ = authView_.state == AuthState::Restored;
+    } else {
+        authView_ = {};
+        sessionCheckPending_ = false;
+        authError_ = restored.error;
+    }
+}
+
+void App::startServerFind() {
+    if (busy()) return;
+    startJob(Job::ServerFind);
+    status_ = text(TextId::stream_searching, preferences_.locale);
+}
+
+void App::startServerTest() {
+    if (busy()) return;
+    jobServer_ = preferences_.serverConfig();
+    jobServer_.enabled = 1; // test even while the switch is off
+    if (!wili_server_ready(&jobServer_)) {
+        status_ = text(TextId::stream_status_incomplete, preferences_.locale);
+        return;
+    }
+    startJob(Job::ServerTest);
+    status_ = text(TextId::stream_testing, preferences_.locale);
+}
+
+// Worker thread: GET /wili/v1/hello and describe the answer.
+void App::runServerTest() {
+    const Locale locale = preferences_.locale;
+    stagedServerMessage_.clear();
+    char url[256];
+    if (wili_server_hello_url(&jobServer_, url, sizeof(url)) != 0) {
+        stagedServerMessage_ = text(TextId::stream_status_incomplete, locale);
+        jobResult_ = 0;
+        return;
+    }
+    BiliHttpResponse response;
+    const int rc = bili_http_get_response(url, &response, 8192);
+    if (transfer_cancel) {
+        bili_http_free(response.text);
+        jobResult_ = -1;
+        return;
+    }
+    jobResult_ = 0;
+    if (rc < 0) {
+        bili_http_free(response.text);
+        stagedServerMessage_ = text(response.status == 401 ? TextId::stream_test_token
+                                  : response.status == 429 ? TextId::stream_test_rate
+                                  : response.status != 0 ? TextId::stream_test_garbled
+                                                         : TextId::stream_test_unreachable, locale);
+        return;
+    }
+    try {
+        const auto reply = nlohmann::json::parse(response.text ? response.text : "");
+        const int proto = reply.at("proto").get<int>();
+        if (proto != WILI_PROTO) {
+            stagedServerMessage_ = formatText(TextId::stream_test_proto, locale,
+                {{"theirs", std::to_string(proto)}, {"ours", std::to_string(WILI_PROTO)}});
+        } else {
+            const auto& login = reply.at("login");
+            const auto& ffmpeg = reply.at("ffmpeg");
+            const std::string account = login.at("state").get<std::string>() == "signed_in"
+                ? formatText(TextId::stream_test_signed_in, locale, {{"user", login.value("name", std::string("?"))}})
+                : std::string(text(TextId::stream_test_signed_out, locale));
+            const std::string codec = ffmpeg.at("ok").get<bool>()
+                ? std::string(text(TextId::stream_test_ffmpeg_ok, locale))
+                : formatText(TextId::stream_test_ffmpeg_bad, locale, {{"problem", ffmpeg.value("problem", std::string("?"))}});
+            stagedServerMessage_ = formatText(TextId::stream_test_ok, locale,
+                {{"name", reply.at("name").get<std::string>()}, {"account", account}, {"codec", codec}});
+        }
+    } catch (const std::exception&) {
+        stagedServerMessage_ = text(TextId::stream_test_garbled, locale);
+    }
+    bili_http_free(response.text);
+}
+
+void App::commitServerFind() {
+    const Locale locale = preferences_.locale;
+    if (stagedFound_.empty()) {
+        status_ = text(TextId::stream_none_found, locale);
+        return;
+    }
+    // Searching again moves on to the next server found, so several can be tried.
+    size_t pick = 0;
+    for (size_t i = 0; i < stagedFound_.size(); ++i)
+        if (preferences_.serverHost == stagedFound_[i].host && preferences_.serverPort == stagedFound_[i].port)
+            pick = (i + 1) % stagedFound_.size();
+    const WiliFoundServer& server = stagedFound_[pick];
+    Preferences next = preferences_;
+    next.serverHost = server.host;
+    next.serverPort = server.port;
+    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
+        status_ = text(TextId::settings_save_failed, locale);
+        return;
+    }
+    preferences_ = next;
+    applyServerConfig();
+    const std::string address = std::string(server.host) + ":" + std::to_string(server.port);
+    const std::string name = server.name[0] ? server.name : address;
+    status_ = stagedFound_.size() > 1
+        ? formatText(TextId::stream_found_more, locale,
+            {{"count", std::to_string(stagedFound_.size())}, {"name", name}, {"address", address}})
+        : formatText(TextId::stream_found, locale, {{"name", name}, {"address", address}});
+}
+
+std::string App::settingsInputTitle() const {
+    return text(settingsInput_ == SettingsInput::Token ? TextId::stream_input_token : TextId::stream_input_address,
+                preferences_.locale);
+}
+
+std::string App::settingsInputInitial() const {
+    if (settingsInput_ == SettingsInput::Token) return preferences_.serverToken;
+    if (preferences_.serverHost.empty()) return {};
+    return preferences_.serverHost + (preferences_.serverPort == WILI_SERVER_PORT
+                                          ? std::string() : ":" + std::to_string(preferences_.serverPort));
+}
+
+void App::submitSettingsInput(const std::string& raw) {
+    const SettingsInput kind = settingsInput_;
+    settingsInput_ = SettingsInput::None;
+    std::string value = raw;
+    const auto first = value.find_first_not_of(' ');
+    value = first == std::string::npos ? std::string() : value.substr(first, value.find_last_not_of(' ') - first + 1);
+    Preferences next = preferences_;
+    if (kind == SettingsInput::Address) {
+        if (value.empty()) {
+            next.serverHost.clear();
+            next.serverPort = WILI_SERVER_PORT;
+        } else {
+            char host[WILI_SERVER_HOST_MAX];
+            int port = 0;
+            if (wili_server_parse_address(value.c_str(), host, sizeof(host), &port) != 0) {
+                status_ = text(TextId::stream_bad_address, preferences_.locale);
+                return;
+            }
+            next.serverHost = host;
+            next.serverPort = port;
+        }
+    } else if (kind == SettingsInput::Token) {
+        if (!value.empty() && !wili_server_valid_token(value.c_str())) {
+            status_ = text(TextId::stream_bad_token, preferences_.locale);
+            return;
+        }
+        next.serverToken = value;
+    } else return;
+    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
+        status_ = text(TextId::settings_save_failed, preferences_.locale);
+        return;
+    }
+    preferences_ = next;
+    applyServerConfig();
+    status_ = text(preferences_.streamServer && !preferences_.serverReady() ? TextId::stream_status_incomplete
+                                                                           : TextId::settings_saved, preferences_.locale);
+}
+
+std::string App::streamErrorMessage(const AppError& error) const {
+    const std::string& code = error.detail;
+    TextId id = TextId::stream_err_upstream;
+    if (code == "unreachable") id = TextId::stream_err_unreachable;
+    else if (code == "unauthorized") id = TextId::stream_err_token;
+    else if (code == "rate_limited") id = TextId::stream_test_rate;
+    else if (code == "login_required") id = TextId::stream_err_login;
+    else if (code == "no_stream") id = TextId::stream_err_no_stream;
+    else if (code == "busy") id = TextId::stream_err_busy;
+    else if (code == "ffmpeg_missing") id = TextId::stream_err_ffmpeg;
+    else if (code == "bad_request") id = TextId::stream_err_bad_request;
+    return text(id, preferences_.locale);
 }
 
 void App::updateStorage() {
@@ -145,8 +354,15 @@ std::string App::buildVersion() const {
 // Called by App::activate for the utility pages, without changing list selection.
 void App::activateUtility() {
     if (screen() == Screen::Settings) {
-        if (navigation_.get<SettingsRoute>().selection < static_cast<size_t>(SettingItem::Wifi)) changeSetting();
-        else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::CoverCache)) {
+        if (navigation_.get<SettingsRoute>().selection < static_cast<size_t>(SettingItem::Wifi)) {
+            switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
+                case SettingItem::StreamFind: startServerFind(); break;
+                case SettingItem::StreamTest: startServerTest(); break;
+                case SettingItem::StreamAddress: settingsInput_ = SettingsInput::Address; break;
+                case SettingItem::StreamToken: settingsInput_ = SettingsInput::Token; break;
+                default: changeSetting(); break;
+            }
+        } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::CoverCache)) {
             navigation_.push<StorageRoute>();
             updateStorage();
         } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::Help)) navigation_.push<HelpRoute>();

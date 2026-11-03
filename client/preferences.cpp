@@ -22,6 +22,14 @@ const char* inputMethodCode(InputMethod method) {
     return method == InputMethod::System ? "system" : "pinyin";
 }
 
+const char* streamPresetCode(StreamPreset preset) {
+    return preset == StreamPreset::Performance ? "performance" : preset == StreamPreset::Quality ? "quality" : "balanced";
+}
+
+const char* streamProfileCode(StreamProfile profile) {
+    return profile == StreamProfile::Cavlc ? "cavlc" : profile == StreamProfile::Cabac ? "cabac" : "auto";
+}
+
 const char* logVerbosityCode(LogVerbosity level) {
     switch (level) {
         case LogVerbosity::Error: return "error";
@@ -124,6 +132,33 @@ bool loadPreferences(const char* path, Preferences& preferences) {
             else if (value == "system") loaded.inputMethod = InputMethod::System;
             else return false;
         }
+        const auto server = root.find("stream_server");
+        if (server != root.end()) {
+            if (!server->is_boolean()) return false;
+            loaded.streamServer = server->get<bool>();
+        }
+        loaded.serverHost = root.value("server_host", std::string());
+        if (!loaded.serverHost.empty()) {
+            // Re-validated on load: a hand-edited file must not inject odd text into URLs.
+            char host[WILI_SERVER_HOST_MAX];
+            int port = 0;
+            if (wili_server_parse_address(loaded.serverHost.c_str(), host, sizeof(host), &port) != 0 ||
+                loaded.serverHost != host) return false;
+        }
+        loaded.serverPort = root.value("server_port", WILI_SERVER_PORT);
+        if (loaded.serverPort < 1 || loaded.serverPort > 65535) return false;
+        loaded.serverToken = root.value("server_token", std::string());
+        if (!loaded.serverToken.empty() && !wili_server_valid_token(loaded.serverToken.c_str())) return false;
+        const std::string preset = root.value("stream_preset", std::string("balanced"));
+        if (preset == "performance") loaded.streamPreset = StreamPreset::Performance;
+        else if (preset == "balanced") loaded.streamPreset = StreamPreset::Balanced;
+        else if (preset == "quality") loaded.streamPreset = StreamPreset::Quality;
+        else return false;
+        const std::string profile = root.value("stream_profile", std::string("auto"));
+        if (profile == "auto") loaded.streamProfile = StreamProfile::Auto;
+        else if (profile == "cavlc") loaded.streamProfile = StreamProfile::Cavlc;
+        else if (profile == "cabac") loaded.streamProfile = StreamProfile::Cabac;
+        else return false;
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
@@ -145,6 +180,14 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         preferences.playbackPixelFormat != PlaybackPixelFormat::Rgba8888) return false;
     if (preferences.locale != Locale::ZhHans && preferences.locale != Locale::EnUs) return false;
     if (!validLogChannels(preferences.logChannels)) return false;
+    if (preferences.serverPort < 1 || preferences.serverPort > 65535) return false;
+    if (!preferences.serverToken.empty() && !wili_server_valid_token(preferences.serverToken.c_str())) return false;
+    if (!preferences.serverHost.empty()) {
+        char host[WILI_SERVER_HOST_MAX];
+        int port = 0;
+        if (wili_server_parse_address(preferences.serverHost.c_str(), host, sizeof(host), &port) != 0 ||
+            preferences.serverHost != host) return false;
+    }
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
@@ -159,6 +202,12 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"log_files", preferences.saveLogFiles},
         {"home_style", homeStyleCode(preferences.homeStyle)},
         {"input_method", inputMethodCode(preferences.inputMethod)},
+        {"stream_server", preferences.streamServer},
+        {"server_host", preferences.serverHost},
+        {"server_port", preferences.serverPort},
+        {"server_token", preferences.serverToken},
+        {"stream_preset", streamPresetCode(preferences.streamPreset)},
+        {"stream_profile", streamProfileCode(preferences.streamProfile)},
         {"log_channels", preferences.logChannels}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");

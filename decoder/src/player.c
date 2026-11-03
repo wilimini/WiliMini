@@ -46,6 +46,8 @@ static volatile int playback_seeking;
 static volatile int seek_pending; /* re-target requested while a seek runs; guarded by controls_lock */
 static unsigned playback_seeks;
 static int native_seek_enabled;
+static int restart_seek;
+static int64_t timeline_offset_ms, timeline_duration_ms;
 static int quality_requested;
 static void begin_playback_seek(void);
 static int64_t seek_target_ms;
@@ -68,6 +70,11 @@ static int playback_is_paused(void) {
 static int present_video(const void *pixels, PspVideoPixelFormat format);
 static void playback_metadata(int64_t duration_ms, int seekable) {
     if (controls_lock < 0) return;
+    if (timeline_duration_ms > 0) {
+        /* A restart stream has no duration or index of its own. */
+        duration_ms = timeline_duration_ms;
+        seekable = restart_seek;
+    }
     sceKernelWaitSema(controls_lock, 1, NULL);
     controls.duration_ms = duration_ms > 0 ? duration_ms : 0;
     controls.seekable = seekable && duration_ms > 0;
@@ -238,7 +245,7 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
     }
 #endif
     sceKernelWaitSema(controls_lock, 1, NULL);
-    if (!controls.paused && !playback_seeking) controls.position_ms = position;
+    if (!controls.paused && !playback_seeking) controls.position_ms = position + timeline_offset_ms;
     PspVideoStatus status = {controls.position_ms, controls.duration_ms, controls.preview_ms,
         controls.paused, controls.visible, controls.seeking, controls.seekable, playback_seeking,
         controls.menu_open, controls.menu_row,
@@ -1341,13 +1348,16 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     seek_requested = seek_paused = 0;
     playback_seeking = 0; playback_seeks = 0;
     quality_requested = 0;
-    native_seek_enabled = options->backend == PSP_VIDEO_BACKEND_NATIVE_ME;
+    restart_seek = options->restart_seek != 0;
+    timeline_offset_ms = options->timeline_offset_ms > 0 ? options->timeline_offset_ms : 0;
+    timeline_duration_ms = options->timeline_duration_ms > 0 ? options->timeline_duration_ms : 0;
+    native_seek_enabled = options->backend == PSP_VIDEO_BACKEND_NATIVE_ME && !restart_seek;
     seek_target_ms = 0;
     if (presenter) {
         controls_lock = sceKernelCreateSema("player_controls", 0, 1, 1, NULL);
         if (controls_lock < 0) return controls_lock;
         pc_init(&controls, sceKernelGetSystemTimeWide(), options->start_paused);
-        controls.position_ms = options->start_ms > 0 ? options->start_ms : 0;
+        controls.position_ms = (options->start_ms > 0 ? options->start_ms : 0) + timeline_offset_ms;
         if (options->settings) controls.settings = *options->settings;
         if (controls.settings.quality_count < 0 || controls.settings.quality_count > 3) controls.settings.quality_count = 0;
         for (int i = 0; i < controls.settings.quality_count; ++i)
@@ -1417,7 +1427,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     }
     if (result) *result = (PspVideoResult){.error = quit_requested ? 0 : ret, .cancelled = quit_requested,
         .frames = stats.total_frames, .eof = stats.eof && !quit_requested, .error_stage = video_stage,
-        .position_ms = playback_position_us / 1000, .seeks = playback_seeks};
+        .position_ms = playback_position_us / 1000 + timeline_offset_ms, .seeks = playback_seeks};
     if (result) {
         result->seek_requested = seek_requested;
         result->seek_ms = seek_target_ms;

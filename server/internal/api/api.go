@@ -130,6 +130,7 @@ func (s *Server) authorized(r *http.Request) bool {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/wili/v1/hello", s.hello)
+	mux.HandleFunc("/wili/v1/logout", s.logout)
 	mux.Handle("/wili/v1/stream", s.Streams)
 	mux.Handle(proxy.Prefix, s.Proxy)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +174,21 @@ type ffmpeg struct {
 	OK      bool   `json:"ok"`
 	Version string `json:"version,omitempty"`
 	Problem string `json:"problem,omitempty"`
+}
+
+// logout forgets the server's Bilibili account. The reply uses Bilibili's
+// {"code","data"} envelope so the PSP's ordinary API client can read it.
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		errReply(w, http.StatusMethodNotAllowed, "method", "GET or POST only")
+		return
+	}
+	if err := s.Store.Clear(); err != nil {
+		errReply(w, http.StatusInternalServerError, "storage", err.Error())
+		return
+	}
+	s.event("info", "signed out from "+clientIP(r))
+	jsonReply(w, http.StatusOK, map[string]any{"code": 0, "message": "0", "data": map[string]string{"state": "signed_out"}})
 }
 
 func (s *Server) hello(w http.ResponseWriter, r *http.Request) {

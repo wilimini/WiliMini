@@ -288,6 +288,8 @@ const char* jobLabel(int job) {
             return "检查登录状态";
         case 11:
             return "退出本机账号";
+        case 16: return "搜索服务器";
+        case 17: return "测试连接";
         default: return "载入";
     }
 }
@@ -328,6 +330,10 @@ int App::workerEntry(SceSize, void*) {
 void App::init() {
     const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
     applyLogPreferences(preferences_);
+    {
+        const WiliServer server = preferences_.serverConfig();
+        bili_server_configure(&server);
+    }
     hubOpen_ = preferences_.tileHome();
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
     history_ = loadLocal(CLIENT_PATH("/history.json"));
@@ -1418,7 +1424,9 @@ void App::poll() {
         if ((job_ == Job::Browse || job_ == Job::CommunityWrite || job_ == Job::CommunityPlay) && hasBrowse()) browseState().error = navigation_.current().error;
         status_ = transfer_cancel
                       ? "已取消"
-                      : (navigation_.current().error ? errorMessage(navigation_.current().error)
+                      : (navigation_.current().error.kind == ErrorKind::StreamServer
+                                ? streamErrorMessage(navigation_.current().error)
+                      : navigation_.current().error ? errorMessage(navigation_.current().error)
                                 : (jobError_.empty()
                                        ? (network_error[0] ? network_error : "载入失败，△ 重试")
                                        : jobError_));
@@ -1570,6 +1578,10 @@ void App::commitJob() {
         status_ = commentsState().items.empty() ? "暂无评论" :
                   "评论 · " + std::to_string(commentsState().items.size()) + " 条" +
                       (commentsState().end ? " · 已加载完" : " · R 加载更多");
+    } else if (job_ == Job::ServerFind) {
+        commitServerFind();
+    } else if (job_ == Job::ServerTest) {
+        status_ = stagedServerMessage_;
     } else if (job_ == Job::Play || job_ == Job::CommunityPlay) {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;
@@ -1606,7 +1618,9 @@ void App::runJob() {
             std::snprintf(video.bvid, sizeof(video.bvid), "%s", jobMedia_.bvid.c_str());
             std::snprintf(video.title, sizeof(video.title), "%s", jobMedia_.title.c_str());
             video.cid = static_cast<long long>(jobMedia_.cid); video.duration = jobMedia_.duration;
-            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_);
+            StreamTarget target;
+            const StreamTarget* stream = streamTarget(target, jobMedia_.startMs) ? &target : nullptr;
+            jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_, stream);
         }
     } else if (job_ == Job::Browse) {
         const BrowseRequest &request = prefetch_ ? pfBrowse_ : jobBrowse_;
@@ -1643,6 +1657,16 @@ void App::runJob() {
             job_ == Job::HistoryReport ? jobHistoryWrite_ : jobWrite_, sessions_.current());
         if (!result) { jobTypedError_ = result.error; jobResult_ = -1; }
         else { stagedWrite_ = std::move(result.value); jobResult_ = 0; }
+    } else if (job_ == Job::ServerFind) {
+        WiliFoundServer found[4];
+        const int count = wili_discover_servers(found, 4, 2500, &transfer_cancel);
+        stagedFound_.assign(found, found + (count > 0 ? count : 0));
+        if (count < 0) {
+            jobError_ = text(TextId::stream_find_failed, preferences_.locale);
+            jobResult_ = -1;
+        } else jobResult_ = 0;
+    } else if (job_ == Job::ServerTest) {
+        runServerTest();
     } else if (job_ == Job::AuthGenerate || job_ == Job::AuthPoll || job_ == Job::AuthCheck ||
         job_ == Job::AuthLogout) {
         Result<AuthView> result;
@@ -1883,7 +1907,9 @@ void App::runJob() {
         video.cid = static_cast<long long>(jobCid_ ? jobCid_ : jobCard_.cid);
         video.duration = jobDuration_;
         std::string playbackError;
-        const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_);
+        StreamTarget target;
+        const StreamTarget* stream = streamTarget(target, jobCard_.startMs) ? &target : nullptr;
+        const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_, stream);
         if (result < 0) {
             jobError_ = playbackError.empty() ? "无法准备视频流" : playbackError;
             jobResult_ = result;

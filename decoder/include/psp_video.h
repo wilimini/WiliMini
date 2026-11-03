@@ -70,6 +70,14 @@ typedef struct {
     const PspVideoPresenter *presenter; /* NULL preserves diagnostic display */
     int start_paused;
     const PspVideoSettings *settings;
+    /* Streams that restart instead of seeking in place (wili-server). Such a
+     * stream's own clock starts at zero when it is opened, so the player shows
+     * timeline_offset_ms + elapsed, and takes the duration from
+     * timeline_duration_ms because the stream carries none. With restart_seek
+     * set a seek key ends the session with seek_requested set; the caller then
+     * reopens the stream at seek_ms. All three are zero for ordinary sources. */
+    int restart_seek;
+    int64_t timeline_offset_ms, timeline_duration_ms;
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,

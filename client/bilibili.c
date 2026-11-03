@@ -1,5 +1,6 @@
 #include "services/playback_request_policy.h"
 #include "bilibili.h"
+#include "stream_server.h"
 #include "json.h"
 #include <wili_log.h>
 #include <stdio.h>
@@ -175,6 +176,16 @@ static void http_share_apply(CURL *c) {
 
 void bili_http_set_session(const char *cookies) {
     snprintf(session_cookies, sizeof(session_cookies), "%s", cookies ? cookies : "");
+}
+
+/* Stream-server mode. Written only between joined jobs, like the session. */
+static WiliServer wili_server;
+void bili_server_configure(const WiliServer *server) {
+    if (server) wili_server = *server;
+    else memset(&wili_server, 0, sizeof(wili_server));
+}
+const WiliServer *bili_server_current(void) {
+    return &wili_server;
 }
 
 static unsigned buvid_seed;
@@ -365,6 +376,14 @@ static void http_timing(CURL *curl, const char *kind) {
 }
 
 static int request(const char *url,Sink *sink) {
+    /* In server mode the PC makes the real Bilibili request: it holds the account,
+     * signs and talks TLS. The PSP only needs plain HTTP and sends no cookies. */
+    char via_server[2560];
+    const char *target=url;
+    const int rewritten=wili_server_rewrite(&wili_server,url,via_server,sizeof(via_server));
+    if(rewritten<0){snprintf(network_error,sizeof(network_error),"Request URL too long");return -1;}
+    const int proxied=rewritten>0;
+    if(proxied)target=via_server;
     if (!sink->cancel) network_phase=playback_address_request(url)?NET_PLAYURL:strstr(url,"/x/web-interface/nav")?NET_SIGNING:
         strstr(url,"/wbi/index/top/feed/rcmd")?NET_RECOMMEND:
         strstr(url,"/x/web-interface/popular")?NET_FALLBACK:
@@ -376,11 +395,11 @@ static int request(const char *url,Sink *sink) {
     if (!sink->response && !transport) transport = curl_easy_init();
     CURL *c=sink->response?bili_http_transport_acquire(&api_transport):transport;
     if(!c){if(sink->response)sink->response->failure=BILI_HTTP_MEMORY;return -1;}
-    network_ensure_buvid3();
+    if(!proxied)network_ensure_buvid3();
     if(!sink->response)curl_easy_reset(c);
     http_share_apply(c);
     transfer_kb=transfer_total_kb=0;
-    curl_easy_setopt(c,CURLOPT_URL,url);
+    curl_easy_setopt(c,CURLOPT_URL,target);
     if(sink->form){
         curl_easy_setopt(c,CURLOPT_POST,1L);
         curl_easy_setopt(c,CURLOPT_POSTFIELDS,sink->form);
@@ -401,14 +420,14 @@ static int request(const char *url,Sink *sink) {
     /* Current anonymous comment replies are capped to three entries when a
      * buvid3 cookie is present. Keep Wiliwili's cookie for other APIs, but let
      * the reply endpoint use its full anonymous result set. */
-    const int authenticated=session_cookies[0] && bili_http_credential_host(url);
-    if(authenticated || !strstr(url,"/x/v2/reply/main")){
+    const int authenticated=!proxied && session_cookies[0] && bili_http_credential_host(url);
+    if(!proxied && (authenticated || !strstr(url,"/x/v2/reply/main"))){
         char cookie[4200];
         if(authenticated)snprintf(cookie,sizeof(cookie),"Cookie: buvid3=%s; %s",buvid3,session_cookies);
         else snprintf(cookie,sizeof(cookie),"Cookie: buvid3=%s; DedeUserID=0",buvid3);
         headers=curl_slist_append(headers,cookie);
     }
-    if(sink->response && bili_http_login_host(url)){
+    if(sink->response && !proxied && bili_http_login_host(url)){
         curl_easy_setopt(c,CURLOPT_HEADERFUNCTION,bili_http_capture_cookie);
         curl_easy_setopt(c,CURLOPT_HEADERDATA,sink->response);
     }
@@ -416,7 +435,7 @@ static int request(const char *url,Sink *sink) {
     curl_easy_setopt(c,CURLOPT_CAINFO,CLIENT_PATH("/cacert.pem"));
     curl_easy_setopt(c,CURLOPT_CAPATH,(char *)NULL);
     curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,authenticated?0L:1L);
-    if(sink->response && bili_http_login_host(url))curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,0L);
+    if(sink->response && !proxied && bili_http_login_host(url))curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,0L);
     curl_easy_setopt(c,CURLOPT_MAXREDIRS,5L);
     curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"http,https");
     curl_easy_setopt(c,CURLOPT_REDIR_PROTOCOLS_STR,"http,https");

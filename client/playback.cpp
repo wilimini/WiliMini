@@ -73,10 +73,64 @@ void fillMediaUrl(BiliMediaUrl& target, const bilibili::DashMedia& source) {
     target.backup_count = static_cast<int>(count);
 }
 
+/* wili-server transcodes the video to an FLV the PSP can decode and the server
+ * seeks by restarting at startMs. */
+int prepareServerPlayback(const BiliVideo& video, bool pgc, const StreamTarget& stream,
+                          BiliPlayback& playback, std::string& error, AppError* typedError) {
+    WiliStreamRequest request{};
+    request.bvid = pgc ? nullptr : video.bvid;
+    request.cid = video.cid;
+    request.start_ms = stream.startMs;
+    request.pgc = pgc ? 1 : 0;
+    request.preset = stream.preset;
+    request.profile = stream.profile;
+    char url[640];
+    if (wili_server_stream_url(&stream.server, &request, url, sizeof(url)) != 0) {
+        error = "stream_url";
+        if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::StreamServer,
+                                       ErrorOperation::PreparePlayback, 0, 0, "bad_request"};
+        return -1;
+    }
+    int status = 0;
+    char serverCode[48];
+    playback = BiliPlayback{};
+    if (bili_prepare_stream_server(url, &playback, &status, serverCode, sizeof(serverCode)) < 0) {
+        if (transfer_cancel) {
+            error = "Cancelled";
+            if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Cancelled, ErrorOperation::PreparePlayback};
+        } else {
+            error = streamErrorCode(status, serverCode);
+            if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::StreamServer,
+                                           ErrorOperation::PreparePlayback, 0, status, error};
+        }
+        return -1;
+    }
+    playback.restart_seek = 1;
+    playback.timeline_offset_ms = stream.startMs;
+    playback.timeline_duration_ms = video.duration > 0 ? static_cast<long long>(video.duration) * 1000 : 0;
+    // The server fixes the quality; the on-screen quality menu has nothing to offer.
+    playback.quality = 0;
+    playback.quality_count = 0;
+    liveLog("server stream ready offset=%lld", stream.startMs);
+    return 0;
+}
+
 }  // namespace
 
-int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
+const char* streamErrorCode(int httpStatus, const char* serverCode) {
+    if (serverCode && serverCode[0]) return serverCode;
+    switch (httpStatus) {
+        case 0: return "unreachable";
+        case 401: return "unauthorized";
+        case 429: return "rate_limited";
+        case 503: return "busy";
+        default: return "upstream";
+    }
+}
+
+int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality, AppError* typedError, const StreamTarget* stream) {
     liveLog("prepare bvid=%s cid=%lld", video.bvid, video.cid);
+    if (stream) return prepareServerPlayback(video, false, *stream, playback, error, typedError);
     if (transfer_cancel) {
         error = "Cancelled";
         return -1;
@@ -138,8 +192,9 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
     return -1;
 }
 
-int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
+int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError, const StreamTarget* stream) {
     (void)episode;
+    if (stream) return prepareServerPlayback(video, true, *stream, playback, error, typedError);
     auto response = BilibiliApi{}.get(bilibili::Api::SeasonUrl2,
         {{"cid",std::to_string(video.cid)},{"qn",std::to_string(quality)},{"gaia_source",""},{"from_client","PC_APP"},
          {"is_main_page","false"},{"need_fragment","false"},{"isGaiaAvoided","false"},

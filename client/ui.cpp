@@ -2046,7 +2046,11 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
             pspapp::TextId::settings_log_level,
-            pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
+            pspapp::TextId::settings_log_files,
+            pspapp::TextId::settings_stream_server, pspapp::TextId::settings_stream_find,
+            pspapp::TextId::settings_stream_address, pspapp::TextId::settings_stream_token,
+            pspapp::TextId::settings_stream_preset, pspapp::TextId::settings_stream_profile,
+            pspapp::TextId::settings_stream_test, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
             pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
@@ -2056,6 +2060,10 @@ void drawUtility(const pspapp::App& app) {
         // A saved change only takes effect after the loader picks the other bridge PRX.
         const bool meRestart = app.activeMeBackend() >= 0 &&
             app.activeMeBackend() != static_cast<int>(preferences.meBackend);
+        const std::string streamAddress = preferences.serverHost.empty()
+            ? std::string(pspapp::text(pspapp::TextId::value_stream_unset, locale))
+            : preferences.serverHost + (preferences.serverPort == WILI_SERVER_PORT
+                                            ? std::string() : ":" + std::to_string(preferences.serverPort));
         const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
                                                                          : pspapp::TextId::value_light, locale),
             pspapp::text(preferences.metro() ? pspapp::TextId::value_home_metro
@@ -2087,6 +2095,22 @@ void drawUtility(const pspapp::App& app) {
                 : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
                 : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
             pspapp::text(preferences.saveLogFiles ? pspapp::TextId::value_log_files_on : pspapp::TextId::value_off, locale),
+            pspapp::text(preferences.streamServer ? pspapp::TextId::value_stream_on : pspapp::TextId::value_off, locale),
+            pspapp::text(pspapp::TextId::value_stream_search, locale),
+            streamAddress,
+            pspapp::text(preferences.serverToken.empty() ? pspapp::TextId::value_stream_unset
+                                                         : pspapp::TextId::value_stream_token_set, locale),
+            pspapp::text(preferences.streamPreset == pspapp::StreamPreset::Performance
+                             ? pspapp::TextId::value_stream_preset_performance
+                         : preferences.streamPreset == pspapp::StreamPreset::Quality
+                             ? pspapp::TextId::value_stream_preset_quality
+                             : pspapp::TextId::value_stream_preset_balanced, locale),
+            pspapp::text(preferences.streamProfile == pspapp::StreamProfile::Cavlc
+                             ? pspapp::TextId::value_stream_profile_cavlc
+                         : preferences.streamProfile == pspapp::StreamProfile::Cabac
+                             ? pspapp::TextId::value_stream_profile_cabac
+                             : pspapp::TextId::value_stream_profile_auto, locale),
+            pspapp::text(pspapp::TextId::value_stream_run, locale),
             pspapp::text(pspapp::TextId::value_system_connect, locale),
             pspapp::text(pspapp::TextId::value_manage, locale),
             pspapp::text(pspapp::TextId::value_view, locale),

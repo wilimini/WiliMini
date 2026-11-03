@@ -17,6 +17,7 @@ referenced files exist rather than assuming every documentation link is current.
 - `client/`: application, UI, Bilibili services, networking, and playback control.
 - `decoder/`: FFmpeg player, audio processing, VFPU code, and Media Engine code.
 - `cmake/` and root `CMakeLists.txt`: dependency builds, client targets, and packaging.
+- `server/`: `wili-server`, the optional Go streaming server (see `docs/streaming-server.md`).
 - `scripts/`: asset generators and build-manifest generation.
 - `tools/`: PPSSPP replay, screenshots, device utilities, and host-side checks.
 - `tests/`: test support; inspect the checkout for available test sources.

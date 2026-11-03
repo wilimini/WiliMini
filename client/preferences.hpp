@@ -1,8 +1,10 @@
 #pragma once
 #include <cstddef>
+#include <cstdio>
 #include <string>
 #include "memory_budget.hpp"
 #include "localization.hpp"
+#include "stream_server.h"
 
 namespace pspapp {
 enum class SettingItem : std::size_t {
@@ -19,6 +21,13 @@ enum class SettingItem : std::size_t {
     InputMethod,
     LogLevel,
     LogFiles,
+    StreamServer,
+    StreamFind,
+    StreamAddress,
+    StreamToken,
+    StreamPreset,
+    StreamProfile,
+    StreamTest,
     Wifi,
     CoverCache,
     Help,
@@ -48,6 +57,12 @@ const char* homeStyleCode(HomeStyle style);
 enum class InputMethod : int { Pinyin = 0, System = 1 };
 const char* inputMethodCode(InputMethod method);
 
+// Stream server (wili-server on a PC). Values match WiliStreamPreset / WiliStreamProfile.
+enum class StreamPreset : int { Performance = 0, Balanced = 1, Quality = 2 };
+enum class StreamProfile : int { Auto = 0, Cavlc = 1, Cabac = 2 };
+const char* streamPresetCode(StreamPreset preset);
+const char* streamProfileCode(StreamProfile profile);
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -64,6 +79,22 @@ struct Preferences {
     // Chosen in Settings; old files default to Classic.
     HomeStyle homeStyle = HomeStyle::Classic;
     InputMethod inputMethod = InputMethod::Pinyin;
+    // Off by default: the PSP talks to Bilibili directly.
+    bool streamServer = false;
+    std::string serverHost;
+    int serverPort = WILI_SERVER_PORT;
+    std::string serverToken; // stored in plain text on the memory stick, like the Wi-Fi profile
+    StreamPreset streamPreset = StreamPreset::Balanced;
+    StreamProfile streamProfile = StreamProfile::Auto;
+    WiliServer serverConfig() const {
+        WiliServer server{};
+        server.enabled = streamServer ? 1 : 0;
+        std::snprintf(server.host, sizeof(server.host), "%s", serverHost.c_str());
+        server.port = serverPort;
+        std::snprintf(server.token, sizeof(server.token), "%s", serverToken.c_str());
+        return server;
+    }
+    bool serverReady() const { WiliServer s = serverConfig(); return wili_server_ready(&s) != 0; }
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in

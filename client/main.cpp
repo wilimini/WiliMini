@@ -208,7 +208,13 @@ int main(int argc, char** argv) {
             options.log_root = CLIENT_ROOT;
             options.source = bili_playback_source(&app.playback());
             options.audio_source = bili_playback_audio_source(&app.playback());
-            options.start_ms = app.playbackStartMs();
+            // A server stream restarts at the requested time on the server, so its own
+            // clock starts at zero and the player adds the offset for display.
+            const BiliPlayback& prepared = app.playback();
+            options.start_ms = prepared.restart_seek ? 0 : app.playbackStartMs();
+            options.restart_seek = prepared.restart_seek;
+            options.timeline_offset_ms = prepared.timeline_offset_ms;
+            options.timeline_duration_ms = prepared.timeline_duration_ms;
             options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
             options.rgb_pixel_format = pspapp::playbackUsesRgb565(app.preferences().playbackPixelFormat)
                 ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
@@ -406,6 +412,13 @@ int main(int argc, char** argv) {
                     app.moveSelection(0, 1);
                 }
             }
+        }
+        if (app.settingsInput() != pspapp::App::SettingsInput::None && !app.busy()) {
+            bool confirmed = false;
+            const std::string text = ui_input_text(app.settingsInputTitle(), app.settingsInputInitial(), &confirmed);
+            if (confirmed) app.submitSettingsInput(text);
+            else app.cancelSettingsInput();
+            previous = ~0u;
         }
         if (app.communityInputPending() && !app.busy()) {
             bool confirmed = false;

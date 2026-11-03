@@ -20,6 +20,8 @@ struct BiliLiveStream {
   char *url;
   uint64_t written, position[2];
   volatile int cancelled, ended, failed;
+  volatile int status; /* HTTP status line seen, 0 until the headers arrive */
+  char error[160];     /* start of a non-200 body, kept for the caller */
   SceUID lock, thread;
   LiveReader readers[2];
   PspVideoSource sources[2];
@@ -27,9 +29,31 @@ struct BiliLiveStream {
 static int live_cancelled(BiliLiveStream *s) {
   return s->cancelled || transfer_cancel;
 }
+static size_t live_header(char *data, size_t size, size_t count, void *opaque) {
+  BiliLiveStream *s = opaque;
+  const size_t total = size * count;
+  if (total >= 12 && !strncmp(data, "HTTP/", 5)) {
+    const char *space = memchr(data, ' ', total);
+    int code = 0;
+    for (const char *p = space ? space + 1 : NULL;
+         p && p < data + total && *p >= '0' && *p <= '9' && code < 1000; ++p)
+      code = code * 10 + (*p - '0');
+    s->status = code; /* a redirect's final response overwrites the first */
+    s->error[0] = 0;
+  }
+  return total;
+}
 static size_t live_write(char *data, size_t size, size_t count, void *opaque) {
   BiliLiveStream *s = opaque;
   size_t total = size * count, done = 0;
+  if (s->status && s->status != 200) {
+    /* An error reply is JSON for a person, not media: keep the start of it. */
+    size_t used = strlen(s->error);
+    size_t take = total < sizeof(s->error) - 1 - used ? total : sizeof(s->error) - 1 - used;
+    memcpy(s->error + used, data, take);
+    s->error[used + take] = 0;
+    return total;
+  }
   while (done < total && !live_cancelled(s)) {
     sceKernelWaitSema(s->lock, 1, NULL);
     uint64_t minimum =
@@ -82,6 +106,8 @@ static int live_download(SceSize args, void *opaque) {
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 12L);
   curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 512L);
   curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 15L);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, live_header);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, s);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, live_write);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, s);
   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, live_progress);
@@ -91,6 +117,7 @@ static int live_download(SceSize args, void *opaque) {
   long status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
   curl_easy_cleanup(curl);
+  if (status) s->status = (int)status;
   s->failed = !live_cancelled(s) && (result != CURLE_OK || status != 200);
   __asm__ volatile("" ::: "memory");
   s->ended = 1;
@@ -154,7 +181,7 @@ int bili_live_finish(BiliLiveStream *s) {
   free(s);
   return failed ? -1 : 0;
 }
-int bili_prepare_live_playback(const char *url, BiliPlayback *out) {
+static int live_open(const char *url, BiliPlayback *out) {
   if (!url || !out ||
       (strncmp(url, "https://", 8) && strncmp(url, "http://", 7)))
     return -1;
@@ -197,4 +224,52 @@ int bili_prepare_live_playback(const char *url, BiliPlayback *out) {
   out->live = s;
   snprintf(out->path, sizeof(out->path), "live.flv");
   return 0;
+}
+int bili_prepare_live_playback(const char *url, BiliPlayback *out) {
+  return live_open(url, out);
+}
+
+/* The server's reply, as a short machine-readable code ("login_required"). */
+static void live_error_code(const BiliLiveStream *s, char *out, size_t cap) {
+  const char key[] = "\"error\":\"";
+  const char *at = strstr(s->error, key);
+  size_t n = 0;
+  if (at) {
+    at += sizeof(key) - 1;
+    while (at[n] && at[n] != '"' && n + 1 < cap) {
+      out[n] = at[n];
+      ++n;
+    }
+  }
+  out[n] = 0;
+}
+
+int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_status,
+                               char *error, size_t error_cap) {
+  if (http_status) *http_status = 0;
+  if (error && error_cap) error[0] = 0;
+  if (live_open(url, out) < 0) return -1;
+  BiliLiveStream *s = out->live;
+  const uint64_t started = sceKernelGetSystemTimeWide();
+  /* The server fetches the play URL and starts ffmpeg before it answers, which
+   * takes a few seconds; wait for the first bytes so errors surface here. */
+  for (;;) {
+    if (transfer_cancel) break;
+    sceKernelWaitSema(s->lock, 1, NULL);
+    const uint64_t written = s->written;
+    sceKernelSignalSema(s->lock, 1);
+    if (written > 0 || s->ended) break;
+    if (sceKernelGetSystemTimeWide() - started > 40ull * 1000000ull) break;
+    sceKernelDelayThread(20000);
+  }
+  sceKernelWaitSema(s->lock, 1, NULL);
+  const uint64_t written = s->written;
+  sceKernelSignalSema(s->lock, 1);
+  const int status = s->status;
+  if (http_status) *http_status = status;
+  if (written > 0 && status == 200) return 0;
+  if (error && error_cap) live_error_code(s, error, error_cap);
+  bili_live_finish(s);
+  memset(out, 0, sizeof(*out));
+  return -1;
 }

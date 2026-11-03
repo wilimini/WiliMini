@@ -12,6 +12,8 @@
 #include "preferences.hpp"
 #include "tile_layout.hpp"
 #include "services/auth_service.hpp"
+#include "server_discovery.h"
+#include "playback.hpp"
 #include "services/search_service.hpp"
 #include "services/community_service.hpp"
 
@@ -69,6 +71,15 @@ public:
     bool tileLive(TileId tile, std::string& big, std::string& small) const;
     std::string tileSubtitle(TileId tile) const;
     void changeSetting();
+    // Stream-server rows that need the text keyboard; main.cpp runs it, then submits.
+    enum class SettingsInput { None, Address, Token };
+    SettingsInput settingsInput() const { return settingsInput_; }
+    std::string settingsInputTitle() const;
+    std::string settingsInputInitial() const;
+    void submitSettingsInput(const std::string& text);
+    void cancelSettingsInput() { settingsInput_ = SettingsInput::None; }
+    // Message for a StreamServer playback error, in the interface language.
+    std::string streamErrorMessage(const AppError& error) const;
     void updateStorage();
     bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
     const Preferences& preferences() const { return preferences_; }
@@ -208,7 +219,9 @@ private:
         Browse,
         CommunityWrite,
         CommunityPlay,
-        HistoryReport
+        HistoryReport,
+        ServerFind,
+        ServerTest
     };
 
     // Jobs that never block input. A new foreground job cancels them and takes over.
@@ -223,6 +236,13 @@ private:
     void finishPrefetch();
     void commitPrefetch(bool promoted);
     void startJob(Job job);
+    void startServerFind();
+    void startServerTest();
+    void commitServerFind();
+    void runServerTest();
+    void applyServerConfig();
+    bool serverStreaming() const { return preferences_.streamServer && preferences_.serverReady(); }
+    bool streamTarget(StreamTarget& target, long long startMs) const;
     void runJob();
     void commitJob();
     void joinJob();
@@ -318,6 +338,10 @@ private:
     SessionStore sessions_{CLIENT_PATH("/session.json")};
     AuthService authService_{api_, sessions_};
     AuthView authView_, stagedAuth_;
+    SettingsInput settingsInput_ = SettingsInput::None;
+    WiliServer jobServer_{};
+    std::vector<WiliFoundServer> stagedFound_;
+    std::string stagedServerMessage_;
     AppError jobTypedError_, authError_;
     std::string jobAuthKey_;
     uint64_t authPollAt_ = 0;

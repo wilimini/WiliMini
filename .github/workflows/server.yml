@@ -1,0 +1,85 @@
+name: Server
+
+# wili-server (server/) is plain Go: tests run on all three desktop systems and the
+# binary is cross-compiled for the common ones. ffmpeg-dependent tests skip when it is absent.
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/server.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Test with the race detector (Linux)
+        if: runner.os == 'Linux'
+        run: go test -race -count=1 ./...
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: amd64}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          ext=""; [ "$GOOS" = windows ] && ext=".exe"
+          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" \
+            -o "../wili-server-${GOOS}-${GOARCH}${ext}" ./cmd/wili-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wili-server-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: wili-server-*
+          retention-days: 14

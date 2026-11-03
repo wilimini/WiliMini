@@ -124,6 +124,54 @@ int main(int argc, char** argv) {
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_channels":"a;b"})";
     assert(!pspapp::loadPreferences(path, value));
+    // Stream server: off and empty for old files, round-trips, and hand-edited text is validated.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value));
+    assert(!value.streamServer && value.serverHost.empty() && value.serverToken.empty() &&
+           value.serverPort == 8787 && !value.serverReady());
+    assert(value.streamPreset == pspapp::StreamPreset::Balanced && value.streamProfile == pspapp::StreamProfile::Auto);
+    value.streamServer = true;
+    value.serverHost = "192.168.1.20";
+    value.serverPort = 9000;
+    value.serverToken = "k7m2q9xa";
+    value.streamPreset = pspapp::StreamPreset::Quality;
+    value.streamProfile = pspapp::StreamProfile::Cabac;
+    assert(value.serverReady());
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences serverRestored;
+    assert(pspapp::loadPreferences(path, serverRestored));
+    assert(serverRestored.streamServer && serverRestored.serverHost == "192.168.1.20" &&
+           serverRestored.serverPort == 9000 && serverRestored.serverToken == "k7m2q9xa" &&
+           serverRestored.streamPreset == pspapp::StreamPreset::Quality &&
+           serverRestored.streamProfile == pspapp::StreamProfile::Cabac);
+    {
+        const WiliServer config = serverRestored.serverConfig();
+        assert(config.enabled == 1 && config.port == 9000 && std::string(config.host) == "192.168.1.20" &&
+               std::string(config.token) == "k7m2q9xa");
+    }
+    // Enabled but incomplete never counts as ready, so nothing is rewritten.
+    value.serverToken.clear();
+    assert(!value.serverReady());
+    value.serverToken = "k7m2q9xa";
+    // Bad values are refused on save and on load.
+    value.serverHost = "evil host/with spaces";
+    assert(!pspapp::savePreferences(path, value));
+    value.serverHost = "192.168.1.20:8787"; // the port belongs in server_port
+    assert(!pspapp::savePreferences(path, value));
+    value.serverHost = "192.168.1.20";
+    value.serverToken = "bad token&k=1";
+    assert(!pspapp::savePreferences(path, value));
+    value.serverToken = "k7m2q9xa";
+    value.serverPort = 0;
+    assert(!pspapp::savePreferences(path, value));
+    value.serverPort = 8787;
+    for (const char* bad : {R"("server_host":"a b")", R"("server_port":70000)", R"("server_token":"x")",
+                            R"("server_token":"a&b=cdef")", R"("stream_preset":"ultra")",
+                            R"("stream_profile":"high")", R"("stream_server":1)", R"("server_port":"80")"}) {
+        std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,)"
+                            << bad << "}";
+        assert(!pspapp::loadPreferences(path, value));
+    }
     std::remove(path);
     std::puts("Preference migration, round trips, invalid buffers and log settings: passed");
 }

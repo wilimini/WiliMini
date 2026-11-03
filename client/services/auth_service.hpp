@@ -26,6 +26,7 @@ class AuthService {
     Result<AuthView> generate();
     Result<AuthView> poll(const std::string &key);
     Result<AuthView> check();
+    Result<AuthView> checkServer();
     Result<AuthView> logout();
 
   private:

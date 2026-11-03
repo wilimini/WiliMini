@@ -5,6 +5,10 @@
 
 namespace pspapp {
 using namespace bilibili;
+// In server mode the PC holds the account; "signed in" means the server is.
+static bool serverMode() {
+    return wili_server_ready(bili_server_current()) != 0;
+}
 static AppError invalid(ErrorOperation op) {
     return {ErrorDomain::Auth, ErrorKind::InvalidResponse, op};
 }
@@ -27,6 +31,12 @@ const char *authStateMessage(AuthState state, bool confirmWithCircle) {
     }
 }
 Result<AuthView> AuthService::restore() {
+    if (serverMode()) {
+        // Nothing is stored on the PSP; the first check asks the server.
+        AuthView out;
+        out.state = AuthState::Restored;
+        return {std::move(out), {}};
+    }
     auto session = sessions_.load();
     if (!session)
         return Result<AuthView>::failure(session.error);
@@ -86,6 +96,14 @@ Result<AuthView> AuthService::poll(const std::string &key) {
             out.state = AuthState::QrExpired;
             break;
         case 0: {
+            if (serverMode()) {
+                // The server stored the cookies; check() fetches the account next.
+                if (transfer_cancel)
+                    return Result<AuthView>::failure(
+                        {ErrorDomain::Auth, ErrorKind::Cancelled, ErrorOperation::PollLogin});
+                out.state = AuthState::SignedIn;
+                break;
+            }
             auto session = SessionStore::parseCookies(response.value.cookies);
             if (!session)
                 return Result<AuthView>::failure(session.error);
@@ -108,7 +126,34 @@ Result<AuthView> AuthService::poll(const std::string &key) {
         return Result<AuthView>::failure(invalid(ErrorOperation::PollLogin));
     }
 }
+Result<AuthView> AuthService::checkServer() {
+    auto response = api_.get(Api::Nav, {}, false, ErrorOperation::CheckSession);
+    if (!response) {
+        if (response.error.kind == ErrorKind::LoginRequired) {
+            sessions_.clearEphemeral();
+            return {AuthView{}, {}};
+        }
+        return Result<AuthView>::failure(response.error);
+    }
+    try {
+        const auto &data = response.value.data;
+        if (!data.at("isLogin").get<bool>()) {
+            sessions_.clearEphemeral();
+            return {AuthView{}, {}};
+        }
+        AuthView out;
+        out.state = AuthState::SignedIn;
+        out.name = data.at("uname").get<std::string>();
+        out.mid = std::to_string(data.at("mid").get<uint64_t>());
+        sessions_.setEphemeral({"wili-server", out.mid});
+        return {std::move(out), {}};
+    } catch (const std::exception &) {
+        return Result<AuthView>::failure(invalid(ErrorOperation::CheckSession));
+    }
+}
 Result<AuthView> AuthService::check() {
+    if (serverMode())
+        return checkServer();
     if (!sessions_.current().valid())
         return {AuthView{}, {}};
     auto response = api_.get(Api::Nav, {}, false, ErrorOperation::CheckSession);
@@ -146,6 +191,16 @@ Result<AuthView> AuthService::check() {
     }
 }
 Result<AuthView> AuthService::logout() {
+    if (serverMode()) {
+        char url[256];
+        if (wili_server_logout_url(bili_server_current(), url, sizeof(url)) != 0)
+            return Result<AuthView>::failure(invalid(ErrorOperation::Logout));
+        auto response = api_.get(url, {}, false, ErrorOperation::Logout, false);
+        if (!response)
+            return Result<AuthView>::failure(response.error);
+        sessions_.clearEphemeral();
+        return {AuthView{}, {}};
+    }
     auto error = sessions_.clear();
     if (error)
         return Result<AuthView>::failure(std::move(error));

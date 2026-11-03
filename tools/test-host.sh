@@ -18,6 +18,14 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Ithird_party/nlohmann \
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/pinyin_ime_test.cpp client/pinyin_ime.cpp -o "$out/pinyin-ime-test"
 "$out/pinyin-ime-test" client/assets/ime/pinyin.dat
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+    tests/stream_server_test.c client/stream_server.c -o "$out/stream-server-test"
+"$out/stream-server-test" tests/data
+if command -v go >/dev/null 2>&1 && [ -f server/go.mod ]; then
+    (cd server && go vet ./... && go test ./...)
+else
+    echo "go not installed: skipping the wili-server tests"
+fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 echo "All host checks passed"

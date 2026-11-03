@@ -92,6 +92,10 @@ std::string errorMessage(const AppError &e) {
     case ErrorKind::IoFailure:
         text = "记忆棒读写失败";
         break;
+    case ErrorKind::StreamServer:
+        // The UI shows a localized sentence for e.detail; this is the log fallback.
+        text = "流媒体服务器出错";
+        break;
     default:
         if (e.domain == ErrorDomain::Playback) {
             if (e.operation == ErrorOperation::PreparePlayback) {
