@@ -20,4 +20,20 @@ static int bili_http_buffer_reserve(char **text, size_t *capacity,
     *capacity = next;
     return 0;
 }
+
+/* Grow once to an expected body size (such as Content-Length) before the
+ * first write, so a large response does not pass through every doubling.
+ * A compressed body can still exceed the hint and then grows as above.
+ * Hints that are unknown, already met or over the limit are ignored, as is
+ * an allocation failure: the regular growth path reports that. */
+static void bili_http_buffer_hint(char **text, size_t *capacity,
+                                  long long expected, size_t limit) {
+    if (expected <= 0 || (unsigned long long)expected > limit || limit == (size_t)-1) return;
+    const size_t next = (size_t)expected + 1;
+    if (*capacity >= next) return;
+    char *grown = realloc(*text, next);
+    if (!grown) return;
+    *text = grown;
+    *capacity = next;
+}
 #endif

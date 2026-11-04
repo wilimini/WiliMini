@@ -62,7 +62,7 @@ private:
     void drawSubtitles(const PspVideoStatus& status);
     unsigned count_ = 0, page_ = 1;
     uint64_t lastDraw_ = 0;
-    bool haveFrame_ = false;
+    bool haveFrame_ = false, stagedRgb565_ = false;
     std::string title_, seeking_, buffering_, qualityNames_[3];
     std::string menuLabels_[5], density_[3], on_, off_, noSubtitles_, display_;
     void icon(int x, int y, unsigned id);

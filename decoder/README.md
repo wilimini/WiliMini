@@ -48,7 +48,13 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 `rgb_pixel_format` 可选 RGB565 或 RGBA8888，零值使用 RGB565。客户端“自动”模式在 PSP-1000
 默认选择 RGB565，在扩展内存机型默认选择 RGBA8888；也可在设置中强制选择任一格式。
 ME 渲染队列按所选格式保存 512×272 输出帧：RGB565 每帧 272 KiB，RGBA8888 每帧 544 KiB。
-PSP 真机测试中，RGB565 队列经 presenter 转换到 RGBA8888 OSD 页面后显示正常。
+客户端 presenter 用 DMA 将 RGB565 帧原样复制到第三个 VRAM 页面，再以 `GU_PSM_5650` 纹理绘制到
+RGBA8888 OSD 页面，由 GE 完成转色，不再在 CPU 上逐像素转换。此前的 CPU 转换路径曾在 PSP 真机上
+显示正常；GE 转色路径尚待真机验证。
+
+音频与视频共用同一封装时，音频沿用视频上下文的探测结果（流参数与 `start_time`），
+避免再次探测时打开无用的 H.264 解码器；独立的 DASH 音频输入始终调用
+`avformat_find_stream_info()`，以确定起始时间并识别隐式 HE-AAC SBR/PS。
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
 默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`。`PSP_VIDEO_BACKEND_SCE_MPEG`（固件 sceMpeg，用户态 API，
 loader 预先加载 AVCODEC/MPEGBASE AV 模块）用于 wili-server 串流（真机和模拟器），不会回退到 ME；

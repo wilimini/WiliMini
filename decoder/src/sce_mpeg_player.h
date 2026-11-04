@@ -287,7 +287,8 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
     audio_started = 1;
-    ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, "");
+    ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source,
+                     audio_io_source ? NULL : mux.format, "");
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_PLAY;
     unsigned page = 0, empty = 0, no_data = 0;
