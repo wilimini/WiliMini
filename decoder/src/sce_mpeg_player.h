@@ -166,6 +166,10 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
         }
         mux->offset += n; ++written;
     }
+    /* The packets were built by the CPU in cached RAM, but the firmware's MPEG demuxer and the
+     * Media Engine read them from RAM. Without this, the tail of an access unit can still be
+     * the bytes of whatever occupied the slot before: the last slices decode from older frames. */
+    if (written > 0) sceKernelDcacheWritebackRange(output, (unsigned)written * 2048);
     return written;
 }
 
@@ -266,6 +270,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     AV_WB16(header+0x80,1); header[0x82]=0xe0;
     header[0x8e]=(width+15)/16; header[0x8f]=(height+15)/16;
     SceInt32 offset;
+    sceKernelDcacheWritebackRange(header, sizeof(header));
     ret = sceMpegQueryStreamOffset(&mpeg,header,&offset);
     if (ret < 0) goto done;
     stream = sceMpegRegistStream(&mpeg,0,0);
