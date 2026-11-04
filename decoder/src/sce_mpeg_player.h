@@ -47,7 +47,9 @@ static int emu_parameters(EmuMux *mux, const AVCodecParameters *par) {
         return 0;
     }
     mux->nal_length = (p[4] & 3) + 1;
-    mux->parameters = av_malloc(size + 1024);
+    /* Every parameter set costs 2 length bytes and gains a 4-byte start code, and needs at
+     * least 3 input bytes, so the output is below twice the input; size + 1024 was not enough. */
+    mux->parameters = av_malloc((size_t)size * 2 + 64);
     if (!mux->parameters) return AVERROR(ENOMEM);
     unsigned at = 6, count = p[5] & 31;
     for (int group = 0; group < 2; ++group) {
