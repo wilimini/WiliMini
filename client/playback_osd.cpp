@@ -163,12 +163,21 @@ void PlaybackOsd::updateSettings(PspVideoSettings& settings) {
     sceKernelSignalSema(overlayLock_, 1);
 }
 void PlaybackOsd::loadOverlays() {
-    HttpClient::Transport deviceTransport = [this](const std::string& url, ErrorOperation op) {
+    // PSP-1000 releases idle HTTP handles to leave room for decoder reference
+    // frames. Release them only when this thread goes idle (or exits; the
+    // destructor joins it), so back-to-back overlay requests reuse one
+    // keep-alive connection instead of reconnecting during playback.
+    struct IdleHttp {
+        bool enabled, pending = false;
+        void release() { if (pending) network_trim_idle_http(); pending = false; }
+        ~IdleHttp() { release(); }
+    } idleHttp{!overlayTransport_ && defaultPlaybackBufferFrames() == 2};
+    HttpClient::Transport deviceTransport = [this, &idleHttp](const std::string& url, ErrorOperation op) {
         BiliHttpResponse response{};
         HttpResponse out;
         bili_http_get_response_cancel(url.c_str(), &response, 512 * 1024, &overlayStop_);
         if (response.text) { out.body = response.text; bili_http_free(response.text); }
-        if (defaultPlaybackBufferFrames() == 2) network_trim_idle_http();
+        idleHttp.pending = idleHttp.enabled;
         if (response.failure) out.error = {ErrorDomain::Network,
             overlayStop_ ? ErrorKind::Cancelled : ErrorKind::HttpFailure, op, response.transport_code, response.status};
         return out;
@@ -214,6 +223,7 @@ void PlaybackOsd::loadOverlays() {
             message(failed ? 2 : 4);
         } else {
             if (selected == 0) loaded = 0; // Off/on permits retry of a failed track.
+            idleHttp.release();
             sceKernelDelayThread(50000);
         }
     }
@@ -463,23 +473,11 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     if (!pixels && now - lastDraw_ < 33333) return 0;
     if (pixels) {
         // The previous GU list has completed before this clean page is reused.
-        if (format == PSP_VIDEO_PIXEL_FORMAT_RGB565) {
-            auto* converted = static_cast<uint32_t*>(vram(2 * frameBytes));
-            const auto* source = static_cast<const uint16_t*>(pixels);
-            for (unsigned y = 0; y < 272; ++y) {
-                for (unsigned x = 0; x < 512; ++x) {
-                    const uint16_t p = source[y * 512 + x];
-                    const unsigned r5 = (p >> 11) & 31, g6 = (p >> 5) & 63, b5 = p & 31;
-                    const unsigned r = (r5 << 3) | (r5 >> 2);
-                    const unsigned g = (g6 << 2) | (g6 >> 4);
-                    const unsigned b = (b5 << 3) | (b5 >> 2);
-                    converted[y * 512 + x] = 0xff000000u | (b << 16) | (g << 8) | r;
-                }
-            }
-        } else {
-            int result = sceDmacMemcpy(vram(2 * frameBytes), pixels, frameBytes);
-            if (result < 0) return result;
-        }
+        // RGB565 is staged as is; the GE expands it while texturing below.
+        const bool rgb565 = format == PSP_VIDEO_PIXEL_FORMAT_RGB565;
+        int result = sceDmacMemcpy(vram(2 * frameBytes), pixels, rgb565 ? frameBytes / 2 : frameBytes);
+        if (result < 0) return result;
+        stagedRgb565_ = rgb565;
         haveFrame_ = true;
         if (overlayThread_ >= 0 && !overlayStarted_) {
             PlaybackOsd* self = this;
@@ -497,9 +495,33 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_CULL_FACE);
     sceGuDisable(GU_ALPHA_TEST);
-    sceGuCopyImage(GU_PSM_8888, 0, 0, 480, 272, 512, vram(2 * frameBytes),
-                   0, 0, 512, vram(page_ * frameBytes));
-    sceGuTexSync();
+    if (stagedRgb565_) {
+        // Opaque 1:1 texture draw converts 5650 to the 8888 draw buffer.
+        // 64-texel strips keep the texture cache efficient.
+        sceGuDisable(GU_BLEND);
+        sceGuEnable(GU_TEXTURE_2D);
+        sceGuTexMode(GU_PSM_5650, 0, 0, 0);
+        sceGuTexImage(0, 512, 512, 512, vram(2 * frameBytes));
+        sceGuTexFlush();
+        sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
+        sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+        sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+        struct Vertex { unsigned short u, v; short x, y, z; };
+        constexpr int strip = 64, strips = (480 + strip - 1) / strip;
+        auto* v = static_cast<Vertex*>(sceGuGetMemory(2 * strips * sizeof(Vertex)));
+        for (int i = 0; i < strips; ++i) {
+            const short left = static_cast<short>(i * strip);
+            const short right = static_cast<short>(std::min(480, (i + 1) * strip));
+            v[2 * i] = {static_cast<unsigned short>(left), 0, left, 0, 0};
+            v[2 * i + 1] = {static_cast<unsigned short>(right), 272, right, 272, 0};
+        }
+        sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                       2 * strips, nullptr, v);
+    } else {
+        sceGuCopyImage(GU_PSM_8888, 0, 0, 480, 272, 512, vram(2 * frameBytes),
+                       0, 0, 512, vram(page_ * frameBytes));
+        sceGuTexSync();
+    }
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
     drawComments(status);

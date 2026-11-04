@@ -315,6 +315,7 @@ typedef struct {
     int flush;
     const char *form;
     size_t text_capacity; /* Nonzero for a response that grows on demand. */
+    CURL *handle; /* Set while transferring; supplies the Content-Length hint. */
 } Sink;
 static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t bytes);
 #if BILI_STREAM_PROFILE
@@ -327,6 +328,11 @@ static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
     if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0)return 0;}
     else if(s->file){if(fwrite(data,1,bytes,s->file)!=bytes)return 0;}
     else {
+        if (s->text_capacity && !s->used && s->handle) {
+            curl_off_t length = -1;
+            if (curl_easy_getinfo(s->handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length) == CURLE_OK)
+                bili_http_buffer_hint(&s->text, &s->text_capacity, (long long)length, s->limit);
+        }
         if (s->text_capacity && bili_http_buffer_reserve(&s->text, &s->text_capacity,
                                                         s->used + bytes, s->limit) < 0) {
             if (s->response) s->response->failure = BILI_HTTP_MEMORY;
@@ -437,7 +443,9 @@ static int request(const char *url,Sink *sink) {
     }
 #endif
     curl_easy_setopt(c,CURLOPT_TIMEOUT,(sink->file || sink->stream)?0L:playback_address_request(url)?45L:25L);
+    sink->handle=c;
     CURLcode r=curl_easy_perform(c);
+    sink->handle=NULL;
     long status=0;curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&status);
     const char *kind = !sink->response ? "download" :
         strstr(url,"/x/web-interface/view?") ? "detail" :
