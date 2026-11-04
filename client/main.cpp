@@ -242,27 +242,17 @@ int main(int argc, char** argv) {
                 ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
             options.cancel_button = app.preferences().confirmWithCircle
                 ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
-            // wili-server streams are decoded by the firmware's sceMpeg and by nothing else:
-            // there is deliberately no fallback to the ME decoder for them.
-            options.backend = prepared.restart_seek ? PSP_VIDEO_BACKEND_SCE_MPEG
-                            : BILI_PPSSPP_SCE_MPEG && psp_runtime_detect() == PSP_RUNTIME_PPSSPP
-                                  ? PSP_VIDEO_BACKEND_SCE_MPEG
-                                  : PSP_VIDEO_BACKEND_NATIVE_ME;
-            // The stream server needs sceMpeg to have the Media Engine to itself, i.e. a start with the
+            // sceMpeg decodes whatever it is given, streamed or not: wili-server streams always use
+            // it, and every other source does too whenever no ME bridge is loaded (the sce-mpeg
+            // backend, or the emulator). Otherwise the ME decoder plays it.
+            options.backend = prepared.restart_seek || noMe ? PSP_VIDEO_BACKEND_SCE_MPEG
+                                                            : PSP_VIDEO_BACKEND_NATIVE_ME;
+            // A server stream needs sceMpeg to have the Media Engine to itself, i.e. a start with the
             // sce-mpeg backend and no bridge. Enabling it in this session is not enough.
             if (options.backend == PSP_VIDEO_BACKEND_SCE_MPEG && !noMe) {
                 ui_resume();
                 app.finishPlayback(-1, 0, 0, 0, PSP_VIDEO_STAGE_SETUP, 0);
                 app.setStatus(pspapp::text(pspapp::TextId::stream_status_restart, app.preferences().locale));
-                previous = ~0u;
-                continue;
-            }
-            if (options.backend == PSP_VIDEO_BACKEND_NATIVE_ME && noMe) {
-                // Live rooms and other direct playback need the ME decoder, which is off while the
-                // stream server is on. Fail cleanly instead of calling into an absent bridge.
-                ui_resume();
-                app.finishPlayback(-1, 0, 0, 0, PSP_VIDEO_STAGE_SETUP, 0);
-                app.setStatus(pspapp::text(pspapp::TextId::stream_err_no_me, app.preferences().locale));
                 previous = ~0u;
                 continue;
             }

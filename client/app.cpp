@@ -1620,10 +1620,6 @@ void App::runJob() {
             video.cid = static_cast<long long>(jobMedia_.cid); video.duration = jobMedia_.duration;
             StreamTarget target;
             const StreamTarget* stream = streamTarget(target, jobMedia_.startMs) ? &target : nullptr;
-            if (!stream && activeMeBackend_ == static_cast<int>(MeBackend::SceMpeg)) {
-                failNoStreamServer();
-                return;
-            }
             jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_, stream);
         }
     } else if (job_ == Job::Browse) {
@@ -1913,10 +1909,6 @@ void App::runJob() {
         std::string playbackError;
         StreamTarget target;
         const StreamTarget* stream = streamTarget(target, jobCard_.startMs) ? &target : nullptr;
-        if (!stream && activeMeBackend_ == static_cast<int>(MeBackend::SceMpeg)) {
-            failNoStreamServer();
-            return;
-        }
         const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_, stream);
         if (result < 0) {
             jobError_ = playbackError.empty() ? "无法准备视频流" : playbackError;

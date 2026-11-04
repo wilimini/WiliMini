@@ -329,18 +329,10 @@ void App::submitSettingsInput(const std::string& raw) {
                                                                            : TextId::settings_saved, preferences_.locale);
 }
 
-void App::failNoStreamServer() {
-    jobTypedError_ = {ErrorDomain::Playback, ErrorKind::StreamServer, ErrorOperation::PreparePlayback, 0, 0,
-                      preferences_.streamServer ? "incomplete" : "server_off"};
-    jobError_ = "no_stream_server";
-    jobResult_ = -1;
-}
-
 std::string App::streamErrorMessage(const AppError& error) const {
     const std::string& code = error.detail;
     TextId id = TextId::stream_err_upstream;
-    if (code == "server_off") id = TextId::stream_err_server_off;
-    else if (code == "incomplete") id = TextId::stream_err_incomplete;
+    if (code == "incomplete") id = TextId::stream_err_incomplete;
     else if (code == "unreachable") id = TextId::stream_err_unreachable;
     else if (code == "unauthorized") id = TextId::stream_err_token;
     else if (code == "rate_limited") id = TextId::stream_test_rate;

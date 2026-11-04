@@ -215,9 +215,7 @@
   "stream_err_ffmpeg": "ffmpeg is not installed on the server",
   "stream_err_upstream": "The server could not fetch this video from Bilibili",
   "stream_err_bad_request": "The server refused the request · Update WiliMini and wili-server",
-  "stream_err_no_me": "Live rooms are not streamed yet and need the ME decoder, which is off while the sceMpeg engine is active · Switch the ME backend and restart to watch them",
-  "stream_status_restart": "Saved · Quit (START) and reopen WiliMini to apply · sceMpeg needs the Media Engine to itself, so no ME bridge is loaded",
-  "value_me_sce_mpeg": "sceMpeg (no ME)",
-  "stream_err_server_off": "The sceMpeg engine is active but Stream server is off · Turn it on in Settings → Stream server, or pick another ME backend and restart",
+  "stream_status_restart": "Saved · Quit (START) and reopen WiliMini to apply",
+  "value_me_sce_mpeg": "sceMpeg",
   "stream_err_incomplete": "Stream server needs an address and a pairing token · Settings → Stream server"
 }

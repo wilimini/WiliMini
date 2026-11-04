@@ -243,8 +243,6 @@ private:
     void applyServerConfig();
     bool serverStreaming() const { return preferences_.streamServer && preferences_.serverReady(); }
     bool streamTarget(StreamTarget& target, long long startMs) const;
-    // The engine is sceMpeg (no ME decoder) but this video would play the direct way.
-    void failNoStreamServer();
     void runJob();
     void commitJob();
     void joinJob();

@@ -215,9 +215,7 @@
   "stream_err_ffmpeg": "服务器未安装 ffmpeg",
   "stream_err_upstream": "服务器无法从哔哩哔哩获取该视频",
   "stream_err_bad_request": "服务器拒绝了请求 · 请更新 WiliMini 和 wili-server",
-  "stream_err_no_me": "直播需要 ME 解码器，而开启流媒体服务器时 ME 已关闭 · 请在设置中关闭后重新打开 WiliMini",
-  "stream_status_restart": "已保存 · 退出（START）并重新打开 WiliMini 后生效 · sceMpeg 独占 Media Engine，因此不加载 ME bridge",
-  "value_me_sce_mpeg": "sceMpeg（不用 ME）",
-  "stream_err_server_off": "当前引擎为 sceMpeg，但流媒体服务器未开启 · 请在 设置 → 流媒体服务器 中开启，或换用其他 ME 后端并重启",
+  "stream_status_restart": "已保存 · 退出（START）并重新打开 WiliMini 后生效",
+  "value_me_sce_mpeg": "sceMpeg",
   "stream_err_incomplete": "流媒体服务器还缺少地址或配对令牌 · 设置 → 流媒体服务器"
 }
