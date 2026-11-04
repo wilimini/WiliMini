@@ -70,7 +70,7 @@ static inline uint16_t yuv_rgb565_pixel(const YuvRgbTables *tables,
     unsigned r = pixel & 255;
     unsigned g = (pixel >> 8) & 255;
     unsigned b = (pixel >> 16) & 255;
-    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    return (uint16_t)(((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3));
 }
 
 static inline uint16_t yuv_rgb565_pixel_offsets(const YuvRgbTables *tables,
@@ -80,7 +80,7 @@ static inline uint16_t yuv_rgb565_pixel_offsets(const YuvRgbTables *tables,
     unsigned r = pixel & 255;
     unsigned g = (pixel >> 8) & 255;
     unsigned b = (pixel >> 16) & 255;
-    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    return (uint16_t)(((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3));
 }
 
 #endif
