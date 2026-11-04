@@ -272,7 +272,8 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     ret = av_seek_frame(format, -1, playback_position_us + source_origin_us(format), AVSEEK_FLAG_BACKWARD);
     if (ret < 0) return ret;
     avcodec_flush_buffers(codec);
-    ret = audio_open(video_source, audio_io_source ? audio_io_source : video_io_source, run_path);
+    ret = audio_open(video_source, audio_io_source ? audio_io_source : video_io_source,
+                     audio_io_source ? NULL : format, run_path);
     if (ret < 0) return ret;
     sceKernelWaitSema(controls_lock, 1, NULL);
     const int again = seek_pending;
@@ -1026,7 +1027,8 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     audio_started = 1;
     diagnostic_audio_valid = 1;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
-    ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source, run_path);
+    ret = audio_open(SOURCE, audio_io_source ? audio_io_source : video_io_source,
+                     audio_io_source ? NULL : format, run_path);
     source_memory("audio_init_end");
     playback_diagnostic("audio_init_end", ret);
     if (ret < 0) goto done;

@@ -222,7 +222,29 @@ static int audio_output_thread(SceSize size, void *arg)
     return 0;
 }
 
-static int audio_open(const char *source, const PspVideoSource *stream, const char *run_path)
+/* Copy the probe results of the video context when it demuxes the same
+ * container. Returns 1 when adopted, 0 when the layouts differ. */
+static int audio_adopt_probe(const AVFormatContext *probed)
+{
+    if (!probed || probed->nb_streams != audio.format->nb_streams) return 0;
+    const int index = av_find_best_stream((AVFormatContext *)probed, AVMEDIA_TYPE_AUDIO,
+                                          -1, -1, NULL, 0);
+    if (index < 0) return 0;
+    const AVStream *from = probed->streams[index];
+    AVStream *to = audio.format->streams[index];
+    if (to->codecpar->codec_type != AVMEDIA_TYPE_AUDIO ||
+        to->codecpar->codec_id != from->codecpar->codec_id) return 0;
+    int ret = avcodec_parameters_copy(to->codecpar, from->codecpar);
+    if (ret < 0) return ret;
+    audio.format->start_time = probed->start_time;
+    audio.stream = index;
+    return 1;
+}
+
+/* probed: the already-probed video context when audio shares its source,
+ * otherwise NULL. */
+static int audio_open(const char *source, const PspVideoSource *stream,
+                      const AVFormatContext *probed, const char *run_path)
 {
     (void)run_path;
     memset(&audio, 0, sizeof(audio));
@@ -233,23 +255,24 @@ static int audio_open(const char *source, const PspVideoSource *stream, const ch
     int ret = source_open(&audio.format, source, stream, &audio.input_io);
     if (ret < 0) return ret;
     source_memory("audio_source");
-    /* MP4/DASH headers already carry AAC's AudioSpecificConfig. Opening the
-     * real AAC decoder below reads it (including HE-AAC's output rate).
-     * Probing the entire muxed input here also opens an unused H.264 decoder,
-     * especially costly during seek while video reference frames are live.
-     * Keep full probing for inputs without complete AAC headers. */
-    audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
-    const AVCodecParameters *params = audio.stream >= 0
-        ? audio.format->streams[audio.stream]->codecpar : NULL;
-    if (!params || params->codec_id != AV_CODEC_ID_AAC ||
-        params->extradata_size <= 0 || params->sample_rate <= 0 ||
-        params->ch_layout.nb_channels <= 0) {
+    /* Probing sets start_time, which aligns seek and resume targets with the
+     * video context, and decodes a frame to resolve implicit HE-AAC SBR/PS:
+     * the MP4 header then reports only the core rate and channel count.
+     * For a muxed input the video context has already probed this
+     * container; reuse it, since probing here opens an unused H.264 decoder
+     * (stream discard does not prevent that) while video reference frames
+     * are live. A separate audio-only input is probed directly. */
+    const int adopted = audio_adopt_probe(probed);
+    if (adopted < 0) return adopted;
+    if (!adopted) {
         ret = avformat_find_stream_info(audio.format, NULL);
         if (ret < 0) return ret;
+        audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     }
     source_memory("audio_probe");
-    audio.stream = av_find_best_stream(audio.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (audio.stream < 0) return audio.stream;
+    WLOG_I(WLC_PLAYER, "AUDIO origin_us=%lld probe=%s", (long long)source_origin_us(audio.format),
+           adopted ? "shared" : "own");
     ret = source_start_at(audio.format, audio.stream, playback_start_ms);
     if (ret < 0) return ret;
     for (unsigned i = 0; i < audio.format->nb_streams; ++i)
