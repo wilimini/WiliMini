@@ -206,10 +206,12 @@ static int audio_output_thread(SceSize size, void *arg)
         if (rest >= 0 && rest <= 2 * AUDIO_SAMPLES &&
             audio.submitted_samples >= (unsigned)rest)
             played = audio.submitted_samples - rest;
+        /* Get the clock before publishing: this call can wait on controls_lock. */
+        uint64_t anchor = playback_now_us();
         ++audio.clock_sequence;
         __asm__ volatile("" ::: "memory");
         audio.clock_played_samples = played;
-        audio.clock_anchor_us = playback_now_us();
+        audio.clock_anchor_us = anchor;
         __asm__ volatile("" ::: "memory");
         ++audio.clock_sequence;
         ++audio.blocks;
