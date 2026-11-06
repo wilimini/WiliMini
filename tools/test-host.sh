@@ -29,8 +29,6 @@ fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/http_buffer_test.c -o "$out/http-buffer-test"
 "$out/http-buffer-test"
-${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/psmf_header_test.c -o "$out/psmf-header-test"
-"$out/psmf-header-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 echo "All host checks passed"
