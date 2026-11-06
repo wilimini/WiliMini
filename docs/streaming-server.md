@@ -11,10 +11,12 @@ exactly as before.
 ## Quick start
 
 1. Install [ffmpeg](https://ffmpeg.org/) 5.1+ with libx264 on the PC (it must be on `PATH`).
-2. Get the server: `make server` (Go 1.24+) writes `dist/server/wili-server-<os>-<arch>`;
-   `make server SERVER_GOOS=windows SERVER_GOARCH=amd64` cross-compiles, `make server-all`
-   builds every platform CI publishes and `make server-test` runs vet and the tests. None of
-   them needs the PSP toolchain. Or use a CI artifact from the *Server* workflow.
+2. Get the server: download the matching `wili-server-<os>-<arch>` (or `.exe`) from the latest
+   GitHub Release. For development, `make server` (Go 1.24+) writes
+   `dist/server/wili-server-<os>-<arch>`. `make server SERVER_GOOS=windows SERVER_GOARCH=amd64`
+   cross-compiles, `make server-all` builds every platform CI publishes and `make server-test`
+   runs vet and the tests. None of them needs the PSP toolchain. Development builds are also
+   available as artifacts from the *Server* workflow.
 3. Run `wili-server` (add `--tui` for a dashboard). It prints the addresses and the
    pairing **token**. Allow it through the PC's firewall (TCP 8787, UDP 5353 and 47612).
 4. Optional: `wili-server login` shows a QR code to scan with the Bilibili app. Without

@@ -25,8 +25,7 @@ WiliMini
 ![PSP](https://img.shields.io/badge/PlayStation-Portable-003791?style=flat&logo=PlayStation)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat&logo=cplusplus)
 
-WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界面渲染、视频下载、
-音视频解码和显示都在 PSP 本机完成，不依赖外部串流设备。
+WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界面渲染、视频下载、音视频解码和显示都在 PSP 本机完成，同时也支持串流模式。
 
 项目以接近 wiliwili 的浏览体验为目标，并针对 PSP 的内存、带宽和 Media Engine
 进行适配。目前主要在 PSP-3000 + ARK-5 上验证。
@@ -59,6 +58,7 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 - **主题切换**：支持深色和浅色主题
 - **语言选项**：设置页和按键提示支持简体中文与 English
 - **全型号支持**：支持PSP-1000, PSP-2000, PSP-3000, PSP Go
+- **可选的串流**：由电脑运行 `wili-server` 进行转码并转发请求
 
 ## 性能优化架构
 
@@ -148,6 +148,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 - [调试指南](docs/debug.md)：PSPLink、USBHostFS 和真机实验流程
 - [PSP SELECT 网络问题分析](docs/PSP-SELECT-NETWORK-BUG.md)
 - [PSP 解码优化记录](docs/psp-decode-optimization-journey.md)
+- [PC 串流服务器](docs/streaming-server.md)：`wili-server`、协议、配对和限制
 - [开发与验证工具](tools/README.md)
 - [Media Engine 实验](experiments/me/)
 
@@ -167,6 +168,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 | 直播播放 | 暂不支持 |
 | 续播和退出恢复 | 部分完成 |
 | Media Engine 加速 | 实验性 |
+| PC 串流（`wili-server` + `sceMpeg`） | 可选，实验性，尚未真机验证 |
 
 当前主要针对 360p H.264/AAC 内容进行验证。复杂画面可能出现跳帧或停顿。
 
@@ -200,14 +202,59 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 详见 [docs/pinyin-ime.md](docs/pinyin-ime.md)。视频详情页支持评论、收藏、
 稍后观看和播放进度操作。
 
+# 可选：PC 串流
+
+PC 串流默认关闭。普通使用不需要电脑。此功能仍为实验性，尚未在真实 PSP 上验证。
+
+启用后，同一局域网中的电脑运行 `wili-server`。电脑处理 Bilibili 请求、API 签名和账号会话。
+电脑还用 ffmpeg 转码。PSP 接收 480×272 的 H.264/AAC 流。PSP 使用固件 `sceMpeg` 解码。
+
+| 项目 | 默认直连 | PC 串流 |
+| --- | --- | --- |
+| API | PSP 直接连接 Bilibili | PSP 通过电脑代理请求 |
+| 账号 | 登录态保存在 PSP | 登录态保存在电脑 |
+| 视频 | PSP 获取 DASH 分片，由 ME 解码 | 电脑转码，由 `sceMpeg` 解码 |
+
+## 电脑端准备
+
+1. 安装 ffmpeg 5.1+。ffmpeg 必须包含 libx264，并在 `PATH` 中。
+2. 打开 [最新 Release](https://github.com/wilimini/WiliMini/releases/latest)，下载对应系统的 `wili-server-<os>-<arch>` 或 `.exe` 文件。
+3. 运行下载的文件。加上 `--tui` 可打开终端界面。
+4. 按需登录。给同一文件加上 `login` 参数，或在 `--tui` 中按 `l`。
+
+终端显示局域网地址和配对令牌。防火墙放行 TCP 8787、UDP 5353 和 UDP 47612。
+未登录可以使用，但只有游客清晰度。
+
+### 从源码构建
+
+开发版或 Release 缺少对应平台时，安装 Go 1.24+ 后从仓库根目录运行：
+
+```sh
+make server
+```
+
+产物位于 `dist/server/wili-server-<os>-<arch>`。此步骤不需要 PSP 工具链。
+开发版也可以从 [Server workflow](.github/workflows/server.yml) 的 Actions Artifacts 下载。
+
+## PSP 端连接
+
+1. 确认 PSP 和电脑在同一局域网。
+2. 打开 **设置 → 播放引擎**，选择 **PC 串流**。
+3. 在向导中选择服务器，输入配对令牌，然后运行连接测试。
+   - 自动搜索失败时，按 △ 输入 程序显示的`IP地址` 或 `IP地址:8787`。
+4. 退出并重新打开 WiliMini。播放引擎只在启动时选择。
+
+播放时按 △ 打开播放菜单，再进入画质选择。画质列表来自源视频。
+最终画面固定为 480×272。**设置 → 播放引擎** 可设置码率、帧率和编码。
+
+## 限制
+
+- 电脑必须保持运行。服务不可用时，切回 **ME** 并重启客户端。
+- 服务端默认最多同时处理 2 路视频。串流中跳转可能需要等待缓冲。
+
+完整协议和服务端选项见 [PC 串流服务器](docs/streaming-server.md)。
+
 # 开发
-
-## 串流服务器（可选）
-
-PSP 可以把同一 Wi-Fi 下的电脑当作 Bilibili 前端：电脑上的 `wili-server`（Go，见 `server/`）保存账号、
-代理 API，并用 ffmpeg 转码成 PSP 容易解码的 H.264 + AAC。默认关闭；设置 → 流媒体服务器 中开启，
-支持局域网自动发现（mDNS 与 UDP 广播）和配对令牌。协议、设置和限制见 [docs/streaming-server.md](docs/streaming-server.md)。
-该功能尚未在真机上验证。
 
 ## 环境准备
 
@@ -328,6 +375,7 @@ client/       Bilibili 客户端、UI、网络服务和播放控制
 decoder/      FFmpeg 播放器、音频、VFPU 和 Media Engine 路径
 cmake/        依赖、客户端和打包配置
 platform/     PSP 平台集成
+server/       wili-server PC 串流服务
 scripts/      资源生成和构建清单脚本
 tools/        PPSSPP 回放、PSP 辅助工具和主机测试
 third_party/  固定版本的第三方依赖
