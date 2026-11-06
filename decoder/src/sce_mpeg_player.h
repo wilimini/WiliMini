@@ -18,11 +18,7 @@
  *
  * The stream is expected to be what wili-server sends: AVC Main profile with CAVLC,
  * no B-frames, level 3.0, dimensions that are multiples of 16, at most 480x272. */
-/* The ring buffer and the refill size follow what real PSP homebrew does (pspdev/libpspav): 60 packets
- * of 2048 bytes, refilled at most 32 packets per sceMpegRingbufferPut. An access unit has to fit in
- * the ring, so a keyframe bigger than about EMU_RING_PACKETS * 2000 bytes is reported, not waited for. */
-#define EMU_RING_PACKETS 60
-#define EMU_PUT_PACKETS 32
+#define EMU_RING_PACKETS 256
 #define EMU_MAX_AU (4 * 1024 * 1024)
 typedef struct {
     AVFormatContext *format;
@@ -137,14 +133,6 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
                 mux->error = AVERROR_INVALIDDATA;
                 break;
             }
-            /* A packet carries at most 2025 bytes of an access unit (1987 for the first), and the
-             * ring must hold the whole unit before the firmware can hand it out. */
-            if (mux->size / 2000 + 2 > EMU_RING_PACKETS) {
-                WLOG_E(WLC_PLAYER, "sceMpeg: access unit of %u bytes does not fit the %d-packet ring; "
-                       "lower the stream bitrate", mux->size, EMU_RING_PACKETS);
-                mux->error = AVERROR(ENOSPC);
-                break;
-            }
         }
         uint8_t *p = (uint8_t *)output + written * 2048;
         memset(p, 0xff, 2048); memcpy(p, pack, sizeof(pack));
@@ -197,10 +185,8 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     unsigned segment_frames = 0; /* frames shown since this segment started */
     SceMpeg mpeg = NULL;
     SceMpegRingbuffer ring = {0};
-    SceMpegStream *stream = NULL, *atrac_stream = NULL;
-    SceMpegAu au __attribute__((aligned(64))), atrac_au __attribute__((aligned(64)));
-    void *atrac_es = NULL;
-    SceInt32 atrac_es_size = 0, atrac_out_size = 0;
+    SceMpegStream *stream = NULL;
+    SceMpegAu au __attribute__((aligned(64)));
     void *state = NULL, *ring_data = NULL, *es = NULL;
     void *rgb = NULL, *frame = NULL;
     VideoSourceIO input = {0};
@@ -293,23 +279,11 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     sceKernelDcacheWritebackRange(header, sizeof(header));
     ret = sceMpegQueryStreamOffset(&mpeg,header,&offset);
     if (ret < 0) goto done;
-    /* Both streams are registered, the video one and the audio one, in the order real PSP players do
-     * (pspdev/libpspav). No ATRAC data is ever sent: FFmpeg decodes the audio, so the audio stream
-     * is only registered, with its own access unit and buffer, to leave the firmware in the state a
-     * player with audio would. */
     stream = sceMpegRegistStream(&mpeg,0,0);
     if (!stream) { ret = -1; goto done; }
-    atrac_stream = sceMpegRegistStream(&mpeg,1,0);
-    if (!atrac_stream) { ret = -1; goto done; }
     es = sceMpegMallocAvcEsBuf(&mpeg);
     if (!es) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegInitAu(&mpeg,es,&au);
-    if (ret < 0) goto done;
-    ret = sceMpegQueryAtracEsSize(&mpeg,&atrac_es_size,&atrac_out_size);
-    if (ret < 0) goto done;
-    atrac_es = memalign(64, atrac_es_size > 0 ? (size_t)atrac_es_size : 64);
-    if (!atrac_es) { ret = AVERROR(ENOMEM); goto done; }
-    ret = sceMpegInitAu(&mpeg,atrac_es,&atrac_au);
     if (ret < 0) goto done;
     SceMpegAvcMode mode = {-1,output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
                                    ? SCE_MPEG_AVC_FORMAT_5650 : SCE_MPEG_AVC_FORMAT_8888};
@@ -329,8 +303,7 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         if (available < 0) { ret = available; break; }
         if (!mux.eof && available) {
             playback_operation_set("sce_ring_put");
-            /* At most EMU_PUT_PACKETS at a time, with the whole free space as the third argument. */
-            ret = sceMpegRingbufferPut(&ring,available < EMU_PUT_PACKETS ? available : EMU_PUT_PACKETS,available);
+            ret = sceMpegRingbufferPut(&ring,available,available);
             if (ret < 0) break;
         }
         if (mux.error) { ret = mux.error; break; }
@@ -451,23 +424,15 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     }
     if (created) {
         playback_operation_set("sce_cleanup_mpeg");
-        /* Like real PSP players: stop the decoder and flush the streams before taking them apart. */
-        if (stream && segment_frames) {
-            SceInt32 stop_status = 0;
-            void *last = rgb;
-            sceMpegAvcDecodeStop(&mpeg,stride,&last,&stop_status);
-        }
-        if (stream) sceMpegFlushAllStream(&mpeg);
         if (es) sceMpegFreeAvcEsBuf(&mpeg,es);
         /* PSPSDK declares the first argument as SceMpeg, but the firmware
          * and PPSSPP ABI take the address of the handle, like Delete. */
         if (stream) sceMpegUnRegistStream((SceMpeg)&mpeg,stream);
-        if (atrac_stream) sceMpegUnRegistStream((SceMpeg)&mpeg,atrac_stream);
         sceMpegDelete(&mpeg);
     }
     if (constructed) sceMpegRingbufferDestruct(&ring);
     if (initialized) sceMpegFinish();
-    free(frame); free(rgb); free(ring_data); free(state); free(atrac_es);
+    free(frame); free(rgb); free(ring_data); free(state);
     av_packet_free(&mux.packet); av_free(mux.parameters); av_free(mux.data);
     source_close(&mux.format,&input);
     if (run_path[0]) {
