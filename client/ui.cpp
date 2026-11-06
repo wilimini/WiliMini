@@ -2176,30 +2176,18 @@ void drawSettingRow(const pspapp::Preferences& preferences, int y, bool selected
     drawText(300, y, 0.7f, selected ? kPink : kTextDim, value, 168);
 }
 
-// Under the engine rows: where the server is (PC stream only), what the engine means, and the
-// restart notice when the engine has been changed but not yet applied.
+// Under the engine rows, with PC stream: where the server is and how the last test went.
 void drawEnginePanel(const pspapp::App& app, int y) {
     using T = pspapp::TextId;
     const auto& preferences = app.preferences();
     const auto locale = preferences.locale;
-    if (preferences.engine() == pspapp::Engine::Stream) {
-        const std::string address = serverAddress(preferences);
-        drawText(39, y, 0.6f, address.empty() ? kPink : kText,
-                 address.empty() ? std::string(pspapp::text(T::engine_card_unset, locale))
-                                 : pspapp::formatText(T::engine_card_server, locale, {{"address", address}}), 428);
-        const std::string& test = app.serverTestText();
-        if (!test.empty()) drawText(39, y + 16, 0.5f, app.serverTestOk() ? kTextDim : kPink, test, 428);
-        y += 34;
-    }
-    if (app.restartPending()) {
-        drawWrapped(39, y, 0.5f, kPink, pspapp::text(T::engine_restart_banner, locale), 428, 2, 14);
-        return;
-    }
-    const pspapp::EngineCaps caps = pspapp::engineCaps(preferences.engine());
-    const std::string line = std::string(pspapp::text(caps.accountOnPsp ? T::caps_account_psp : T::caps_account_pc, locale)) +
-        " · " + pspapp::text(caps.usesMe ? T::caps_decode_me : T::caps_decode_pc, locale) +
-        " · " + pspapp::text(caps.seekInPlace ? T::caps_seek_in_place : T::caps_seek_reopens, locale);
-    drawWrapped(39, y, 0.5f, kTextDim, line, 428, 2, 14);
+    if (preferences.engine() != pspapp::Engine::Stream) return;
+    const std::string address = serverAddress(preferences);
+    drawText(39, y, 0.6f, address.empty() ? kPink : kText,
+             address.empty() ? std::string(pspapp::text(T::engine_card_unset, locale))
+                             : pspapp::formatText(T::engine_card_server, locale, {{"address", address}}), 428);
+    const std::string& test = app.serverTestText();
+    if (!test.empty()) drawText(39, y + 16, 0.5f, app.serverTestOk() ? kTextDim : kPink, test, 428);
 }
 
 // The server setup wizard: find the server, enter the token, test, then switch the engine.
@@ -2230,9 +2218,8 @@ void drawServerWizard(const pspapp::App& app) {
         else drawWrapped(39, y + 30, 0.5f, kPink, pspapp::text(T::wizard_find_none, locale), 428, 3, 15);
     } else if (step == 1) {
         drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_token_title, locale), 428);
-        drawWrapped(39, y + 30, 0.5f, kTextDim, pspapp::text(T::wizard_token_help, locale), 428, 3, 15);
         if (!preferences.serverToken.empty())
-            drawText(39, y + 82, 0.6f, kText, pspapp::text(T::wizard_token_set, locale), 428);
+            drawText(39, y + 30, 0.6f, kText, pspapp::text(T::wizard_token_set, locale), 428);
     } else if (step == 2) {
         drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_test_title, locale), 428);
         if (app.busy()) drawText(39, y + 30, 0.6f, kTextDim, pspapp::text(T::wizard_test_running, locale), 428);
@@ -2245,11 +2232,11 @@ void drawServerWizard(const pspapp::App& app) {
         if (preferences.engine() == pspapp::Engine::Stream) {
             drawText(39, y + 52, 0.6f, kText, pspapp::text(T::wizard_done_already, locale), 428);
             if (app.restartPending())
-                drawWrapped(39, y + 74, 0.5f, kPink, pspapp::text(T::engine_restart_banner, locale), 428, 2, 15);
+                drawText(39, y + 74, 0.6f, kPink, pspapp::text(T::wizard_done_restart, locale), 428);
         } else {
             drawText(39, y + 52, 0.6f, kText,
                      pspapp::formatText(T::wizard_done_enable, locale, {{"confirm", preferences.confirmButton()}}), 428);
-            drawWrapped(39, y + 74, 0.5f, kPink, pspapp::text(T::wizard_done_restart, locale), 428, 2, 15);
+            drawText(39, y + 74, 0.6f, kPink, pspapp::text(T::wizard_done_restart, locale), 428);
         }
     }
 }

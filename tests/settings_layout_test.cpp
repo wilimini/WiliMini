@@ -1,4 +1,4 @@
-// Settings pages and the engine capability table.
+// Settings pages and which rows each engine shows.
 #include <cassert>
 #include <cstdio>
 #include <set>
@@ -60,12 +60,6 @@ int main() {
     assert(!settingAdjustable(SettingItem::StreamSetup) && !settingAdjustable(SettingItem::StreamTest));
     assert(settingAdjustable(SettingItem::Engine) && settingAdjustable(SettingItem::StreamPreset) &&
            settingAdjustable(SettingItem::DarkTheme));
-
-    // Capabilities: the engines differ exactly where the design says they do.
-    assert(engineCaps(Engine::Device).usesMe && engineCaps(Engine::Device).accountOnPsp &&
-           engineCaps(Engine::Device).seekInPlace);
-    assert(!engineCaps(Engine::Stream).usesMe && !engineCaps(Engine::Stream).accountOnPsp &&
-           !engineCaps(Engine::Stream).seekInPlace);
 
     // The engine follows the stream switch, so old settings files keep working.
     Preferences preferences;

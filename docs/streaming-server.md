@@ -45,19 +45,19 @@ must be updated), `wili-server logout` forgets the Bilibili account.
 ## Settings
 
 Settings is a short list of pages. **Playback engine** is the one that matters here: its first row
-switches between *On-device* (Bilibili straight from the PSP, decoded by the Media Engine) and
+switches between *ME* (Bilibili straight from the PSP, decoded by the Media Engine) and
 *PC stream*, and below it the page shows only the rows of the engine in use.
 
-| | On-device | PC stream |
+| | ME | PC stream |
 |---|---|---|
 | Rows | ME core, playback buffer, pixel format | server (*Change server…*), test connection, frame rate, bitrate, encoding, pixel format |
 | Decoder | Media Engine (loads an ME bridge at start-up) | the firmware's sceMpeg (no bridge) |
 | Account | on the PSP | on the PC |
 | Seeking | stays inside the video | asks for a new stream (the player keeps running) |
 
-The row sets and this table are code, not text: `client/settings_layout.hpp`
-(`settingsRows`, `engineCaps`), covered by `tests/settings_layout_test.cpp`. The page also shows
-what the engine means in one line and the restart notice while a change is pending.
+The row sets are code, not text: `client/settings_layout.hpp` (`settingsRows`), covered by
+`tests/settings_layout_test.cpp`. With PC stream the page also shows the server address and the
+last test result, and the engine value reads *restart needed* while a change is pending.
 
 `settings.json`: `stream_server` (this is what makes the engine *PC stream*), `server_host`,
 `server_port`, `server_token` (plain text, like the Wi-Fi profile), `stream_fps` (`auto|30`; `auto`
@@ -204,7 +204,7 @@ packet checks and PSP packaging; playback on hardware still needs verification.
   (`sce-mpeg` while streaming, `me_backend_before_stream` is the core to go back to).
 - With sceMpeg selected, every video and live room plays through it (as under PPSSPP), so
   direct Bilibili video is whatever the firmware's decoder accepts; the server's transcode is
-  what is shaped for it. Choosing *PC stream* selects sceMpeg and choosing *On-device* goes back
+  what is shaped for it. Choosing *PC stream* selects sceMpeg and choosing *ME* goes back
   to the chosen ME core; either only takes effect after the restart.
 - The settings pages, the engine switch, the setup wizard and the per-video quality menu are
   written and compile with the PSP toolchain, but have not been seen on a screen or run on a

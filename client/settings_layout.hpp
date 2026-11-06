@@ -1,24 +1,11 @@
 #pragma once
-// What each Settings page shows, and what each playback engine can do. Pure data and logic (no PSP
-// headers) so the host tests can check it; the UI and the input code both ask it instead of
-// special-casing the engines.
+// What each Settings page shows. Pure data and logic (no PSP headers) so the host tests can check it;
+// the UI and the input code both ask it instead of special-casing the engines.
 #include <cstddef>
 #include <vector>
 #include "preferences.hpp"
 
 namespace pspapp {
-
-// What differs between the engines, as far as the user can notice. The UI picks its wording from
-// these flags, and greys or hides rows by the engine.
-struct EngineCaps {
-    bool usesMe;         // decodes on the Media Engine (loads an ME bridge at start-up)
-    bool accountOnPsp;   // the Bilibili account lives on this PSP, not on the PC
-    bool seekInPlace;    // a seek stays inside the video; otherwise it asks for a new stream
-};
-
-inline constexpr EngineCaps engineCaps(Engine engine) {
-    return engine == Engine::Stream ? EngineCaps{false, false, false} : EngineCaps{true, true, true};
-}
 
 // The rows of a page, in order. The engine page shows only the rows that apply to the engine.
 inline std::vector<SettingItem> settingsRows(SettingsPage page, Engine engine) {
