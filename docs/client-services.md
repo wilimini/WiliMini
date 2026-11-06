@@ -155,9 +155,25 @@ old queue. Playback takes priority over cover work. A failed cover leaves its
 placeholder; it is not retried every frame. Refreshing or revisiting the area can
 retry it.
 
-Downloads retain the existing temporary-file/rename publication path. Only the
-UI thread reads JPEGs into display buffers. Completion invalidates the matching
-cover cache key, without replacing cards or clearing other decoded covers.
+Downloads retain the existing temporary-file/rename publication path. Decoding
+runs on a separate low-priority `wilimini_cover_decode` thread, never on the UI
+thread: a cover that is not decoded yet is drawn as a placeholder and replaced when
+the decode finishes. The decoder scales each JPEG to the size it is drawn at and
+stores it as a 16-byte aligned RGB565 texture (the PSP's hardware order, red in the
+low bits), written back from the data cache before the UI may use it. Slots are
+evicted least-recently-used and never while drawn in the current frame; a decode
+for a cover that scrolled away before it started is dropped. The decoder thread and
+its slots are released before playback and at shutdown. The GE draws each ready
+cover as an opaque textured sprite; because other UI primitives still write VRAM
+with the CPU, the GE work is flushed lazily the next time the CPU touches the frame.
+Completion invalidates the matching cover cache key, without replacing cards or
+clearing other decoded covers.
+
+Each cover download logs `cover ok`, `cover failed` (with the curl error and
+duration) or `cover cancelled` on the `NET` channel, and a queue rebuild that
+cancels the active cover logs `cover cancel ... reason=queue_rebuilt`. Decodes log
+`cover decode` on the `UI` channel. Failed covers are not retried and downloads are
+sequential, so one stalled request can delay the rest of a page.
 
 ## Verification
 
