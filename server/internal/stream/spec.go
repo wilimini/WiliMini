@@ -1,5 +1,5 @@
-// Package stream turns a Bilibili video into something the PSP's sceMpeg decoder
-// handles: H.264 Main profile (CAVLC by default) fitted into 480x272 with both sides a
+// Package stream turns a Bilibili video into something the PSP's
+// hardware decoder handles: H.264 Main/CABAC (or Baseline/CAVLC) fitted into 480x272 with both sides a
 // multiple of 16, plus AAC, in FLV, produced by an ffmpeg child process whose
 // stdout is the HTTP response. The output size is fixed; the source quality (any
 // Bilibili tier, up to 4K and 60 fps), the frame-rate cap and the bitrate are the
@@ -113,12 +113,14 @@ func ParseRequest(q url.Values) (Request, error) {
 	return r, nil
 }
 
-// EncoderProfile resolves auto to CAVLC, which is what the PSP's video format uses.
+// EncoderProfile resolves auto to CABAC. The PSP's hardware decoder (driven the way Moonlight-PSP
+// does) runs in one of two modes, Main/CABAC or Baseline/CAVLC, so CABAC means Main profile and
+// CAVLC means Baseline profile. Main/CABAC is also what every PSP game movie uses.
 func (r Request) EncoderProfile() Profile {
-	if r.Profile == ProfileCABAC {
-		return ProfileCABAC
+	if r.Profile == ProfileCAVLC {
+		return ProfileCAVLC
 	}
-	return ProfileCAVLC
+	return ProfileCABAC
 }
 
 // Inputs is one ffmpeg attempt: the URLs to read.
@@ -178,10 +180,10 @@ func BuildArgs(r Request, in Inputs, ua string) []string {
 		OutputWidth, OutputHeight)
 	args = append(args, "-vf", scale, "-fpsmax", strconv.Itoa(r.FPS), "-pix_fmt", "yuv420p")
 
-	// Main profile in both cases; CAVLC (the default) is the PSP's native video format.
-	profile, cabac := "main", "0"
-	if r.EncoderProfile() == ProfileCABAC {
-		cabac = "1"
+	// The decoder's two modes: Main with CABAC (the default) or Baseline with CAVLC.
+	profile, cabac := "main", "1"
+	if r.EncoderProfile() == ProfileCAVLC {
+		profile, cabac = "baseline", "0"
 	}
 	// No B-frames, one reference frame and a two-second GOP keep decoding cheap, stay within
 	// what the firmware decoder accepts, and make restart-based seeking land close to the target.

@@ -42,10 +42,10 @@ static int read_settings(const char *root,char *text,size_t capacity){
 static int saved_me_backend(const char *settings,int length){
     return length>0?wili_me_backend_from_settings(settings,(size_t)length):WILI_ME_BACKEND_CUSTOM_CORE;
 }
-/* A bridge that fails to start is unloaded so the fallback can export me_lab. */
-static int start_bridge(const char *root,int backend){
+/* A module that fails to start is unloaded, so a fallback bridge can export me_lab. */
+static int start_module(const char *root,const char *file){
     char path[128];
-    snprintf(path,sizeof(path),"%s/%s",root,wili_me_bridge_file(backend));
+    snprintf(path,sizeof(path),"%s/%s",root,file);
     SceUID m=sceKernelLoadModule(path,0,0);if(m<0)return m;
     int status=0;
     int r=sceKernelStartModule(m,strlen(path)+1,(void*)path,&status,0);
@@ -63,31 +63,39 @@ int main(int argc,char **argv){
     r=sceUtilityLoadModule(PSP_MODULE_NET_COMMON);
     if(r>=0 || (unsigned)r==SCE_ERROR_MODULE_ALREADY_LOADED)r=sceUtilityLoadModule(PSP_MODULE_NET_INET);
     if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-    /* sceMpeg (user mode): the client links its stubs and wili-server streams are decoded
-     * with it, so the AV modules must be resident before the client PRX is linked. */
-    r=sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
-    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
-    r=sceUtilityLoadAvModule(PSP_AV_MODULE_MPEGBASE);
-    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
     static char settings[4097];
     const int settings_length=read_settings(root,settings,sizeof(settings));
-    /* The sceMpeg "backend" (needed by the stream server) is not a bridge: sceMpeg owns the Media
-     * Engine, so no ME bridge or core is loaded at all and the client is told with --no-me. */
+    /* The PC stream engine is not a bridge: the firmware's decoder owns the Media Engine, so no
+     * ME bridge or core is loaded at all and the client is told with --no-me. */
     const int sce_backend=!sce_mpeg && saved_me_backend(settings,settings_length)==WILI_ME_BACKEND_SCE_MPEG;
     const int stream_server=sce_backend;
-    if(sce_backend)WLOG_I(WLC_LOADER,"me_backend=sce-mpeg; no ME bridge loaded");
+    /* The client links sceMpeg stubs, so the AV modules must be resident before it is linked.
+     * On a real PSP in PC stream mode only AVCODEC is: the client loads the XMB's sceMpeg
+     * (mpeg_vsh.prx) itself and avc_helper.prx binds it, as Moonlight-PSP does. The game sceMpeg
+     * (MPEGBASE) would export the same library. */
+    r=sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
+    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    if(!sce_backend){
+        r=sceUtilityLoadAvModule(PSP_AV_MODULE_MPEGBASE);
+        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    }
+    if(sce_backend){
+        /* Without it the player reports the failure when a stream starts; the app still runs. */
+        r=start_module(root,"avc_helper.prx");
+        WLOG_I(WLC_LOADER,"me_backend=hw-avc; avc_helper=0x%08x; no ME bridge loaded",r);
+    }
     if(!sce_mpeg && !sce_backend){
         int backend=saved_me_backend(settings,settings_length);
-        r=start_bridge(root,backend);
+        r=start_module(root,wili_me_bridge_file(backend));
         if(r<0 && backend!=WILI_ME_BACKEND_MIST){
             WLOG_W(WLC_LOADER,"me_backend=%s failed=0x%08x; falling back to mist",wili_me_backend_name(backend),r);
             backend=WILI_ME_BACKEND_MIST;
-            r=start_bridge(root,backend);
+            r=start_module(root,wili_me_bridge_file(backend));
         }
         if(r<0)goto failed;
         WLOG_I(WLC_LOADER,"me_backend=%s",wili_me_backend_name(backend));
     }
-    WLOG_I(WLC_LOADER,"player=%s",sce_mpeg?"ppsspp-sceMpeg":stream_server?"psp-sceMpeg":"psp-me");
+    WLOG_I(WLC_LOADER,"player=%s",sce_mpeg?"ppsspp-sceMpeg":stream_server?"psp-hw-avc":"psp-me");
     const PspDeviceInfo device=psp_device_query();
     const int extended=psp_device_use_extended_client(device);
     snprintf(path,sizeof(path),"%s/%s",root,extended?"wili_mini.prx":"wili_mini_1000.prx");

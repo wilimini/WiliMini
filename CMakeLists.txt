@@ -159,6 +159,7 @@ add_library(pspvideo STATIC
     decoder/src/audio_vfpu.c
     decoder/me/me_lab.S
     decoder/me/me_entry.S
+    decoder/avc/avc_imports.S
     "${ME_CORE_ROOT}/me-core-mapping.c")
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 # The sceMpeg backend is always built: wili-server streams use it on real PSPs too.
@@ -221,6 +222,35 @@ add_me_bridge(me_bridge_custom_core me_bridge_custom_core
 # Keep PSP export roots while discarding the upstream user-mode kcall loader.
 target_link_options(me_bridge_custom_core PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
 target_link_libraries(me_bridge_custom_core PRIVATE psppower)
+
+# avc_helper.prx: the kernel half of the hardware H.264 path for PC streams (decoder/avc,
+# ported from Moonlight-PSP). The loader starts it instead of an ME bridge in PC stream mode.
+set(AVC_EXPORTS_C "${CMAKE_BINARY_DIR}/avc/exports.c")
+add_custom_command(
+    OUTPUT "${AVC_EXPORTS_C}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/avc"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DPSP_BUILD_EXPORTS=${PSPDEV}/bin/psp-build-exports"
+        "-DEXPORTS_EXP=${ROOT}/decoder/avc/exports.exp"
+        "-DOUTPUT_FILE=${AVC_EXPORTS_C}"
+        -P "${ROOT}/cmake/BuildExports.cmake"
+    DEPENDS "${ROOT}/decoder/avc/exports.exp" "${ROOT}/cmake/BuildExports.cmake"
+    COMMENT "Generating AVC helper exports")
+add_executable(avc_helper "${AVC_EXPORTS_C}" decoder/avc/avc_helper.c decoder/avc/me_core_driver.S)
+target_link_options(avc_helper PRIVATE
+    -G0
+    -nostartfiles
+    "-Wl,-q,-T${PSPSDK}/lib/linkfile.prx"
+    -Wl,-zmax-page-size=128)
+target_link_libraries(avc_helper PRIVATE pspkernel pspsdk)
+set_target_properties(avc_helper PROPERTIES
+    OUTPUT_NAME avc_helper
+    SUFFIX ".elf"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_custom_command(TARGET avc_helper POST_BUILD
+    COMMAND "${PSPDEV}/bin/psp-fixup-imports" "$<TARGET_FILE:avc_helper>"
+    COMMAND "${PSPDEV}/bin/psp-prxgen" "$<TARGET_FILE:avc_helper>" "${CMAKE_BINARY_DIR}/avc_helper.prx"
+    COMMENT "Fixing imports and generating avc_helper.prx")
 
 add_library(wili_client_objects OBJECT
     platform/src/psp_device.c
@@ -356,7 +386,7 @@ foreach(client_target wili_mini wili_mini_1000)
         pspdebug pspdisplay pspge pspctrl)
     # User-mode sceMpeg stubs (the kernel-side pspmpeg_driver is not needed). The bootstrap
     # loads the AVCODEC and MPEGBASE AV modules before this PRX is linked.
-    target_link_libraries(${client_target} PRIVATE pspmpeg)
+    target_link_libraries(${client_target} PRIVATE pspmpeg pspmpegbase)
     set_target_properties(${client_target} PROPERTIES
         OUTPUT_NAME ${client_target}
         SUFFIX ".elf"
@@ -425,6 +455,7 @@ add_custom_target(package
         "${CMAKE_BINARY_DIR}/wili_mini_1000.prx"
         "${CMAKE_BINARY_DIR}/me_bridge.prx"
         "${CMAKE_BINARY_DIR}/me_bridge_custom_core.prx"
+        "${CMAKE_BINARY_DIR}/avc_helper.prx"
         "${PACKAGE_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_CA_BUNDLE}" "${PACKAGE_DIR}/cacert.pem"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/font/wqy.bmf" "${PACKAGE_DIR}/wqy.bmf"
@@ -436,6 +467,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/assets/wiliwili/WILIWILI-LICENSE.txt" "${PACKAGE_DIR}/licenses/wiliwili-assets.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/build/curl-source/COPYING" "${PACKAGE_DIR}/licenses/curl.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${BILI_FFMPEG_SOURCE_DIR}/COPYING.LGPLv2.1" "${PACKAGE_DIR}/licenses/ffmpeg.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/decoder/avc/NOTICE.txt" "${PACKAGE_DIR}/licenses/moonlight-psp.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/decoder/me/LICENSE.MIST.txt" "${PACKAGE_DIR}/licenses/me-mist.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ME_CORE_ROOT}/LICENSE.md" "${PACKAGE_DIR}/licenses/me-custom-core.txt"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/client/api/wiliwili/LICENSE" "${PACKAGE_DIR}/licenses/wiliwili.txt"
@@ -452,7 +484,7 @@ add_custom_target(package
         --compiled-utc "${BILI_BUILD_UTC}"
         --build-type "${CMAKE_BUILD_TYPE}"
         --me-backends ${BILI_ME_BACKENDS}
-    DEPENDS wili_mini wili_mini_1000 me_bridge me_bridge_custom_core eboot
+    DEPENDS wili_mini wili_mini_1000 me_bridge me_bridge_custom_core avc_helper eboot
     COMMENT "Packaging PSP/GAME/WiliMini")
 
 endif()
@@ -473,7 +505,7 @@ if(BILI_FONT_FILE)
     add_dependencies(assets generate-font)
 endif()
 if(BILI_BUILD_CLIENT)
-    add_custom_target(me DEPENDS me_bridge me_bridge_custom_core)
+    add_custom_target(me DEPENDS me_bridge me_bridge_custom_core avc_helper)
     if(BILI_FONT_FILE)
         add_dependencies(package generate-font)
     endif()

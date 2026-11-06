@@ -1,0 +1,10 @@
+The hardware H.264 path for PC streams (decoder/avc/avc_helper.c, decoder/src/hw_avc.h and
+decoder/src/hw_avc_player.h) is ported from Moonlight-PSP:
+
+    https://github.com/k4idyn/Moonlight-PSP
+    moonlight_me_helper/main.c (BootAvcMode, AvcFixupModuleImports)
+    src/psp_avc_session.c, src/psp_avc_submit.c, src/avc_packetizer.c
+
+Moonlight-PSP is licensed under the GNU General Public License, version 3, the same licence as
+WiliMini (see wili-mini.txt). Copyright of the ported parts remains with the Moonlight-PSP
+authors.

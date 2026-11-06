@@ -37,7 +37,7 @@ must be updated), `wili-server logout` forgets the Bilibili account.
 |---|---|---|
 | API calls | HTTPS to Bilibili, WBI signed on the PSP | `http://<pc>:8787/p/<host>/<path>`, signed on the PC |
 | Account | cookies in `session.json` on the memory stick | on the PC; the PSP keeps nothing |
-| Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main profile (CAVLC) + AAC, always fitted into 480×272, **decoded by the firmware's sceMpeg** |
+| Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main/CABAC + AAC, always fitted into 480×272, **decoded by the PSP's hardware AVC decoder** |
 | Seeking | in place | a new stream is requested at the new time (`t=`) while the player keeps running (see *Seeking* below) |
 | Quality menu | the video's Bilibili qualities | the video's qualities as the server reports them (up to eight: 360P to 4K, including the 60 fps tiers) |
 | Live rooms | direct | API via the server, media still direct |
@@ -51,7 +51,7 @@ switches between *ME* (Bilibili straight from the PSP, decoded by the Media Engi
 | | ME | PC stream |
 |---|---|---|
 | Rows | ME core, playback buffer, pixel format | server (*Change server…*), test connection, frame rate, bitrate, encoding, pixel format |
-| Decoder | Media Engine (loads an ME bridge at start-up) | the firmware's sceMpeg (no bridge) |
+| Decoder | Media Engine (loads an ME bridge at start-up) | the hardware AVC decoder (loads `avc_helper.prx`; needs CFW 6.60/6.61) |
 | Account | on the PSP | on the PC |
 | Seeking | stays inside the video | asks for a new stream (the player keeps running) |
 
@@ -92,9 +92,9 @@ to the best one below it (logged by the server as `source qn=…`). H.264 is pre
 HEVC is used when that is all Bilibili offers. AV1 is not used.
 
 The output frame rate is `min(source rate, cap)`; ffmpeg never adds frames. *Auto* caps at
-60 fps, *30 fps* halves the 60 fps tiers. Level 3.0 allows 480×272 at 60 fps, but the sceMpeg
-decoder's real-time limit at 60 fps and the Wi-Fi bitrate it needs are only known from a
-device; pick a bitrate with that in mind.
+60 fps, *30 fps* halves the 60 fps tiers. Level 3.0 allows 480×272 at 60 fps, but the hardware
+decoder has only been shown at up to 30 fps (Moonlight-PSP); 60 fps, and the Wi-Fi bitrate it
+needs, are only known from a device.
 
 ## Protocol (version 1)
 
@@ -116,11 +116,12 @@ refuses redirects off the allow-list, and forwards `Accept-Encoding` untouched.
 `--read-only` rejects POST.
 
 `/wili/v1/stream` query: `bvid` (or `pgc=1` for bangumi/film), `cid`, `t` (seconds),
-`profile` (`auto|cavlc|cabac`; `auto` is `cavlc`, both are Main profile), `qn` (source tier,
+`profile` (`auto|cavlc|cabac`; `auto` is `cabac` = Main profile, `cavlc` = Baseline profile, the
+hardware decoder's two modes), `qn` (source tier,
 16 to 120), `fps` (frame-rate cap, 5 to 60, default 30), `vb`, `ab` (kbps). `w` and `h` are
 accepted and ignored: the picture is always fitted into 480×272. Output is
 `video/x-flv` without a duration, timestamps starting at 0, response headers `X-Wili-Quality`
-(the tier being streamed) and `X-Wili-Qualities` (comma-separated tiers this video offers, ascending), Main profile level 3.0, no
+(the tier being streamed) and `X-Wili-Qualities` (comma-separated tiers this video offers, ascending), level 3.0, no
 B-frames, one reference frame, a two-second GOP (counted at the frame rate actually produced),
 and a picture padded with black to a
 multiple of 16 in both directions (480×270 becomes 480×272), which the PSP decoder wants. Errors are JSON `{"error": code, "message": text}` with a
@@ -152,9 +153,9 @@ Both only list servers; the token is still required. The wire formats are pinned
 The stream has no index, so the server cannot seek inside it: a seek asks for a new stream
 at `t=`. What the client does with it depends on `PspVideoOptions.reopen`:
 
-- **With `reopen`** (what the client sets for server streams on the sceMpeg backend): the
+- **With `reopen`** (what the client sets for server streams on the PC stream engine): the
   seek does not leave `psp_video_play`. The player stops reading, closes its demuxer, audio
-  and sceMpeg objects (`sce_mpeg_run_segment`), asks the client for a new stream at the target
+  and decoder session (`hw_avc_run_segment`; `sce_mpeg_run_segment` on PPSSPP), asks the client for a new stream at the target
   (`App::reopenServerPlayback`), and starts the next segment on it. The controls, OSD,
   presenter and the results folder stay up; the OSD shows the target position and the
   buffering state. The wait is the server starting ffmpeg and sending the first frames.
@@ -166,45 +167,56 @@ and has been read through, but it has **not been compiled or run**: it was writt
 PSP toolchain. Real-device behaviour of the sceMpeg teardown and rebuild on every seek is
 unverified.
 
-## Decoding with sceMpeg
+## Decoding
 
-Server streams are decoded by the firmware's sceMpeg library and by nothing else: there is no
-fallback to the Media Engine decoder. It uses only the public, user-mode API (`pspmpeg.h`,
-linked as `libpspmpeg`); the bootstrap loads the `AVCODEC` and `MPEGBASE` AV modules with
-`sceUtilityLoadAvModule` before the client PRX is linked, so no kernel PRX is involved.
+On a real PSP, server streams are decoded by the PSP's hardware H.264 decoder, driven the way
+[Moonlight-PSP](https://github.com/k4idyn/Moonlight-PSP) does it (GPL-3.0, like WiliMini; see
+`decoder/avc/NOTICE.txt`). There is no program stream, ring buffer or PSMF header:
 
-sceMpeg consumes an MPEG program stream, so `decoder/src/sce_mpeg_player.h` wraps each H.264
-access unit that FFmpeg demuxes from the FLV into a PES packet, feeds 2048-byte packets through
-a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures back. Audio is
-decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
-reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
+1. In PC stream mode the loader loads only the `AVCODEC` AV module (not `MPEGBASE`, the game
+   sceMpeg) and starts `avc_helper.prx`, a small kernel module (`decoder/avc/avc_helper.c`).
+2. When the first stream starts, the client loads `flash0:/kd/mpeg_vsh.prx` (the XMB's sceMpeg)
+   into the user partition with kubridge, and the helper binds the client's sceMpeg imports to
+   it. Only that module exports `sceMpegGetAvcNalAu`.
+3. The helper boots the Media Engine in H.264 mode 3 (Main/CABAC) or 4 (Baseline/CAVLC), picked
+   from the stream's SPS and PPS; sceMpeg is created in mode 4 with a 2 MB DDR work area.
+4. `decoder/src/hw_avc_player.h` demuxes the FLV with FFmpeg, keeps each access unit's slices
+   (4-byte lengths; SEI and AUD dropped, SPS/PPS cached), and calls `sceMpegGetAvcNalAu` and
+   `sceMpegAvcDecode`. Pictures come back through `sceMpegAvcDecodeDetail2` and
+   `sceMpegBaseCscAvc` as RGBA8888 and are scaled/converted for the presenter on the CPU.
 
-Each access unit also has a PSMF private-stream-2 (`0xBF`, channel `01 E0 00`)
-descriptor before its video PES packets. The descriptor supplies the complete Annex B
-frame length, including any SPS/PPS prepended to a keyframe. Ordinary MPEG-PS video
-packets alone are insufficient for the firmware's `sceMpegGetAvcAu`; it can return
-`0x80618001` (`NO_DATA`) even when the video bytes have arrived. The client retries
-with a refill when space is available, with a bounded retry count. Errors now identify
-whether `sceMpegGetAvcAu` or `sceMpegAvcDecode` failed. This correction has passed host
-packet checks and PSP packaging; playback on hardware still needs verification.
+After a decode error the session is rebuilt and playback resumes at the next keyframe, as
+Moonlight does. Audio is decoded by FFmpeg and keeps the existing clock; video frames are shown
+when the audio clock reaches their time.
+
+What the decoder takes (checked by the player, or by Moonlight-PSP's tests):
+
+- H.264 Baseline with CAVLC, or Main with CABAC; progressive; up to 4 reference frames; no
+  B-frames (wili-server sends none).
+- At most 480×272 coded, a multiple of 16; cropping only on the right and bottom.
+- At most 256 KB per frame.
+- Custom firmware 6.60 or 6.61 with kubridge (ARK-4, as Moonlight-PSP requires).
+  `sceMeBootStart660` is that firmware's export.
+
+PPSSPP has no `mpeg_vsh` path, so under the emulator the older program-stream player
+(`sce_mpeg_run_segment`, PES packets behind a synthesized PSMF header) is still used.
 
 ## Status and limits
 
 - Tested on a PC: the Go packages (including real ffmpeg transcodes), the C module, preference
   parsing, and the PSP build. The server has **not** been run against the live Bilibili
   service from the development environment, and nothing here has been run on a real PSP.
-- The sceMpeg path has not run on real hardware. Things only a PSP can confirm: that the
-  firmware accepts the synthesized PSMF header and the PES wrapping, the `sceMpegCreate`
-  arguments (512-pixel frame width, mode 0), and that Main/CAVLC at level 3.0 with one reference
-  frame decodes. `profile=cabac` may be rejected by the firmware's decoder.
-- sceMpeg owns the Media Engine, so with the **PC stream** engine the loader starts **no ME
-  bridge or core at all** and the client never calls into one; changing the engine needs a restart
+- The hardware AVC path follows Moonlight-PSP's sequence, which works on PSPs, but it has not
+  run inside WiliMini on a PSP yet. The access-unit repacking and CABAC/CAVLC detection are
+  checked on a PC against wili-server's output (both profiles, 60 fps).
+- The firmware decoder owns the Media Engine, so with the **PC stream** engine the loader
+  starts **no ME bridge or core at all** and the client never calls into one; changing the engine needs a restart
   of WiliMini. Scaling, colour conversion, audio and drawing run on the CPU and GE. In
   `settings.json` the engine is `stream_server`, and the loader still reads `me_backend`
   (`sce-mpeg` while streaming, `me_backend_before_stream` is the core to go back to).
-- With sceMpeg selected, every video and live room plays through it (as under PPSSPP), so
-  direct Bilibili video is whatever the firmware's decoder accepts; the server's transcode is
-  what is shaped for it. Choosing *PC stream* selects sceMpeg and choosing *ME* goes back
+- With *PC stream* selected, every video and live room plays through the hardware decoder, so
+  direct Bilibili video plays only if it fits the limits above; the server's transcode is
+  what is shaped for it. Choosing *ME* goes back
   to the chosen ME core; either only takes effect after the restart.
 - The settings pages, the engine switch, the setup wizard and the per-video quality menu are
   written and compile with the PSP toolchain, but have not been seen on a screen or run on a

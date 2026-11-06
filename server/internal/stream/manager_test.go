@@ -168,7 +168,7 @@ func ffprobe(t *testing.T, data []byte) probe {
 
 func TestStreamProducesPSPFriendlyFLV(t *testing.T) {
 	f := newFixture(t, 2, 4)
-	for _, tc := range []struct{ profile, want string }{{"cavlc", "Main"}, {"cabac", "Main"}} {
+	for _, tc := range []struct{ profile, want string }{{"cavlc", "Baseline"}, {"cabac", "Main"}} {
 		resp, body := fetch(t, f.front.URL+"/?bvid=BV1xx411c7mD&cid=9&profile="+tc.profile)
 		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "video/x-flv" {
 			t.Fatalf("%s: %d %s %.200s", tc.profile, resp.StatusCode, resp.Header.Get("Content-Type"), body)

@@ -175,6 +175,8 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
     return written;
 }
 
+#include "hw_avc_player.h"
+
 /* One decoder session on one source: everything from opening the demuxer to freeing the sceMpeg
  * objects. A soft reseek ends a segment early and the wrapper below starts the next one on a new
  * source, so the player, its controls and the OSD keep running across a seek. */
@@ -486,7 +488,11 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     char run_path[192] = {0};
     int ret = 0, first = 1;
     for (;;) {
-        ret = sce_mpeg_run_segment(options, stats, run_path, sizeof(run_path), first);
+        /* Real hardware decodes with the AVC hardware directly; the program-stream path is what
+         * PPSSPP's sceMpeg emulation understands. */
+        ret = psp_runtime_detect() == PSP_RUNTIME_PPSSPP
+            ? sce_mpeg_run_segment(options, stats, run_path, sizeof(run_path), first)
+            : hw_avc_run_segment(options, stats, run_path, sizeof(run_path), first);
         first = 0;
         if (!soft_reseek_request || quit_requested) break;
         /* The segment stopped because of a seek, so whatever error the cancelled reads caused is moot. */

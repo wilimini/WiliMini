@@ -22,7 +22,7 @@ func mustParse(t *testing.T, raw string) Request {
 
 func TestParseDefaultsAndClamping(t *testing.T) {
 	r := mustParse(t, "bvid=BV1xx411c7mD&cid=12")
-	if r.FPS != 30 || r.VideoKbps != 1200 || r.QN != 32 || r.EncoderProfile() != ProfileCAVLC {
+	if r.FPS != 30 || r.VideoKbps != 1200 || r.QN != 32 || r.EncoderProfile() != ProfileCABAC {
 		t.Fatalf("%+v", r)
 	}
 	// Out-of-range values are clamped: fps to 60, qn to 4K.
@@ -68,7 +68,7 @@ func TestBuildArgsDash(t *testing.T) {
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-ss 30.000 -user_agent UA", "-i http://v/video", "-i http://v/audio",
-		"-map 0:v:0 -map 1:a:0", "-profile:v main", "cabac=0:bframes=0:ref=1", "pad=w=ceil(iw/16)*16", "-c:a aac", "-ar 44100 -ac 2",
+		"-map 0:v:0 -map 1:a:0", "-profile:v baseline", "cabac=0:bframes=0:ref=1", "pad=w=ceil(iw/16)*16", "-c:a aac", "-ar 44100 -ac 2",
 		"-f flv", "-fpsmax 30", "force_divisible_by=2", "pipe:1", "min(480,iw)", "min(272,ih)",
 	} {
 		if !strings.Contains(joined, want) {
