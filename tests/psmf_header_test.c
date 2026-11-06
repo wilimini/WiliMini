@@ -12,7 +12,7 @@ static unsigned be(const uint8_t *p, int n) {
 
 int main(void) {
     uint8_t h[PSMF_HEADER_SIZE];
-    psmf_build_header(h, 480, 272);
+    psmf_build_header(h, 480, 272, 12, 1);
     assert(!memcmp(h, "PSMF0012", 8));
     /* What PPSSPP checks: a nonzero offset that is a multiple of 2048. */
     assert(be(h + 0x08, 4) == 2048 && (be(h + 0x08, 4) & 2047) == 0);
@@ -33,10 +33,23 @@ int main(void) {
     /* Nothing after the stream table. */
     for (int i = 0xa2; i < PSMF_HEADER_SIZE; ++i) assert(h[i] == 0);
     /* Sizes round up to whole macroblocks. */
-    psmf_build_header(h, 480, 270);
+    psmf_build_header(h, 480, 270, 12, 1);
     assert(h[0x8e] == 30 && h[0x8f] == 17);
-    psmf_build_header(h, 384, 216);
+    psmf_build_header(h, 384, 216, 12, 1);
     assert(h[0x8e] == 24 && h[0x8f] == 14);
+    /* The minimal layout is exactly what the first working build wrote: version 0015, one video
+     * stream, the two timestamps and the picture size, and nothing else. */
+    psmf_build_header(h, 480, 272, 15, 0);
+    assert(!memcmp(h, "PSMF0015", 8) && be(h + 8, 4) == 2048 && be(h + 0x56, 4) == 90000 &&
+           be(h + 0x5c, 4) == 0x7fffffffu && be(h + 0x80, 2) == 1 && h[0x82] == 0xe0 &&
+           h[0x8e] == 30 && h[0x8f] == 17);
+    for (int i = 0; i < PSMF_HEADER_SIZE; ++i) {
+        const int known = i < 16 || (i >= 0x56 && i < 0x5a) || (i >= 0x5c && i < 0x60) || i == 0x81 ||
+                          i == 0x82 || i == 0x8e || i == 0x8f;
+        if (!known) assert(h[i] == 0);
+    }
+    psmf_build_header(h, 480, 272, 13, 0);
+    assert(!memcmp(h, "PSMF0013", 8));
     puts("psmf header: passed");
     return 0;
 }

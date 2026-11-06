@@ -37,12 +37,25 @@ static inline void psmf_put48(uint8_t *p, uint32_t v) {
     psmf_put16(p, 0); psmf_put32(p + 2, v);
 }
 
-/* header must hold PSMF_HEADER_SIZE bytes. Width and height are the coded picture size. */
-static inline void psmf_build_header(uint8_t *header, int width, int height) {
+/* header must hold PSMF_HEADER_SIZE bytes. Width and height are the coded picture size. version is the
+ * "00NN" in the file (12..15). full = 0 writes only the fields PPSSPP reads and a single video stream,
+ * which is what the first working build used; full = 1 writes everything a real header has. */
+static inline void psmf_build_header(uint8_t *header, int width, int height, int version, int full) {
     memset(header, 0, PSMF_HEADER_SIZE);
-    memcpy(header, "PSMF0012", 8);
+    memcpy(header, "PSMF0000", 8);
+    header[6] = (uint8_t)('0' + (version / 10) % 10);
+    header[7] = (uint8_t)('0' + version % 10);
     psmf_put32(header + 0x08, PSMF_HEADER_SIZE);
     psmf_put32(header + 0x0c, 0x7ffff800u);
+    if (!full) {
+        psmf_put32(header + 0x56, PSMF_FIRST_TIMESTAMP);
+        psmf_put32(header + 0x5c, PSMF_LAST_TIMESTAMP);
+        psmf_put16(header + 0x80, 1);
+        header[0x82] = 0xe0;
+        header[0x8e] = (uint8_t)((width + 15) / 16);
+        header[0x8f] = (uint8_t)((height + 15) / 16);
+        return;
+    }
     psmf_put32(header + 0x50, 0x4e);
     psmf_put48(header + 0x54, PSMF_FIRST_TIMESTAMP);
     psmf_put48(header + 0x5a, PSMF_LAST_TIMESTAMP);
