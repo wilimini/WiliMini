@@ -5,10 +5,10 @@ name: Server
 on:
   push:
     branches: [main]
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "Makefile", ".github/workflows/server.yml"]
   pull_request:
     branches: [main]
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "Makefile", ".github/workflows/server.yml"]
   workflow_dispatch:
 
 permissions:
@@ -40,6 +40,7 @@ jobs:
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg --no-progress -y
+      # The same checks as `make server-test`, spelled out because Windows runners have no make.
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -60,9 +61,6 @@ jobs:
           - {goos: darwin, goarch: arm64}
           - {goos: darwin, goarch: amd64}
           - {goos: windows, goarch: amd64}
-    defaults:
-      run:
-        working-directory: server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -70,16 +68,11 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: Build
-        env:
-          CGO_ENABLED: "0"
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
-          ext=""; [ "$GOOS" = windows ] && ext=".exe"
-          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA::7}" \
-            -o "../wili-server-${GOOS}-${GOARCH}${ext}" ./cmd/wili-server
+          make server SERVER_GOOS="${{ matrix.goos }}" SERVER_GOARCH="${{ matrix.goarch }}" \
+            SERVER_VERSION="${GITHUB_SHA::7}"
       - uses: actions/upload-artifact@v4
         with:
           name: wili-server-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: wili-server-*
+          path: dist/server/wili-server-*
           retention-days: 14

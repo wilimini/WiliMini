@@ -52,6 +52,9 @@ dependencies; `make me` builds the client and Media Engine components;
 `make assets` generates configured assets. Configure builds with `BUILD_DIR`,
 `BUILD_TYPE`, `PARALLEL`, and `CMAKE_ARGS`.
 
+`make server`, `make server-test` and `make server-all` build and test `wili-server` (plain
+Go, no PSP toolchain) into `dist/server/`; see `docs/streaming-server.md`.
+
 Packages are written to `dist/PSP/GAME/WiliMini/` by default. Launch through
 `EBOOT.PBP`, not directly through `wili_mini.prx`: the loader initializes required
 network modules and the Media Engine bridge.
