@@ -130,12 +130,16 @@ int main(int argc, char** argv) {
     assert(!value.streamServer && value.serverHost.empty() && value.serverToken.empty() &&
            value.serverPort == 8787 && !value.serverReady());
     assert(value.streamPreset == pspapp::StreamPreset::Balanced && value.streamProfile == pspapp::StreamProfile::Auto);
+    // Old files keep the previous behaviour: 480P source, frame rate left to the source.
+    assert(value.streamQuality == WILI_QN_480P && value.streamFps == pspapp::StreamFps::Auto);
     value.streamServer = true;
     value.serverHost = "192.168.1.20";
     value.serverPort = 9000;
     value.serverToken = "k7m2q9xa";
     value.streamPreset = pspapp::StreamPreset::Quality;
     value.streamProfile = pspapp::StreamProfile::Cabac;
+    value.streamQuality = WILI_QN_1080P60;
+    value.streamFps = pspapp::StreamFps::Max30;
     assert(value.serverReady());
     assert(pspapp::savePreferences(path, value));
     pspapp::Preferences serverRestored;
@@ -143,7 +147,10 @@ int main(int argc, char** argv) {
     assert(serverRestored.streamServer && serverRestored.serverHost == "192.168.1.20" &&
            serverRestored.serverPort == 9000 && serverRestored.serverToken == "k7m2q9xa" &&
            serverRestored.streamPreset == pspapp::StreamPreset::Quality &&
-           serverRestored.streamProfile == pspapp::StreamProfile::Cabac);
+           serverRestored.streamProfile == pspapp::StreamProfile::Cabac &&
+           serverRestored.streamQuality == WILI_QN_1080P60 && serverRestored.streamFps == pspapp::StreamFps::Max30);
+    assert(std::string(pspapp::streamQualityLabel(WILI_QN_1080P60)) == "1080P60" &&
+           std::string(pspapp::streamQualityLabel(WILI_QN_4K)) == "4K");
     {
         const WiliServer config = serverRestored.serverConfig();
         assert(config.enabled == 1 && config.port == 9000 && std::string(config.host) == "192.168.1.20" &&
@@ -165,9 +172,13 @@ int main(int argc, char** argv) {
     value.serverPort = 0;
     assert(!pspapp::savePreferences(path, value));
     value.serverPort = 8787;
+    value.streamQuality = 125; // not a tier the server offers
+    assert(!pspapp::savePreferences(path, value));
+    value.streamQuality = WILI_QN_480P;
     for (const char* bad : {R"("server_host":"a b")", R"("server_port":70000)", R"("server_token":"x")",
                             R"("server_token":"a&b=cdef")", R"("stream_preset":"ultra")",
-                            R"("stream_profile":"high")", R"("stream_server":1)", R"("server_port":"80")"}) {
+                            R"("stream_profile":"high")", R"("stream_quality":125)", R"("stream_quality":"4K")",
+                            R"("stream_fps":"120")", R"("stream_fps":60)", R"("stream_server":1)", R"("server_port":"80")"}) {
         std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,)"
                             << bad << "}";
         assert(!pspapp::loadPreferences(path, value));

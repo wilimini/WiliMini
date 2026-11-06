@@ -21,12 +21,22 @@ func mustParse(t *testing.T, raw string) Request {
 
 func TestParseDefaultsAndClamping(t *testing.T) {
 	r := mustParse(t, "bvid=BV1xx411c7mD&cid=12")
-	if r.Width != 480 || r.Height != 272 || r.FPS != 30 || r.VideoKbps != 1200 || r.QN != 32 || r.EncoderProfile() != ProfileCAVLC {
+	if r.FPS != 30 || r.VideoKbps != 1200 || r.QN != 32 || r.EncoderProfile() != ProfileCAVLC {
 		t.Fatalf("%+v", r)
 	}
-	r = mustParse(t, "bvid=BV1xx411c7mD&cid=12&w=4000&h=1&fps=120&vb=99999&ab=1&qn=500&t=61.5&profile=CABAC")
-	if r.Width != 720 || r.Height != 64 || r.FPS != 30 || r.VideoKbps != 4000 || r.AudioKbps != 32 || r.QN != 80 || r.StartSec != 61.5 || r.EncoderProfile() != ProfileCABAC {
+	// Out-of-range values are clamped: fps to 60, qn to 4K.
+	r = mustParse(t, "bvid=BV1xx411c7mD&cid=12&fps=120&vb=99999&ab=1&qn=500&t=61.5&profile=CABAC")
+	if r.FPS != 60 || r.VideoKbps != 4000 || r.AudioKbps != 32 || r.QN != bili.QN4K || r.StartSec != 61.5 || r.EncoderProfile() != ProfileCABAC {
 		t.Fatalf("%+v", r)
+	}
+	// 60 fps and every tier up to 4K pass through unchanged.
+	r = mustParse(t, "bvid=BV1xx411c7mD&cid=12&fps=60&qn=116")
+	if r.FPS != 60 || r.QN != bili.QN1080P60 {
+		t.Fatalf("%+v", r)
+	}
+	// The output size is fixed: w and h are accepted for old clients and ignored.
+	if _, err := ParseRequest(url.Values{"bvid": {"BV1xx411c7mD"}, "cid": {"1"}, "w": {"720"}, "h": {"wide"}}); err != nil {
+		t.Fatalf("w/h must be ignored: %v", err)
 	}
 	if r = mustParse(t, "bvid=BV1xx411c7mD&cid=1&t=99999999"); r.StartSec != MaxSeekSeconds {
 		t.Fatalf("t=%v", r.StartSec)
@@ -37,7 +47,7 @@ func TestParseRejectsBadInput(t *testing.T) {
 	for _, raw := range []string{
 		"cid=1", "bvid=BV1xx411c7mD", "bvid=BV1xx411c7mD&cid=0", "bvid=BV1xx411c7mD&cid=x",
 		"bvid=../etc&cid=1", "bvid=BV1xx411c7mD&cid=1&t=-3", "bvid=BV1xx411c7mD&cid=1&t=abc",
-		"bvid=BV1xx411c7mD&cid=1&profile=h265", "bvid=BV1xx411c7mD&cid=1&w=wide",
+		"bvid=BV1xx411c7mD&cid=1&profile=h265", "bvid=BV1xx411c7mD&cid=1&fps=fast",
 		"bvid=BV1xx411c7mD%0a-i%20/etc/passwd&cid=1",
 	} {
 		q, _ := url.ParseQuery(raw)
@@ -58,7 +68,7 @@ func TestBuildArgsDash(t *testing.T) {
 	for _, want := range []string{
 		"-ss 30.000 -user_agent UA", "-i http://v/video", "-i http://v/audio",
 		"-map 0:v:0 -map 1:a:0", "-profile:v main", "cabac=0:bframes=0:ref=1", "pad=w=ceil(iw/16)*16", "-c:a aac", "-ar 44100 -ac 2",
-		"-f flv", "-fpsmax 30", "force_divisible_by=2", "pipe:1",
+		"-f flv", "-fpsmax 30", "force_divisible_by=2", "pipe:1", "min(480,iw)", "min(272,ih)",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in %s", want, joined)
@@ -101,6 +111,39 @@ func TestAttempts(t *testing.T) {
 	}
 	got = Attempts(&bili.Media{Muxed: []string{"m1", "m2", "m3", "m4"}})
 	if len(got) != 3 || got[2].Muxed != "m3" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestBuildArgs60FPSAndGOPFollowsEffectiveRate(t *testing.T) {
+	r := mustParse(t, "bvid=BV1xx411c7mD&cid=1&fps=60")
+	// A 60 fps source keeps 60 fps; the two-second GOP is 120 frames.
+	j := strings.Join(BuildArgs(r, Inputs{Muxed: "m", SourceFPS: 59.94}, "UA"), " ")
+	for _, want := range []string{"-fpsmax 60", "keyint=120:min-keyint=60"} {
+		if !strings.Contains(j, want) {
+			t.Errorf("missing %q in %s", want, j)
+		}
+	}
+	// A 25 fps source under a 60 fps cap stays at 25: the GOP must not stretch to four seconds.
+	j = strings.Join(BuildArgs(r, Inputs{Muxed: "m", SourceFPS: 25}, "UA"), " ")
+	if !strings.Contains(j, "keyint=50:min-keyint=25") {
+		t.Errorf("GOP should follow the source rate: %s", j)
+	}
+	// Unknown source rate falls back to the cap.
+	j = strings.Join(BuildArgs(r, Inputs{Muxed: "m"}, "UA"), " ")
+	if !strings.Contains(j, "keyint=120:min-keyint=60") {
+		t.Errorf("unknown source rate: %s", j)
+	}
+	// The frame rate cap lowers it below the source.
+	r30 := mustParse(t, "bvid=BV1xx411c7mD&cid=1&fps=30")
+	if got := r30.EffectiveFPS(60); got != 30 {
+		t.Errorf("cap 30 on a 60 fps source = %d", got)
+	}
+}
+
+func TestAttemptsCarrySourceFPS(t *testing.T) {
+	got := Attempts(&bili.Media{Video: []string{"v"}, Audio: []string{"a"}, FPS: 60})
+	if len(got) != 1 || got[0].SourceFPS != 60 {
 		t.Fatalf("%+v", got)
 	}
 }

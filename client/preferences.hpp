@@ -25,6 +25,8 @@ enum class SettingItem : std::size_t {
     StreamFind,
     StreamAddress,
     StreamToken,
+    StreamQuality,
+    StreamFps,
     StreamPreset,
     StreamProfile,
     StreamTest,
@@ -60,11 +62,19 @@ const char* homeStyleCode(HomeStyle style);
 enum class InputMethod : int { Pinyin = 0, System = 1 };
 const char* inputMethodCode(InputMethod method);
 
-// Stream server (wili-server on a PC). Values match WiliStreamPreset / WiliStreamProfile.
+// Stream server (wili-server on a PC). The picture is always 480x272; what varies is which
+// Bilibili tier the PC downloads (streamQuality, a WILI_QN_* id), the frame-rate cap and the
+// bitrate (StreamPreset, kept under the settings key "stream_preset"). Values match
+// WiliStreamPreset / WiliStreamProfile.
 enum class StreamPreset : int { Performance = 0, Balanced = 1, Quality = 2 };
 enum class StreamProfile : int { Auto = 0, Cavlc = 1, Cabac = 2 };
+// Auto follows the source (up to 60 fps); Max30 caps it, which halves the 60 fps tiers.
+enum class StreamFps : int { Auto = 0, Max30 = 30 };
 const char* streamPresetCode(StreamPreset preset);
 const char* streamProfileCode(StreamProfile profile);
+const char* streamFpsCode(StreamFps fps);
+// "480P", "1080P60", "4K"; the same in every language.
+const char* streamQualityLabel(int qn);
 
 struct Preferences {
     bool darkTheme = false;
@@ -89,6 +99,8 @@ struct Preferences {
     std::string serverHost;
     int serverPort = WILI_SERVER_PORT;
     std::string serverToken; // stored in plain text on the memory stick, like the Wi-Fi profile
+    int streamQuality = WILI_QN_DEFAULT;
+    StreamFps streamFps = StreamFps::Auto;
     StreamPreset streamPreset = StreamPreset::Balanced;
     StreamProfile streamProfile = StreamProfile::Auto;
     WiliServer serverConfig() const {

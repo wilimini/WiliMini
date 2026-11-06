@@ -12,6 +12,8 @@ namespace pspapp {
 struct StreamTarget {
     WiliServer server{};
     WiliStreamPreset preset = WILI_PRESET_BALANCED;
+    int sourceQn = WILI_QN_DEFAULT;   // Bilibili tier the PC downloads
+    int maxFps = WILI_FPS_AUTO;       // frame-rate cap; the picture size is fixed at 480x272
     WiliStreamProfile profile = WILI_PROFILE_AUTO;
     long long startMs = 0;
 };

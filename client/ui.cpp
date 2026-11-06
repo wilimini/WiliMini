@@ -2049,6 +2049,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_log_files,
             pspapp::TextId::settings_stream_server, pspapp::TextId::settings_stream_find,
             pspapp::TextId::settings_stream_address, pspapp::TextId::settings_stream_token,
+            pspapp::TextId::settings_stream_quality, pspapp::TextId::settings_stream_fps,
             pspapp::TextId::settings_stream_preset, pspapp::TextId::settings_stream_profile,
             pspapp::TextId::settings_stream_test, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
@@ -2101,6 +2102,9 @@ void drawUtility(const pspapp::App& app) {
             streamAddress,
             pspapp::text(preferences.serverToken.empty() ? pspapp::TextId::value_stream_unset
                                                          : pspapp::TextId::value_stream_token_set, locale),
+            pspapp::streamQualityLabel(preferences.streamQuality),
+            pspapp::text(preferences.streamFps == pspapp::StreamFps::Max30 ? pspapp::TextId::value_stream_fps_30
+                                                                           : pspapp::TextId::value_stream_fps_auto, locale),
             pspapp::text(preferences.streamPreset == pspapp::StreamPreset::Performance
                              ? pspapp::TextId::value_stream_preset_performance
                          : preferences.streamPreset == pspapp::StreamPreset::Quality

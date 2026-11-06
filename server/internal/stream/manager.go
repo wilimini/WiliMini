@@ -215,13 +215,14 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case bili.IsLoginRequired(err):
 			writeErr(w, "login_required", "this video needs a signed-in account; run `wili-server login`")
 		case errors.Is(err, bili.ErrNoStream):
-			writeErr(w, "no_stream", "Bilibili offers no H.264 stream for this video")
+			writeErr(w, "no_stream", "Bilibili offers no H.264 or HEVC stream for this video")
 		default:
 			writeErr(w, "upstream", err.Error())
 		}
 		m.event("error", "#%d play url: %v", sess.ID, err)
 		return
 	}
+	m.event("stream", "#%d source qn=%d %dx%d %.0f fps", sess.ID, media.QN, media.Width, media.Height, media.FPS)
 	attempts := Attempts(media)
 	var lastErr string
 	for i, in := range attempts {

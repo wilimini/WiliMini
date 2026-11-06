@@ -83,6 +83,8 @@ int prepareServerPlayback(const BiliVideo& video, bool pgc, const StreamTarget& 
     request.start_ms = stream.startMs;
     request.pgc = pgc ? 1 : 0;
     request.preset = stream.preset;
+    request.source_qn = stream.sourceQn;
+    request.max_fps = stream.maxFps;
     request.profile = stream.profile;
     char url[640];
     if (wili_server_stream_url(&stream.server, &request, url, sizeof(url)) != 0) {
@@ -108,7 +110,7 @@ int prepareServerPlayback(const BiliVideo& video, bool pgc, const StreamTarget& 
     playback.restart_seek = 1;
     playback.timeline_offset_ms = stream.startMs;
     playback.timeline_duration_ms = video.duration > 0 ? static_cast<long long>(video.duration) * 1000 : 0;
-    // The server fixes the quality; the on-screen quality menu has nothing to offer.
+    // The source tier comes from Settings (Stream source); the on-screen quality menu has nothing to offer.
     playback.quality = 0;
     playback.quality_count = 0;
     liveLog("server stream ready offset=%lld", stream.startMs);

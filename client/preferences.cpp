@@ -26,6 +26,23 @@ const char* streamPresetCode(StreamPreset preset) {
     return preset == StreamPreset::Performance ? "performance" : preset == StreamPreset::Quality ? "quality" : "balanced";
 }
 
+const char* streamFpsCode(StreamFps fps) {
+    return fps == StreamFps::Max30 ? "30" : "auto";
+}
+
+const char* streamQualityLabel(int qn) {
+    switch (qn) {
+        case WILI_QN_360P: return "360P";
+        case WILI_QN_720P: return "720P";
+        case WILI_QN_720P60: return "720P60";
+        case WILI_QN_1080P: return "1080P";
+        case WILI_QN_1080P_PLUS: return "1080P+";
+        case WILI_QN_1080P60: return "1080P60";
+        case WILI_QN_4K: return "4K";
+        default: return "480P";
+    }
+}
+
 const char* streamProfileCode(StreamProfile profile) {
     return profile == StreamProfile::Cavlc ? "cavlc" : profile == StreamProfile::Cabac ? "cabac" : "auto";
 }
@@ -159,6 +176,12 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         else if (preset == "balanced") loaded.streamPreset = StreamPreset::Balanced;
         else if (preset == "quality") loaded.streamPreset = StreamPreset::Quality;
         else return false;
+        loaded.streamQuality = root.value("stream_quality", static_cast<int>(WILI_QN_DEFAULT));
+        if (!wili_stream_quality_valid(loaded.streamQuality)) return false;
+        const std::string fps = root.value("stream_fps", std::string("auto"));
+        if (fps == "auto") loaded.streamFps = StreamFps::Auto;
+        else if (fps == "30") loaded.streamFps = StreamFps::Max30;
+        else return false;
         const std::string profile = root.value("stream_profile", std::string("auto"));
         if (profile == "auto") loaded.streamProfile = StreamProfile::Auto;
         else if (profile == "cavlc") loaded.streamProfile = StreamProfile::Cavlc;
@@ -186,6 +209,8 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     if (preferences.locale != Locale::ZhHans && preferences.locale != Locale::EnUs) return false;
     if (!validLogChannels(preferences.logChannels)) return false;
     if (preferences.serverPort < 1 || preferences.serverPort > 65535) return false;
+    if (!wili_stream_quality_valid(preferences.streamQuality)) return false;
+    if (preferences.streamFps != StreamFps::Auto && preferences.streamFps != StreamFps::Max30) return false;
     if (!preferences.serverToken.empty() && !wili_server_valid_token(preferences.serverToken.c_str())) return false;
     if (!preferences.serverHost.empty()) {
         char host[WILI_SERVER_HOST_MAX];
@@ -212,6 +237,8 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"server_host", preferences.serverHost},
         {"server_port", preferences.serverPort},
         {"server_token", preferences.serverToken},
+        {"stream_quality", preferences.streamQuality},
+        {"stream_fps", streamFpsCode(preferences.streamFps)},
         {"stream_preset", streamPresetCode(preferences.streamPreset)},
         {"stream_profile", streamProfileCode(preferences.streamProfile)},
         {"log_channels", preferences.logChannels}}).dump();

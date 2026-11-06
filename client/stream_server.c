@@ -176,10 +176,28 @@ int wili_server_logout_url(const WiliServer *s, char *out, size_t cap) {
 
 WiliStreamParams wili_stream_params(WiliStreamPreset preset) {
     switch (preset) {
-    case WILI_PRESET_PERFORMANCE: return (WiliStreamParams){384, 216, 24, 700, 64};
-    case WILI_PRESET_QUALITY: return (WiliStreamParams){480, 272, 30, 1500, 128};
-    default: return (WiliStreamParams){480, 272, 30, 1000, 96};
+    case WILI_PRESET_PERFORMANCE: return (WiliStreamParams){700, 64};
+    case WILI_PRESET_QUALITY: return (WiliStreamParams){1500, 128};
+    default: return (WiliStreamParams){1000, 96};
     }
+}
+
+static const int quality_tiers[] = {
+    WILI_QN_360P, WILI_QN_480P, WILI_QN_720P, WILI_QN_720P60,
+    WILI_QN_1080P, WILI_QN_1080P_PLUS, WILI_QN_1080P60, WILI_QN_4K
+};
+
+int wili_stream_quality_valid(int qn) {
+    for (size_t i = 0; i < sizeof(quality_tiers) / sizeof(quality_tiers[0]); ++i)
+        if (quality_tiers[i] == qn) return 1;
+    return 0;
+}
+
+int wili_stream_quality_next(int qn) {
+    const size_t count = sizeof(quality_tiers) / sizeof(quality_tiers[0]);
+    for (size_t i = 0; i < count; ++i)
+        if (quality_tiers[i] == qn) return quality_tiers[(i + 1) % count];
+    return WILI_QN_DEFAULT;
 }
 
 int wili_server_stream_url(const WiliServer *s, const WiliStreamRequest *r, char *out, size_t cap) {
@@ -203,9 +221,9 @@ int wili_server_stream_url(const WiliServer *s, const WiliStreamRequest *r, char
     }
     put(&b, "&profile=");
     put(&b, r->profile == WILI_PROFILE_CABAC ? "cabac" : r->profile == WILI_PROFILE_CAVLC ? "cavlc" : "auto");
-    put(&b, "&w="); put_int(&b, p.width);
-    put(&b, "&h="); put_int(&b, p.height);
-    put(&b, "&fps="); put_int(&b, p.fps);
+    /* The picture size is fixed on the server (480x272), so only quality, rate and bitrate are sent. */
+    if (r->source_qn > 0) { put(&b, "&qn="); put_int(&b, r->source_qn); }
+    if (r->max_fps > 0) { put(&b, "&fps="); put_int(&b, r->max_fps); }
     put(&b, "&vb="); put_int(&b, p.video_kbps);
     put(&b, "&ab="); put_int(&b, p.audio_kbps);
     put(&b, "&k="); put_escaped(&b, s->token);

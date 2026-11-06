@@ -1,7 +1,9 @@
 // Package stream turns a Bilibili video into something the PSP's sceMpeg decoder
-// handles: H.264 Main profile (CAVLC by default) up to 480x272 with both sides a
+// handles: H.264 Main profile (CAVLC by default) fitted into 480x272 with both sides a
 // multiple of 16, plus AAC, in FLV, produced by an ffmpeg child process whose
-// stdout is the HTTP response.
+// stdout is the HTTP response. The output size is fixed; the source quality (any
+// Bilibili tier, up to 4K and 60 fps), the frame-rate cap and the bitrate are the
+// request's knobs.
 package stream
 
 import (
@@ -23,14 +25,18 @@ const (
 	ProfileCABAC Profile = "cabac"
 )
 
-// Limits and defaults for the PSP screen and Wi-Fi.
+// The PSP screen. Every stream is fitted into this box whatever the source is.
 const (
-	DefaultWidth     = 480
-	DefaultHeight    = 272
-	MaxWidth         = 720
-	MaxHeight        = 480
+	OutputWidth  = 480
+	OutputHeight = 272
+)
+
+// Limits and defaults for Wi-Fi and the decoder. H.264 level 3.0 allows 480x272 at up to 76 fps.
+const (
 	DefaultFPS       = 30
+	MaxFPS           = 60
 	DefaultVideoKbps = 1200
+	MaxVideoKbps     = 4000
 	DefaultAudioKbps = 96
 	MaxSeekSeconds   = 12 * 3600
 )
@@ -44,17 +50,16 @@ type Request struct {
 	PGC       bool
 	StartSec  float64
 	Profile   Profile
-	Width     int
-	Height    int
-	FPS       int
+	FPS       int // cap: the output never exceeds the source's own frame rate
 	VideoKbps int
 	AudioKbps int
-	QN        int
+	QN        int // Bilibili quality tier of the source
 }
 
-// ParseRequest validates the query, applying defaults and clamping sizes.
+// ParseRequest validates the query, applying defaults and clamping values. The old w and h
+// parameters are ignored: the output size is fixed.
 func ParseRequest(q url.Values) (Request, error) {
-	r := Request{Profile: ProfileAuto, Width: DefaultWidth, Height: DefaultHeight, FPS: DefaultFPS,
+	r := Request{Profile: ProfileAuto, FPS: DefaultFPS,
 		VideoKbps: DefaultVideoKbps, AudioKbps: DefaultAudioKbps, QN: bili.QN480}
 	r.PGC = q.Get("pgc") == "1"
 	r.BVID = q.Get("bvid")
@@ -83,8 +88,8 @@ func ParseRequest(q url.Values) (Request, error) {
 		lo, hi int
 		dst    *int
 	}{
-		{"w", 64, MaxWidth, &r.Width}, {"h", 64, MaxHeight, &r.Height}, {"fps", 5, 30, &r.FPS},
-		{"vb", 100, 4000, &r.VideoKbps}, {"ab", 32, 192, &r.AudioKbps}, {"qn", bili.QN360, 80, &r.QN},
+		{"fps", 5, MaxFPS, &r.FPS},
+		{"vb", 100, MaxVideoKbps, &r.VideoKbps}, {"ab", 32, 192, &r.AudioKbps}, {"qn", bili.QN360, bili.QN4K, &r.QN},
 	} {
 		if err := num(f.name, f.lo, f.hi, f.dst); err != nil {
 			return r, err
@@ -119,6 +124,7 @@ func (r Request) EncoderProfile() Profile {
 // Inputs is one ffmpeg attempt: the URLs to read.
 type Inputs struct {
 	Video, Audio, Muxed string
+	SourceFPS           float64 // the rendition's own frame rate, 0 when unknown
 }
 
 // Attempts lists the URL combinations to try in order (primary, then CDN
@@ -138,9 +144,9 @@ func Attempts(m *bili.Media) []Inputs {
 	out := make([]Inputs, 0, n)
 	for i := 0; i < n; i++ {
 		if len(m.Muxed) > 0 {
-			out = append(out, Inputs{Muxed: pick(m.Muxed, i)})
+			out = append(out, Inputs{Muxed: pick(m.Muxed, i), SourceFPS: m.FPS})
 		} else {
-			out = append(out, Inputs{Video: pick(m.Video, i), Audio: pick(m.Audio, i)})
+			out = append(out, Inputs{Video: pick(m.Video, i), Audio: pick(m.Audio, i), SourceFPS: m.FPS})
 		}
 	}
 	return out
@@ -169,7 +175,7 @@ func BuildArgs(r Request, in Inputs, ua string) []string {
 	// that is a multiple of 16 and no cropping, and padding keeps the picture undistorted.
 	scale := fmt.Sprintf("scale=w='min(%d,iw)':h='min(%d,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,"+
 		"pad=w=ceil(iw/16)*16:h=ceil(ih/16)*16:x=(ow-iw)/2:y=(oh-ih)/2:color=black,setsar=1",
-		r.Width, r.Height)
+		OutputWidth, OutputHeight)
 	args = append(args, "-vf", scale, "-fpsmax", strconv.Itoa(r.FPS), "-pix_fmt", "yuv420p")
 
 	// Main profile in both cases; CAVLC (the default) is the PSP's native video format.
@@ -179,8 +185,10 @@ func BuildArgs(r Request, in Inputs, ua string) []string {
 	}
 	// No B-frames, one reference frame and a two-second GOP keep decoding cheap, stay within
 	// what the firmware decoder accepts, and make restart-based seeking land close to the target.
+	// The GOP is counted in output frames, so it follows the frame rate actually produced.
+	fps := r.EffectiveFPS(in.SourceFPS)
 	x264 := fmt.Sprintf("cabac=%s:bframes=0:ref=1:keyint=%d:min-keyint=%d:scenecut=0:rc-lookahead=10",
-		cabac, r.FPS*2, r.FPS)
+		cabac, fps*2, fps)
 	args = append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-profile:v", profile, "-level:v", "3.0",
 		"-x264-params", x264,
@@ -191,9 +199,19 @@ func BuildArgs(r Request, in Inputs, ua string) []string {
 	return args
 }
 
-// ValidateKey exists so handlers can reject a request early.
+// EffectiveFPS is the frame rate the output will have: the cap, or the source's own rate when
+// that is lower (ffmpeg's -fpsmax never adds frames).
+func (r Request) EffectiveFPS(source float64) int {
+	if source >= 1 && int(source+0.5) < r.FPS {
+		return max(int(source+0.5), 5)
+	}
+	return r.FPS
+}
+
+// String describes the request in logs.
 func (r Request) String() string {
-	return fmt.Sprintf("%s cid=%d t=%.1f %s %dx%d@%d", r.BVID, r.CID, r.StartSec, r.EncoderProfile(), r.Width, r.Height, r.FPS)
+	return fmt.Sprintf("%s cid=%d t=%.1f %s qn=%d %dx%d<=%dfps %dk", r.BVID, r.CID, r.StartSec, r.EncoderProfile(),
+		r.QN, OutputWidth, OutputHeight, r.FPS, r.VideoKbps)
 }
 
 // ErrorStatus maps a failure class to an HTTP status.

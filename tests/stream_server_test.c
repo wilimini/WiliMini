@@ -80,18 +80,39 @@ static void test_rewrite(void) {
     }
 }
 
+static void test_quality_tiers(void) {
+    /* Ascending cycle through every tier that wraps, so Settings can step through them. */
+    int qn = WILI_QN_360P, seen = 0;
+    do { CHECK(wili_stream_quality_valid(qn)); qn = wili_stream_quality_next(qn); ++seen; }
+    while (qn != WILI_QN_360P && seen < 20);
+    CHECK(seen == 8);
+    CHECK(wili_stream_quality_next(WILI_QN_1080P) == WILI_QN_1080P_PLUS);
+    CHECK(wili_stream_quality_next(WILI_QN_4K) == WILI_QN_360P);
+    CHECK(!wili_stream_quality_valid(0) && !wili_stream_quality_valid(125) && !wili_stream_quality_valid(-32));
+    CHECK(wili_stream_quality_next(999) == WILI_QN_DEFAULT);
+}
+
 static void test_stream_url(void) {
     WiliServer s = server();
-    WiliStreamRequest r = {"BV1xx411c7mD", 12345, 0, 0, WILI_PRESET_BALANCED, WILI_PROFILE_AUTO};
+    WiliStreamRequest r = {"BV1xx411c7mD", 12345, 0, 0, WILI_PRESET_BALANCED, WILI_PROFILE_AUTO, 0, 0};
     char out[512];
     CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
-    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?bvid=BV1xx411c7mD&cid=12345&profile=auto&w=480&h=272&fps=30&vb=1000&ab=96&k=k7m2q9xa");
+    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?bvid=BV1xx411c7mD&cid=12345&profile=auto&vb=1000&ab=96&k=k7m2q9xa");
     r.start_ms = 61500; r.profile = WILI_PROFILE_CABAC; r.preset = WILI_PRESET_PERFORMANCE;
     CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
-    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?bvid=BV1xx411c7mD&cid=12345&t=61.500&profile=cabac&w=384&h=216&fps=24&vb=700&ab=64&k=k7m2q9xa");
+    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?bvid=BV1xx411c7mD&cid=12345&t=61.500&profile=cabac&vb=700&ab=64&k=k7m2q9xa");
     r.start_ms = 3005; r.pgc = 1; r.bvid = NULL; r.profile = WILI_PROFILE_CAVLC; r.preset = WILI_PRESET_QUALITY;
     CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
-    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?pgc=1&cid=12345&t=3.005&profile=cavlc&w=480&h=272&fps=30&vb=1500&ab=128&k=k7m2q9xa");
+    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?pgc=1&cid=12345&t=3.005&profile=cavlc&vb=1500&ab=128&k=k7m2q9xa");
+    /* Source quality and the frame-rate cap are sent only when set. */
+    r.start_ms = 0; r.pgc = 0; r.bvid = "BV1xx411c7mD"; r.preset = WILI_PRESET_BALANCED;
+    r.source_qn = WILI_QN_1080P60; r.max_fps = WILI_FPS_AUTO;
+    CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
+    CHECK_STR(out, "http://192.168.1.20:8787/wili/v1/stream?bvid=BV1xx411c7mD&cid=12345&profile=cavlc&qn=116&fps=60&vb=1000&ab=96&k=k7m2q9xa");
+    r.source_qn = WILI_QN_4K; r.max_fps = 30;
+    CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
+    CHECK(strstr(out, "&qn=120&fps=30&vb=1000"));
+    r.source_qn = 0; r.max_fps = 0;
     /* A hostile bvid cannot add parameters. */
     r.pgc = 0; r.bvid = "BV1&profile=x#";
     CHECK(wili_server_stream_url(&s, &r, out, sizeof(out)) == 0);
@@ -167,8 +188,11 @@ static void test_discovery(const char *dir) {
 int main(int argc, char **argv) {
     if (argc < 2) { puts("usage: stream_server_test tests/data"); return 2; }
     test_address(); test_token(); test_rewrite(); test_stream_url(); test_discovery(argv[1]);
+    test_quality_tiers();
     WiliStreamParams p = wili_stream_params(WILI_PRESET_BALANCED);
-    CHECK(p.width == 480 && p.height == 272 && p.fps == 30);
+    CHECK(p.video_kbps == 1000 && p.audio_kbps == 96);
+    CHECK(wili_stream_params(WILI_PRESET_PERFORMANCE).video_kbps == 700);
+    CHECK(wili_stream_params(WILI_PRESET_QUALITY).video_kbps == 1500);
     if (failures) { printf("%d check(s) failed\n", failures); return 1; }
     puts("stream_server_test: ok");
     return 0;

@@ -65,6 +65,9 @@ int bili_prepare_live_playback(const char *url, BiliPlayback *out);
  * the server's error code ("login_required", "busy", ...) when it gave one. */
 int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_status,
                                char *error, size_t error_cap);
+/* Optional: polled while bili_prepare_stream_server waits for the first bytes. Return nonzero to
+ * give up at once (the player sets it to psp_video_cancelled() while a seek reopens the stream). */
+extern int (*bili_stream_abort)(void);
 const PspVideoSource *bili_live_source(BiliLiveStream *stream, int audio);
 int bili_live_finish(BiliLiveStream *stream);
 int bili_prepare_range_playback(const BiliVideo *video, const BiliMediaUrl *video_url,

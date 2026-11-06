@@ -55,10 +55,16 @@ static volatile int playback_seeking;
 static volatile int seek_pending; /* re-target requested while a seek runs; guarded by controls_lock */
 static unsigned playback_seeks;
 static int native_seek_enabled;
+/* Seeking a restart stream without leaving psp_video_play: the control thread raises the request, the
+ * player thread unwinds its decoder, calls options->reopen and starts a new segment. */
+static int soft_reseek_enabled;
+static volatile int soft_reseek_request;
+static SceUID io_lock = -1; /* guards video_io_source / audio_io_source against a concurrent stop */
 static int restart_seek;
 static int64_t timeline_offset_ms, timeline_duration_ms;
 static int quality_requested;
 static void begin_playback_seek(void);
+static void begin_soft_reseek(void);
 static int64_t seek_target_ms;
 static int seek_paused;
 static int64_t playback_now_us(void) {
@@ -152,7 +158,8 @@ static int video_cancel_thread(SceSize size, void *arg) {
             if (action == PC_SEEK) {
                 seek_target_ms = controls.preview_ms;
                 seek_paused = controls.paused;
-                seek_requested = 1;
+                /* A soft reseek keeps the session, so the caller has nothing to reopen. */
+                if (!soft_reseek_enabled) seek_requested = 1;
                 /* A seek is already running: the player thread re-targets
                  * it instead of starting a second one. */
                 if (native_seek_enabled && playback_seeking) {
@@ -165,7 +172,9 @@ static int video_cancel_thread(SceSize size, void *arg) {
             }
             sceKernelSignalSema(controls_lock, 1);
             if (action == PC_SEEK && !chained) {
-                if (native_seek_enabled) begin_playback_seek(); else psp_video_stop();
+                if (native_seek_enabled) begin_playback_seek();
+                else if (soft_reseek_enabled) begin_soft_reseek();
+                else psp_video_stop();
             }
             else if (action == PC_EXIT || action == PC_QUALITY) psp_video_stop();
         } else if (pad.Buttons & cancel_button) psp_video_stop();
@@ -243,6 +252,35 @@ static void begin_playback_seek(void) {
     controls.position_ms = seek_target_ms;
     controls.visible = 1;
     sceKernelSignalSema(controls_lock, 1);
+}
+/* The io_lock keeps the player thread from swapping or freeing the sources while another thread
+ * is cancelling them. It is held only for the pointer access, never across a blocking call. */
+static void io_lock_take(void) { if (io_lock >= 0) sceKernelWaitSema(io_lock, 1, NULL); }
+static void io_lock_give(void) { if (io_lock >= 0) sceKernelSignalSema(io_lock, 1); }
+static void cancel_io_sources(void) {
+    io_lock_take();
+    if (video_io_source && video_io_source->cancel) video_io_source->cancel(video_io_source->opaque);
+    if (audio_io_source && audio_io_source->cancel) audio_io_source->cancel(audio_io_source->opaque);
+    io_lock_give();
+}
+static void set_io_sources(const PspVideoSource *video, const PspVideoSource *audio) {
+    io_lock_take();
+    video_io_source = video;
+    audio_io_source = audio;
+    io_lock_give();
+}
+static void begin_soft_reseek(void) {
+    /* Seeking blocks further seek keys and shows the target position with the buffering state. */
+    playback_seeking = 1;
+    soft_reseek_request = 1;
+    sceKernelWaitSema(controls_lock, 1, NULL);
+    controls.seeking = 0;
+    controls.position_ms = seek_target_ms;
+    controls.visible = 1;
+    sceKernelSignalSema(controls_lock, 1);
+    /* Unblock whatever is waiting on the old stream. Cancelling a live source is permanent, which
+     * is fine: it is replaced. The flag is raised first so the unwinding reads as a seek. */
+    cancel_io_sources();
 }
 static int present_video(const void *pixels, PspVideoPixelFormat format) {
     if (!presenter || !presenter->present) return 0;
@@ -1387,6 +1425,9 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     timeline_offset_ms = options->timeline_offset_ms > 0 ? options->timeline_offset_ms : 0;
     timeline_duration_ms = options->timeline_duration_ms > 0 ? options->timeline_duration_ms : 0;
     native_seek_enabled = options->backend == PSP_VIDEO_BACKEND_NATIVE_ME && !restart_seek;
+    soft_reseek_enabled = options->backend == PSP_VIDEO_BACKEND_SCE_MPEG && restart_seek &&
+                          options->reopen != NULL && presenter != NULL;
+    soft_reseek_request = 0;
     seek_target_ms = 0;
     if (presenter) {
         controls_lock = sceKernelCreateSema("player_controls", 0, 1, 1, NULL);
@@ -1400,6 +1441,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     }
     video_io_source=options->source;
     audio_io_source=options->audio_source;
+    io_lock = sceKernelCreateSema("player_io", 0, 1, 1, NULL); /* negative: no locking, as before */
     cancel_button = options->cancel_button == PSP_VIDEO_CANCEL_CROSS ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
     playback_start_ms = options->start_ms > 0 ? options->start_ms : 0;
     playback_position_us = 0;
@@ -1432,7 +1474,8 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         poll_controller = client_playback = 0;
         if (result) result->error = control;
         if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
-        controls_lock = -1; presenter = NULL;
+        if (io_lock >= 0) sceKernelDeleteSema(io_lock);
+        controls_lock = io_lock = -1; presenter = NULL; soft_reseek_enabled = 0;
         return control;
     }
     int started = sceKernelStartThread(control, 0, NULL);
@@ -1440,7 +1483,8 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         sceKernelDeleteThread(control); poll_controller = client_playback = 0;
         if (result) result->error = started;
         if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
-        controls_lock = -1; presenter = NULL;
+        if (io_lock >= 0) sceKernelDeleteSema(io_lock);
+        controls_lock = io_lock = -1; presenter = NULL; soft_reseek_enabled = 0;
         return started;
     }
     RunStats stats = {0};
@@ -1476,8 +1520,10 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     if (controls_lock >= 0) sceKernelDeleteSema(controls_lock);
     controls_lock = -1; presenter = NULL;
     client_playback = 0;
-    video_io_source = NULL;
-    audio_io_source = NULL;
+    soft_reseek_enabled = 0;
+    set_io_sources(NULL, NULL);
+    if (io_lock >= 0) sceKernelDeleteSema(io_lock);
+    io_lock = -1;
     return quit_requested ? 0 : ret;
 }
 void psp_video_log_health(void) {
@@ -1499,11 +1545,12 @@ void psp_video_stop(void) {
            (sceKernelGetSystemTimeLow() - playback_operation_since) / 1000,
            psp_video_stage_name(video_stage));
     quit_requested = 1;
-    WLOG_I(WLC_PLAYER, "stop video_cancel_begin");
-    if(video_io_source && video_io_source->cancel)video_io_source->cancel(video_io_source->opaque);
-    WLOG_I(WLC_PLAYER, "stop video_cancel_end audio_cancel_begin");
-    if(audio_io_source && audio_io_source->cancel)audio_io_source->cancel(audio_io_source->opaque);
-    WLOG_I(WLC_PLAYER, "stop audio_cancel_end");
+    WLOG_I(WLC_PLAYER, "stop cancel_begin");
+    cancel_io_sources();
+    WLOG_I(WLC_PLAYER, "stop cancel_end");
+}
+int psp_video_cancelled(void) {
+    return quit_requested;
 }
 int psp_video_me_backend(void) {
 #if PSP_ME_RENDER

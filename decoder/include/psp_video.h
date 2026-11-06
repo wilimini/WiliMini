@@ -81,6 +81,16 @@ typedef struct {
      * reopens the stream at seek_ms. All three are zero for ordinary sources. */
     int restart_seek;
     int64_t timeline_offset_ms, timeline_duration_ms;
+    /* Optional, restart_seek streams on the SCE_MPEG backend only. With it a seek does not end the
+     * session: the player stops reading, closes its decoder and demuxer, and calls reopen to get new
+     * sources positioned at target_ms. The UI, controls, presenter and the session itself stay up.
+     * The callee must release the old sources (nothing reads them any more) and write the new ones to
+     * *video and *audio (audio may be NULL), valid until the next reopen or the end of the session.
+     * Return 0, or a negative value to fall back to the behaviour without this hook: the session ends
+     * with seek_requested set and the caller reopens. It runs on the player thread and may block, but
+     * should poll psp_video_cancelled() and give up once that is nonzero. */
+    int (*reopen)(void *opaque, int64_t target_ms, const PspVideoSource **video, const PspVideoSource **audio);
+    void *reopen_opaque;
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,
@@ -103,6 +113,8 @@ typedef struct {
 } PspVideoResult;
 int psp_video_play(const PspVideoOptions *options, PspVideoResult *result);
 void psp_video_stop(void);
+/* Nonzero once psp_video_stop() or an exit key has ended the session. */
+int psp_video_cancelled(void);
 /* Sample playback progress without acquiring playback locks or writing files. */
 void psp_video_log_health(void);
 /* ME_BACKEND_* of the bridge PRX loaded by the bootstrap, or -1 when native

@@ -190,6 +190,57 @@ func TestSelectMediaPrefersAVCNearQuality(t *testing.T) {
 	}
 }
 
+func TestSelectMediaHighTiersAndFrameRate(t *testing.T) {
+	data := json.RawMessage(`{"dash":{
+	  "video":[
+	    {"id":64,"codecid":7,"base_url":"v64","frame_rate":"30.000"},
+	    {"id":80,"codecid":7,"base_url":"v80","frame_rate":"30.000"},
+	    {"id":116,"codecid":12,"base_url":"hevc116","bandwidth":3000,"frame_rate":"60.000","width":1920,"height":1080},
+	    {"id":116,"codecid":7,"base_url":"avc116","bandwidth":9000,"frame_rate":"60.000","width":1920,"height":1080},
+	    {"id":120,"codecid":12,"base_url":"hevc4k","frame_rate":"59.940","width":3840,"height":2160},
+	    {"id":120,"codecid":13,"base_url":"av14k"}],
+	  "audio":[{"id":30280,"base_url":"a"}]}}`)
+	// 1080P60 is offered as AVC and HEVC: AVC wins at the same tier even though it needs more bandwidth.
+	m, err := SelectMedia(data, QN1080P60)
+	if err != nil || m.Video[0] != "avc116" || m.QN != 116 || m.FPS != 60 || m.Height != 1080 {
+		t.Fatalf("%v %+v", err, m)
+	}
+	// 4K is only offered as HEVC (and AV1, which is skipped).
+	m, err = SelectMedia(data, QN4K)
+	if err != nil || m.Video[0] != "hevc4k" || m.QN != 120 || m.FPS != 59.94 {
+		t.Fatalf("%v %+v", err, m)
+	}
+	// A tier the account cannot get falls back to the best one below it.
+	m, err = SelectMedia(json.RawMessage(`{"dash":{"video":[{"id":64,"codecid":7,"base_url":"v64"},{"id":80,"codecid":7,"base_url":"v80"}],"audio":[{"id":30280,"base_url":"a"}]}}`), QN4K)
+	if err != nil || m.Video[0] != "v80" || m.FPS != 0 {
+		t.Fatalf("%v %+v", err, m)
+	}
+}
+
+func TestPlayURLAsks4KOnlyForTheTopTier(t *testing.T) {
+	var gotFnval, gotFourk []string
+	c, _ := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/x/web-interface/nav":
+			w.Write([]byte(navBody(false)))
+		case "/x/frontend/finger/spi":
+			w.Write([]byte(`{"code":0,"data":{"b_3":"B3","b_4":"B4"}}`))
+		case "/x/player/wbi/playurl":
+			q := r.URL.Query()
+			gotFnval, gotFourk = append(gotFnval, q.Get("fnval")), append(gotFourk, q.Get("fourk"))
+			w.Write([]byte(`{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":7,"base_url":"V"}],"audio":[{"id":30280,"base_url":"A"}]}}}`))
+		}
+	}))
+	for _, qn := range []int{QN1080P60, QN4K} {
+		if _, err := c.PlayURL(context.Background(), PlayRequest{BVID: "BV1xx", CID: 7, QN: qn}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if gotFnval[0] != "16" || gotFourk[0] != "0" || gotFnval[1] != "144" || gotFourk[1] != "1" {
+		t.Fatalf("fnval=%v fourk=%v", gotFnval, gotFourk)
+	}
+}
+
 func TestSelectMediaFallsBackToDurlAndPGC(t *testing.T) {
 	m, err := SelectMedia(json.RawMessage(`{"durl":[{"url":"muxed","backup_url":["m2"]}]}`), QN480)
 	if err != nil || m.Muxed[0] != "muxed" || m.Muxed[1] != "m2" {
@@ -199,8 +250,9 @@ func TestSelectMediaFallsBackToDurlAndPGC(t *testing.T) {
 	if err != nil || m.Video[0] != "pv" || m.Audio[0] != "pa" {
 		t.Fatalf("%v %+v", err, m)
 	}
-	if _, err := SelectMedia(json.RawMessage(`{"dash":{"video":[{"id":32,"codecid":12,"base_url":"hevc"}],"audio":[]}}`), QN480); err != ErrNoStream {
-		t.Fatalf("hevc-only must be ErrNoStream, got %v", err)
+	// AV1 needs an optional ffmpeg decoder, so a video offered only as AV1 is unusable.
+	if _, err := SelectMedia(json.RawMessage(`{"dash":{"video":[{"id":32,"codecid":13,"base_url":"av1"}],"audio":[]}}`), QN480); err != ErrNoStream {
+		t.Fatalf("av1-only must be ErrNoStream, got %v", err)
 	}
 }
 

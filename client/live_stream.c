@@ -244,6 +244,8 @@ static void live_error_code(const BiliLiveStream *s, char *out, size_t cap) {
   out[n] = 0;
 }
 
+int (*bili_stream_abort)(void);
+
 int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_status,
                                char *error, size_t error_cap) {
   if (http_status) *http_status = 0;
@@ -254,7 +256,7 @@ int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_sta
   /* The server fetches the play URL and starts ffmpeg before it answers, which
    * takes a few seconds; wait for the first bytes so errors surface here. */
   for (;;) {
-    if (transfer_cancel) break;
+    if (transfer_cancel || (bili_stream_abort && bili_stream_abort())) break;
     sceKernelWaitSema(s->lock, 1, NULL);
     const uint64_t written = s->written;
     sceKernelSignalSema(s->lock, 1);

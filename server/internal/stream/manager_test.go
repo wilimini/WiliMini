@@ -80,8 +80,8 @@ func newFixture(t *testing.T, max int, seconds int) *fixture {
 		switch r.URL.Query().Get("bvid") {
 		case "BV1LOGIN0000":
 			fmt.Fprint(w, `{"code":-101,"message":"账号未登录"}`)
-		case "BV1NOHEVC000":
-			fmt.Fprint(w, `{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":12,"base_url":"x"}],"audio":[{"id":30280,"base_url":"y"}]}}}`)
+		case "BV1ONLYAV100":
+			fmt.Fprint(w, `{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":13,"base_url":"x"}],"audio":[{"id":30280,"base_url":"y"}]}}}`)
 		case "BV1BADCDN000":
 			// The first CDN URL fails, the backup works.
 			fmt.Fprintf(w, `{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":7,"base_url":"%[1]s/media/missing.mp4","backup_url":["%[1]s/media/v.mp4"]}],"audio":[{"id":30280,"base_url":"%[1]s/media/missing.m4a","backup_url":["%[1]s/media/a.m4a"]}]}}}`, base)
@@ -261,7 +261,7 @@ func TestStreamErrors(t *testing.T) {
 		code   string
 	}{
 		{"bvid=BV1LOGIN0000&cid=1", http.StatusForbidden, "login_required"},
-		{"bvid=BV1NOHEVC000&cid=1", http.StatusNotFound, "no_stream"},
+		{"bvid=BV1ONLYAV100&cid=1", http.StatusNotFound, "no_stream"},
 		{"bvid=nope&cid=1", http.StatusBadRequest, "bad_request"},
 	} {
 		resp, body := fetch(t, f.front.URL+"/?"+tc.query)

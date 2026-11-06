@@ -1936,6 +1936,32 @@ void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
     }
 }
 
+bool App::reopenServerPlayback(int64_t positionMs, BiliPlayback& out) {
+    StreamTarget target;
+    if (!streamTarget(target, std::max<int64_t>(0, positionMs))) return false;
+    // The same video the player was started with: an episode keeps the media item its job used.
+    BiliVideo video{};
+    if (playbackEpisode_) {
+        std::snprintf(video.bvid, sizeof(video.bvid), "%s", jobMedia_.bvid.c_str());
+        std::snprintf(video.title, sizeof(video.title), "%s", jobMedia_.title.c_str());
+        video.cid = static_cast<long long>(jobMedia_.cid);
+        video.duration = jobMedia_.duration;
+    } else {
+        std::snprintf(video.bvid, sizeof(video.bvid), "%s", playbackCard_.bvid.c_str());
+        std::snprintf(video.title, sizeof(video.title), "%s", playbackCard_.title.c_str());
+        std::snprintf(video.author, sizeof(video.author), "%s", playbackCard_.author.c_str());
+        std::snprintf(video.picture, sizeof(video.picture), "%s", playbackCard_.picture.c_str());
+        video.cid = static_cast<long long>(playbackCard_.cid);
+        video.duration = playbackCard_.duration;
+    }
+    std::string error;
+    out = BiliPlayback{};
+    const int result = playbackEpisode_
+        ? prepareEpisodePlayback(video, playbackEpisode_, out, error, playbackQuality_, nullptr, &target)
+        : preparePlayback(video, out, error, playbackQuality_, nullptr, &target);
+    return result >= 0 && out.streaming;
+}
+
 void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, PspVideoStage stage, int64_t positionMs) {
     playbackPaused_ = false;
     playbackOverlayCid_ = 0;

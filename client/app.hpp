@@ -173,6 +173,9 @@ public:
     void finishPlayback(int error, unsigned frames, int eof, int cancelled,
                         PspVideoStage stage = PSP_VIDEO_STAGE_NONE, int64_t positionMs = 0);
     void seekPlayback(int64_t positionMs, bool paused, int quality = 0);
+    // Prepares the current video's wili-server stream again at positionMs, for a seek that keeps the
+    // player running. Returns false when it is not a server stream or the server refuses.
+    bool reopenServerPlayback(int64_t positionMs, BiliPlayback& out);
     const VideoCard& playbackCard() const { return playbackCard_; }
     PspVideoSettings playerSettings() const { return playerSettings_; }
     void setPlayerSettings(const PspVideoSettings& settings) { playerSettings_ = settings; }

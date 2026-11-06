@@ -7,10 +7,11 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 )
 
-// ErrNoStream means Bilibili offered no H.264 rendition we can transcode.
-var ErrNoStream = errors.New("no usable H.264 stream")
+// ErrNoStream means Bilibili offered no H.264 or HEVC rendition we can transcode.
+var ErrNoStream = errors.New("no usable H.264 or HEVC stream")
 
 type dashItem struct {
 	ID         int      `json:"id"`
@@ -22,6 +23,18 @@ type dashItem struct {
 	CodecID    int      `json:"codecid"`
 	Width      int      `json:"width"`
 	Height     int      `json:"height"`
+	FrameRate  string   `json:"frame_rate"`
+	FrameRate2 string   `json:"frameRate"`
+}
+
+// fps is the rendition's frame rate, or 0 when Bilibili did not say.
+func (d dashItem) fps() float64 {
+	for _, s := range []string{d.FrameRate, d.FrameRate2} {
+		if v, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil && v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 func (d dashItem) urls() []string {
@@ -67,6 +80,7 @@ type Media struct {
 	QN     int
 	Width  int
 	Height int
+	FPS    float64 // source frame rate; 0 when unknown
 }
 
 // PlayRequest identifies what to play.
@@ -77,11 +91,32 @@ type PlayRequest struct {
 	PGC  bool // bangumi / film episode instead of a normal upload
 }
 
-// Quality ids that are 480p or smaller, then 720p. The PSP screen is 480x272.
+// Bilibili quality ids. The PSP screen is 480x272, but the server decodes the source and scales it
+// down, so any tier is usable; higher ones only cost the PC more work. The 60 fps tiers and 4K
+// need a signed-in account (some need VIP); a tier the account cannot get falls back to the best
+// one below it.
 const (
-	QN360 = 16
-	QN480 = 32
-	QN720 = 64
+	QN360      = 16
+	QN480      = 32
+	QN720      = 64
+	QN720P60   = 74
+	QN1080     = 80
+	QN1080Plus = 112
+	QN1080P60  = 116
+	QN4K       = 120
+)
+
+// Codec ids in a DASH list. AVC is the cheapest to decode and is always preferred at a given
+// quality; HEVC is accepted because the highest tiers are often offered in nothing else, and
+// ffmpeg on the PC decodes it. AV1 is skipped: it needs an optional ffmpeg decoder.
+const (
+	codecAVC  = 7
+	codecHEVC = 12
+)
+
+const (
+	fnvalDash = 16  // DASH container
+	fnval4K   = 128 // allow 4K renditions
 )
 
 // PlayURL asks Bilibili for stream URLs and picks an AVC rendition.
@@ -92,9 +127,14 @@ func (c *Client) PlayURL(ctx context.Context, req PlayRequest) (*Media, error) {
 	params := url.Values{}
 	params.Set("cid", strconv.FormatInt(req.CID, 10))
 	params.Set("qn", strconv.Itoa(req.QN))
-	params.Set("fnval", "16")
+	fnval, fourk := fnvalDash, "0"
+	if req.QN >= QN4K {
+		fnval |= fnval4K
+		fourk = "1"
+	}
+	params.Set("fnval", strconv.Itoa(fnval))
 	params.Set("fnver", "0")
-	params.Set("fourk", "0")
+	params.Set("fourk", fourk)
 	var data json.RawMessage
 	var err error
 	if req.PGC {
@@ -131,7 +171,7 @@ func SelectMedia(data json.RawMessage, wantQN int) (*Media, error) {
 	if dash != nil && len(dash.Video) > 0 {
 		video := pickVideo(dash.Video, wantQN)
 		if video != nil {
-			m := &Media{Video: video.urls(), QN: video.ID, Width: video.Width, Height: video.Height}
+			m := &Media{Video: video.urls(), QN: video.ID, Width: video.Width, Height: video.Height, FPS: video.fps()}
 			if audio := pickAudio(dash.Audio); audio != nil {
 				m.Audio = audio.urls()
 			}
@@ -146,20 +186,20 @@ func SelectMedia(data json.RawMessage, wantQN int) (*Media, error) {
 	return nil, ErrNoStream
 }
 
-// pickVideo prefers AVC at the largest quality not above wantQN, otherwise the
-// smallest above it; among equals the lower bandwidth wins (cheaper to decode).
+// pickVideo takes the largest quality not above wantQN, otherwise the smallest above it. Within
+// one quality it prefers AVC over HEVC, then the lower bandwidth (cheaper to decode).
 func pickVideo(items []dashItem, wantQN int) *dashItem {
-	var avc []dashItem
+	var usable []dashItem
 	for _, it := range items {
-		if it.CodecID == 7 && len(it.urls()) > 0 {
-			avc = append(avc, it)
+		if (it.CodecID == codecAVC || it.CodecID == codecHEVC) && len(it.urls()) > 0 {
+			usable = append(usable, it)
 		}
 	}
-	if len(avc) == 0 {
+	if len(usable) == 0 {
 		return nil
 	}
-	sort.SliceStable(avc, func(i, j int) bool {
-		a, b := avc[i], avc[j]
+	sort.SliceStable(usable, func(i, j int) bool {
+		a, b := usable[i], usable[j]
 		aOK, bOK := a.ID <= wantQN, b.ID <= wantQN
 		switch {
 		case aOK != bOK:
@@ -168,10 +208,12 @@ func pickVideo(items []dashItem, wantQN int) *dashItem {
 			return a.ID > b.ID
 		case a.ID != b.ID:
 			return a.ID < b.ID
+		case a.CodecID != b.CodecID:
+			return a.CodecID == codecAVC
 		}
 		return a.Bandwidth < b.Bandwidth
 	})
-	return &avc[0]
+	return &usable[0]
 }
 
 func pickAudio(items []dashItem) *dashItem {

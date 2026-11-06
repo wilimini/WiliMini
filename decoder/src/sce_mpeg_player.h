@@ -175,8 +175,13 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
     return written;
 }
 
-static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) {
+/* One decoder session on one source: everything from opening the demuxer to freeing the sceMpeg
+ * objects. A soft reseek ends a segment early and the wrapper below starts the next one on a new
+ * source, so the player, its controls and the OSD keep running across a seek. */
+static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
+                                char *run_path, size_t run_path_size, int first_segment) {
     int ret = 0, initialized = 0, created = 0, constructed = 0, audio_started = 0;
+    unsigned segment_frames = 0; /* frames shown since this segment started */
     SceMpeg mpeg = NULL;
     SceMpegRingbuffer ring = {0};
     SceMpegStream *stream = NULL;
@@ -187,10 +192,12 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
     EmuMux mux = {0};
     uint8_t header[2048] __attribute__((aligned(64))) = {0};
     int stride = 0, width = 0, height = 0;
-    char run_path[192] = {0};
     video_stage = PSP_VIDEO_STAGE_LOG;
-    ret = select_run_dir(run_path, sizeof(run_path));
-    if (ret < 0) return ret;
+    if (first_segment) { /* one results folder and log for the whole session, whatever the seeks */
+        ret = select_run_dir(run_path, run_path_size);
+        if (ret < 0) return ret;
+    }
+    stats->eof = 0;
     video_stage = PSP_VIDEO_STAGE_SOURCE;
     const int emulator = psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
     const char *backend_name = emulator ? "ppsspp-sceMpeg" : "psp-sceMpeg";
@@ -291,8 +298,9 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
                      audio_io_source ? NULL : mux.format, "");
     if (ret < 0) goto done;
     video_stage = PSP_VIDEO_STAGE_PLAY;
+    playback_seeking = 0; /* a soft reseek is complete once the new segment can play; keys are live again */
     unsigned page = 0, empty = 0, no_data = 0;
-    while (!quit_requested) {
+    while (!quit_requested && !soft_reseek_request) {
         playback_operation_set("sce_ring_available");
         int available = sceMpegRingbufferAvailableSize(&ring);
         if (available < 0) { ret = available; break; }
@@ -346,7 +354,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         if (pts_us < playback_start_ms * 1000) continue;
         if (first_video_us < 0) first_video_us = pts_us;
         playback_operation_set("sce_audio_wait");
-        while (!quit_requested && !audio.error) {
+        while (!quit_requested && !soft_reseek_request && !audio.error) {
             int64_t clock = audio_clock_us();
             /* When audio ends before video, let the remaining video follow
              * the same epoch instead of waiting on a stopped audio clock. */
@@ -354,11 +362,11 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
                 clock = audio.first_pts_us + playback_now_us() - audio.epoch_us;
             int paused = playback_is_paused();
             if ((!paused && pts_us <= clock - source_origin_us(audio.format)) ||
-                (presenter && paused && !stats->total_frames)) break;
+                (presenter && paused && !segment_frames)) break;
             if (presenter && present_video(NULL, output_pixel_format) < 0) { ret = -113; break; }
             sceKernelDelayThreadCB(2000);
         }
-        if (quit_requested) break;
+        if (quit_requested || soft_reseek_request) break;
         if (audio.error) { ret = audio.error; break; }
         playback_operation_set("sce_scale");
         const size_t bpp = rgb_pixel_bytes;
@@ -396,6 +404,7 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
                 PSP_DISPLAY_SETBUF_IMMEDIATE);
         }
         page ^= 1;
+        ++segment_frames;
         ++stats->total_frames;
         playback_position_us = pts_us;
         if (stats->total_frames == 1 && video_io_source && video_io_source->first_frame)
@@ -443,6 +452,54 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         }
     }
     if (ret >= 0) video_stage = PSP_VIDEO_STAGE_NONE;
+    return ret;
+}
+
+/* Ask the client for a new source at the seek target. Called with the previous segment fully unwound:
+ * no thread reads the old sources, so the client may free them. Returns 0 or a negative error. */
+static int sce_reseek_source(const PspVideoOptions *options) {
+    const int64_t target = seek_target_ms;
+    const PspVideoSource *video = NULL, *audio = NULL;
+    /* psp_video_stop must not reach a stream the client is about to free. */
+    set_io_sources(NULL, NULL);
+    /* The new stream can take seconds to start; show the target and the buffering state meanwhile. */
+    if (presenter) present_video(NULL, output_pixel_format);
+    int ret = options->reopen(options->reopen_opaque, target, &video, &audio);
+    if (ret < 0) return ret;
+    if (!video) return -1;
+    set_io_sources(video, audio);
+    /* A stop that arrived while the sources were unset could not cancel the new ones. The stop sets
+     * quit_requested before it looks at the sources, so checking it after publishing them is enough. */
+    if (quit_requested) { cancel_io_sources(); return AVERROR_EXIT; }
+    /* The new stream's own clock starts at zero; the player shows timeline_offset_ms + elapsed. */
+    timeline_offset_ms = target > 0 ? target : 0;
+    playback_start_ms = 0;
+    playback_position_us = 0;
+    first_video_us = -1;
+    ++playback_seeks;
+    WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained reopen=1", playback_seeks, (long long)target);
+    return 0;
+}
+
+static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) {
+    char run_path[192] = {0};
+    int ret = 0, first = 1;
+    for (;;) {
+        ret = sce_mpeg_run_segment(options, stats, run_path, sizeof(run_path), first);
+        first = 0;
+        if (!soft_reseek_request || quit_requested) break;
+        /* The segment stopped because of a seek, so whatever error the cancelled reads caused is moot. */
+        soft_reseek_request = 0;
+        if (sce_reseek_source(options) < 0) {
+            /* No new stream: end the session the way a seek always has, and let the caller reopen. If
+             * the user left in the meantime, do not start a playback they just closed. */
+            if (!quit_requested) { seek_requested = 1; quit_requested = 1; }
+            ret = 0;
+            break;
+        }
+    }
+    soft_reseek_request = 0;
+    playback_seeking = 0;
     return ret;
 }
 #endif

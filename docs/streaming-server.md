@@ -32,14 +32,42 @@ must be updated), `wili-server logout` forgets the Bilibili account.
 |---|---|---|
 | API calls | HTTPS to Bilibili, WBI signed on the PSP | `http://<pc>:8787/p/<host>/<path>`, signed on the PC |
 | Account | cookies in `session.json` on the memory stick | on the PC; the PSP keeps nothing |
-| Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main profile (CAVLC) + AAC, up to 480×272, **decoded by the firmware's sceMpeg** |
-| Seeking | in place | the stream is reopened at the new time (`t=`), about a second of delay |
-| Quality menu | Bilibili qualities | fixed by *Stream quality* in Settings |
+| Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main profile (CAVLC) + AAC, always fitted into 480×272, **decoded by the firmware's sceMpeg** |
+| Seeking | in place | a new stream is requested at the new time (`t=`) while the player keeps running (see *Seeking* below) |
+| Quality menu | Bilibili qualities | none; the source tier is *Stream source* in Settings |
 | Live rooms | direct | API via the server, media still direct |
 
 Settings (`settings.json`): `stream_server`, `server_host`, `server_port`,
-`server_token` (plain text, like the Wi-Fi profile), `stream_preset`
-(`performance|balanced|quality`), `stream_profile` (`auto|cavlc|cabac`).
+`server_token` (plain text, like the Wi-Fi profile), `stream_quality` (the source tier, a
+number: 16, 32, 64, 74, 80, 112, 116 or 120; default 32), `stream_fps` (`auto|30`; `auto` allows
+up to 60 fps), `stream_preset` (the bitrate: `performance` 700 k, `balanced` 1000 k, `quality`
+1500 k), `stream_profile` (`auto|cavlc|cabac`). The picture is always 480×272; only the source,
+the frame-rate cap and the bitrate vary. Files from before these settings load with the old
+behaviour (480P source, frame rate left to the source).
+
+### Source quality and frame rate
+
+*Stream source* is the Bilibili tier the PC downloads, so the 60 fps tiers and 4K are
+available even though the PSP shows 480×272. The server decodes the source with ffmpeg and
+scales it down, so a higher tier costs the PC more CPU, not the PSP or the Wi-Fi.
+
+| Setting | `qn` | Notes |
+|---|---|---|
+| 360P / 480P / 720P | 16 / 32 / 64 | |
+| 720P60 | 74 | 60 fps; needs a signed-in account |
+| 1080P / 1080P+ | 80 / 112 | 1080P+ is the high-bitrate tier |
+| 1080P60 | 116 | needs a signed-in account (VIP on some videos) |
+| 4K | 120 | needs a signed-in account (VIP); often offered only as HEVC |
+
+The ids come from Bilibili's public API documentation and have not been checked against the
+live service from the development environment. A tier the account or video cannot get falls
+back to the best one below it (logged by the server as `source qn=…`). H.264 is preferred at
+a tier; HEVC is used when that is all Bilibili offers. AV1 is not used.
+
+The output frame rate is `min(source rate, cap)`; ffmpeg never adds frames. *Auto* caps at
+60 fps, *30 fps* halves the 60 fps tiers. Level 3.0 allows 480×272 at 60 fps, but the sceMpeg
+decoder's real-time limit at 60 fps and the Wi-Fi bitrate it needs are only known from a
+device; pick a bitrate with that in mind.
 
 ## Protocol (version 1)
 
@@ -61,9 +89,12 @@ refuses redirects off the allow-list, and forwards `Accept-Encoding` untouched.
 `--read-only` rejects POST.
 
 `/wili/v1/stream` query: `bvid` (or `pgc=1` for bangumi/film), `cid`, `t` (seconds),
-`profile` (`auto|cavlc|cabac`; `auto` is `cavlc`, both are Main profile), `w`, `h`, `fps`, `vb`, `ab` (kbps), `qn`. Output is
+`profile` (`auto|cavlc|cabac`; `auto` is `cavlc`, both are Main profile), `qn` (source tier,
+16 to 120), `fps` (frame-rate cap, 5 to 60, default 30), `vb`, `ab` (kbps). `w` and `h` are
+accepted and ignored: the picture is always fitted into 480×272. Output is
 `video/x-flv` without a duration, timestamps starting at 0, Main profile level 3.0, no
-B-frames, one reference frame, a two-second GOP, and a picture padded with black to a
+B-frames, one reference frame, a two-second GOP (counted at the frame rate actually produced),
+and a picture padded with black to a
 multiple of 16 in both directions (480×270 becomes 480×272), which the PSP decoder wants. Errors are JSON `{"error": code, "message": text}` with a
 status: `401 unauthorized`, `429 rate_limited`, `403 login_required`, `404 no_stream`,
 `503 busy|ffmpeg_missing`, `502 upstream`, `400 bad_request`. A client that starts a
@@ -86,7 +117,26 @@ Both only list servers; the token is still required. The wire formats are pinned
 - `client/server_discovery.{h,c}`: PSP sockets for discovery.
 - `client/bilibili.c` (`request()` rewrites URLs), `client/live_stream.c`
   (`bili_prepare_stream_server`), `client/playback.cpp`, `client/app_settings.cpp`.
-- `decoder`: `PspVideoOptions.restart_seek / timeline_offset_ms / timeline_duration_ms`.
+- `decoder`: `PspVideoOptions.restart_seek / timeline_offset_ms / timeline_duration_ms / reopen`.
+
+## Seeking
+
+The stream has no index, so the server cannot seek inside it: a seek asks for a new stream
+at `t=`. What the client does with it depends on `PspVideoOptions.reopen`:
+
+- **With `reopen`** (what the client sets for server streams on the sceMpeg backend): the
+  seek does not leave `psp_video_play`. The player stops reading, closes its demuxer, audio
+  and sceMpeg objects (`sce_mpeg_run_segment`), asks the client for a new stream at the target
+  (`App::reopenServerPlayback`), and starts the next segment on it. The controls, OSD,
+  presenter and the results folder stay up; the OSD shows the target position and the
+  buffering state. The wait is the server starting ffmpeg and sending the first frames.
+- **Without it, or if it fails** (server busy or unreachable): the session ends with
+  `seek_requested` set and the caller prepares the stream again, as before.
+
+Pressing back or HOME while the new stream is starting cancels it. This is implemented
+and has been read through, but it has **not been compiled or run**: it was written without a
+PSP toolchain. Real-device behaviour of the sceMpeg teardown and rebuild on every seek is
+unverified.
 
 ## Decoding with sceMpeg
 
@@ -128,8 +178,7 @@ packet checks and PSP packaging; playback on hardware still needs verification.
   accepts; the server's transcode is what is shaped for it. Turning *Stream server* on selects
   sceMpeg (turning the server off, or choosing another ME backend, goes back), and the server
   only plays after the restart.
-- Preset sizes and bitrates (384×216/700 k, 480×272/1000 k, 480×272/1500 k) are starting
-  points and need tuning on a PSP.
+- The bitrates (700 k, 1000 k, 1500 k) are starting points and need tuning on a PSP.
 - Bilibili may throttle or change its API; the proxy passes JSON through, so most changes
   need no client update, but WBI signing and login live on the server.
 - Cookie refresh is not implemented: when the session expires, sign in again.

@@ -110,6 +110,12 @@ void App::changeSetting() {
                 next.meBackend = next.meBackendBeforeStream;
             }
             break;
+        case SettingItem::StreamQuality:
+            next.streamQuality = wili_stream_quality_next(next.streamQuality);
+            break;
+        case SettingItem::StreamFps:
+            next.streamFps = next.streamFps == StreamFps::Auto ? StreamFps::Max30 : StreamFps::Auto;
+            break;
         case SettingItem::StreamPreset:
             next.streamPreset = next.streamPreset == StreamPreset::Performance ? StreamPreset::Balanced
                               : next.streamPreset == StreamPreset::Balanced ? StreamPreset::Quality
@@ -159,6 +165,8 @@ bool App::streamTarget(StreamTarget& target, long long startMs) const {
     if (!serverStreaming()) return false;
     target.server = preferences_.serverConfig();
     target.preset = static_cast<WiliStreamPreset>(preferences_.streamPreset);
+    target.sourceQn = preferences_.streamQuality;
+    target.maxFps = preferences_.streamFps == StreamFps::Max30 ? 30 : WILI_FPS_AUTO;
     target.profile = static_cast<WiliStreamProfile>(preferences_.streamProfile);
     target.startMs = startMs > 0 ? startMs : 0;
     return true;

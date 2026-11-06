@@ -50,6 +50,26 @@ void logMemory(const char* phase) {
 // True when the loader started no ME bridge; native-ME playback is then impossible.
 bool noMe = false;
 
+// Seeking a wili-server stream keeps the player running: it hands over the seek target and gets a
+// fresh stream back (see PspVideoOptions::reopen). The player has stopped reading the old stream,
+// which was cancelled to get here, so it is released first and two streams never hold memory at once.
+// On failure the old one stays released and the player falls back to ending the session, after which
+// seekPlayback() prepares the stream the long way (finishing an empty playback is harmless).
+int reopenServerStream(void* opaque, int64_t targetMs, const PspVideoSource** video, const PspVideoSource** audio) {
+    auto* app = static_cast<pspapp::App*>(opaque);
+    bili_finish_playback(&app->playback());
+    app->playback() = BiliPlayback{};
+    bili_stream_abort = psp_video_cancelled;
+    BiliPlayback fresh{};
+    const bool ok = app->reopenServerPlayback(targetMs, fresh);
+    bili_stream_abort = nullptr;
+    if (!ok) return -1;
+    app->playback() = fresh;
+    *video = bili_playback_source(&app->playback());
+    *audio = bili_playback_audio_source(&app->playback());
+    return *video ? 0 : -1;
+}
+
 int exitCallback(int, int, void*) {
     WLOG_I(WLC_CLIENT, "home_exit callback_enter playback_active=%d", playbackActive);
     exiting = 1;
@@ -235,6 +255,9 @@ int main(int argc, char** argv) {
             const BiliPlayback& prepared = app.playback();
             options.start_ms = prepared.restart_seek ? 0 : app.playbackStartMs();
             options.restart_seek = prepared.restart_seek;
+            // Only the sceMpeg backend can seek a restart stream without ending the session.
+            options.reopen = prepared.restart_seek ? reopenServerStream : nullptr;
+            options.reopen_opaque = &app;
             options.timeline_offset_ms = prepared.timeline_offset_ms;
             options.timeline_duration_ms = prepared.timeline_duration_ms;
             options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
