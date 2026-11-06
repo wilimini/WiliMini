@@ -179,6 +179,13 @@ a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures ba
 decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
 reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
 
+The calls follow what real PSP homebrew does (`pspdev/libpspav`): a 60-packet ring buffer refilled at
+most 32 packets per `sceMpegRingbufferPut`, both the video and the audio stream registered (no ATRAC data is
+ever sent; FFmpeg decodes the audio), and `sceMpegAvcDecodeStop` plus `sceMpegFlushAllStream` before the
+objects are torn down. An access unit has to fit in the ring (about 116 KB); a bigger keyframe is
+reported as an error naming the bitrate. On a deliberately hard test clip at the highest preset (1500 kbps)
+the largest keyframe was about 25 KB, so the limit should not be reached in practice.
+
 The PSMF header (`decoder/src/psmf_header.h`) follows a real one rather than only the fields PPSSPP
 reads. A real PMF is a 2048-byte header, then the program stream. The layout was decoded from the
 header template of the open-source `pmftools` converter (`mps2pmf/pmf.h`, which comes from Sony's UMD
