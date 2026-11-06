@@ -3,6 +3,7 @@
 #include <pspmpeg.h>
 #include <psp_runtime.h>
 #include <libavutil/intreadwrite.h>
+#include "psmf_header.h"
 
 /* Included by player.c to share source IO, cancellation and the AAC clock.
  *
@@ -271,13 +272,9 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         goto done;
     }
     created = 1;
-    /* A streaming PSMF header with one AVC stream. PS timestamps are 90 kHz,
-     * offset by one second like the first timestamp of a real PSMF file. */
-    memcpy(header,"PSMF0015",8); AV_WB32(header+8,2048); AV_WB32(header+12,0x7ffff800);
-    AV_WB32(header+0x56,90000);
-    AV_WB32(header+0x5c,0x7fffffff);
-    AV_WB16(header+0x80,1); header[0x82]=0xe0;
-    header[0x8e]=(width+15)/16; header[0x8f]=(height+15)/16;
+    /* A PSMF header laid out like a real one (see psmf_header.h). PS timestamps are 90 kHz, offset by
+     * one second like the first timestamp of a real PSMF file. */
+    psmf_build_header(header, width, height);
     SceInt32 offset;
     sceKernelDcacheWritebackRange(header, sizeof(header));
     ret = sceMpegQueryStreamOffset(&mpeg,header,&offset);

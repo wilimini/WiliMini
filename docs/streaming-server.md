@@ -179,6 +179,16 @@ a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures ba
 decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
 reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
 
+The PSMF header (`decoder/src/psmf_header.h`) follows a real one rather than only the fields PPSSPP
+reads. A real PMF is a 2048-byte header, then the program stream. The layout was decoded from the
+header template of the open-source `pmftools` converter (`mps2pmf/pmf.h`, which comes from Sony's UMD
+Stream Composer) and from PPSSPP's `sceMpeg.cpp`: version `0012`, the first and last timestamps as
+48-bit values at 0x54/0x5A and again at 0x6E/0x74, the mux rate at 0x60, two stream entries
+(video `E0`, audio `BD`) with their P-STD buffer values, and the block lengths at 0x50, 0x6A and 0x7C.
+The earlier header left most of these zero and said version `0015` with one stream. Whether the
+firmware cares is not known; PPSSPP does not check them, so only a PSP can tell
+(`tests/psmf_header_test.c` pins the layout).
+
 Each access unit also has a PSMF private-stream-2 (`0xBF`, channel `01 E0 00`)
 descriptor before its video PES packets. The descriptor supplies the complete Annex B
 frame length, including any SPS/PPS prepended to a keyframe. Ordinary MPEG-PS video
