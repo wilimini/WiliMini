@@ -1,7 +1,5 @@
 #include "ui.hpp"
-#ifdef BILI_UI_FRAME_STATS
 #include <wili_log.h>
-#endif
 #include "bitmap_font.hpp"
 #include "title_font.hpp"
 #include "comment_layout.hpp"
@@ -18,6 +16,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -98,14 +98,27 @@ std::string uiText(const pspapp::App& app, pspapp::TextId id,
 uint32_t commands[65536] __attribute__((aligned(16)));
 void* draw_buffer = nullptr;
 
+// A cover slot is decoded off the UI thread (see coverDecoderMain). The UI thread owns slot
+// allocation and only reads `pixels` while the state is Ready; the decoder publishes a result only
+// into a slot whose ticket still matches its request, so an evicted or reset slot drops the result.
+// Everything except reading Ready pixels happens under coverMutex.
+enum class CoverState : uint8_t { Empty, Loading, Ready, Failed };
+
 struct CoverSlot {
     std::string key;
     std::vector<uint32_t> pixels;
     int width = kCoverWidth, height = kCoverHeight;
+    CoverState state = CoverState::Empty;
+    unsigned ticket = 0;   // identifies the request that fills this slot; 0 when unused
+    unsigned lastUse = 0;  // coverFrame of the most recent lookup, for LRU eviction
 };
 
 CoverSlot covers[kMaxCovers];
-size_t next_cover = 0;
+std::mutex coverMutex;
+unsigned coverTicket = 0;
+// Incremented once per frame by the UI thread. Atomic so the UI thread never takes coverMutex just
+// to count frames: the decoder runs at a lower priority and the mutex has no priority inheritance.
+std::atomic<unsigned> coverFrame{0};
 
 struct JpegFailure {
     jpeg_error_mgr base;
@@ -135,17 +148,14 @@ void fillRect(int x, int y, int width, int height, uint32_t shade) {
     }
 }
 
-// Decoding a cover takes tens of milliseconds, so at most one is decoded per frame; the others
-// show their placeholder and appear on the next frames instead of freezing the first frame of a page.
-unsigned coverDecodesThisFrame = 0;
 #ifdef BILI_UI_FRAME_STATS
-// Per-frame cover cost (diagnostic): JPEG decode time and the per-frame pixel copy.
-uint64_t statCoverDecodeUs = 0, statCoverBlitUs = 0;
-unsigned statCoverDecodes = 0, statCoverBlits = 0;
+// Per-frame cover cost (diagnostic): the per-frame pixel copy. Decode time is logged by the decoder.
+uint64_t statCoverBlitUs = 0;
+unsigned statCoverBlits = 0;
 #endif
 
 void beginFrame() {
-    coverDecodesThisFrame = 0;
+    ++coverFrame;
     sceGuStart(GU_DIRECT, commands);
     sceGuDisable(GU_DEPTH_TEST);
     sceGuEnable(GU_BLEND);
@@ -312,28 +322,135 @@ bool loadJpeg(const std::string& path, std::vector<uint32_t>& pixels, int* fitWi
     return destinationRow == outputHeight;
 }
 
+// Decoding a cover takes tens of milliseconds, so it runs on a worker below the UI thread's
+// priority: a page of new covers shows placeholders and fills them in as each decode finishes,
+// instead of stalling the frame that first asks for them.
+struct CoverRequest {
+    int slot;
+    unsigned ticket;
+    int width, height;
+    std::string key;
+};
+
+std::vector<CoverRequest> coverPending;  // guarded by coverMutex
+SceUID coverDecoder = -1, coverWake = -1;
+bool coverDecoderQuit = false;           // guarded by coverMutex
+constexpr unsigned kCoverStaleFrames = 30;
+
+int coverDecoderMain(SceSize, void*) {
+    for (;;) {
+        sceKernelWaitSema(coverWake, 1, nullptr);
+        for (;;) {
+            CoverRequest request;
+            {
+                std::lock_guard<std::mutex> lock(coverMutex);
+                if (coverDecoderQuit) return 0;
+                if (coverPending.empty()) break;
+                request = std::move(coverPending.front());
+                coverPending.erase(coverPending.begin());
+                CoverSlot& slot = covers[request.slot];
+                if (slot.ticket != request.ticket) continue;  // evicted or reset while queued
+                if (coverFrame - slot.lastUse > kCoverStaleFrames) {
+                    // Scrolled away before the decode started: drop it, the next lookup requeues it.
+                    slot = CoverSlot{};
+                    continue;
+                }
+            }
+            char path[256]{};
+            std::snprintf(path, sizeof(path), "%s/cache/%s.jpg", CLIENT_ROOT, request.key.c_str());
+            std::vector<uint32_t> pixels;
+            bool ok = false;
+            const uint64_t start = sceKernelGetSystemTimeWide();
+            try {
+                ok = loadJpeg(path, pixels, nullptr, nullptr, request.width, request.height);
+            } catch (...) {
+                ok = false;
+            }
+            WLOG_D(WLC_UI, "cover decode key=%s size=%dx%d ok=%d us=%u", request.key.c_str(), request.width,
+                   request.height, ok ? 1 : 0, static_cast<unsigned>(sceKernelGetSystemTimeWide() - start));
+            std::lock_guard<std::mutex> lock(coverMutex);
+            CoverSlot& slot = covers[request.slot];
+            if (slot.ticket == request.ticket && slot.state == CoverState::Loading) {
+                if (ok) slot.pixels = std::move(pixels);
+                slot.state = ok ? CoverState::Ready : CoverState::Failed;
+            }
+        }
+    }
+}
+
+bool coverDecoderStart() {
+    if (coverDecoder >= 0) return true;
+    coverWake = sceKernelCreateSema("cover_decode", 0, 0, 64, nullptr);
+    if (coverWake < 0) { coverWake = -1; return false; }
+    {
+        std::lock_guard<std::mutex> lock(coverMutex);
+        coverDecoderQuit = false;
+    }
+    coverDecoder = sceKernelCreateThread("wilimini_cover_decode", coverDecoderMain, 0x26, 64 * 1024,
+                                         PSP_THREAD_ATTR_USER, nullptr);
+    if (coverDecoder < 0 || sceKernelStartThread(coverDecoder, 0, nullptr) < 0) {
+        if (coverDecoder >= 0) sceKernelDeleteThread(coverDecoder);
+        sceKernelDeleteSema(coverWake);
+        coverDecoder = coverWake = -1;
+        WLOG_W(WLC_UI, "cover decoder thread failed to start");
+        return false;
+    }
+    return true;
+}
+
+// Stops the worker and drops queued work. An in-flight decode takes tens of milliseconds, so the
+// wait is short; its result is discarded because every slot is reset by the callers.
+void coverDecoderStop() {
+    if (coverDecoder < 0) return;
+    {
+        std::lock_guard<std::mutex> lock(coverMutex);
+        coverDecoderQuit = true;
+        coverPending.clear();
+    }
+    sceKernelSignalSema(coverWake, 1);
+    SceUInt timeout = 2 * 1000 * 1000;
+    if (sceKernelWaitThreadEnd(coverDecoder, &timeout) < 0) {
+        WLOG_W(WLC_UI, "cover decoder did not stop in time; terminating it");
+        sceKernelTerminateDeleteThread(coverDecoder);
+    } else {
+        sceKernelDeleteThread(coverDecoder);
+    }
+    sceKernelDeleteSema(coverWake);
+    coverDecoder = coverWake = -1;
+}
+
+// Returns the slot only once its pixels are decoded; otherwise requests the decode and returns null,
+// which the caller draws as a placeholder.
 CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int height = kCoverHeight) {
     if (bvid.empty()) return nullptr;
-    for (auto& slot : covers) {
-        if (slot.key == bvid && slot.width == width && slot.height == height) return &slot;
+    if (coverDecoder < 0 && !coverDecoderStart()) return nullptr;
+    // Never wait on the decoder: if it holds the lock, show the placeholder for this frame.
+    std::unique_lock<std::mutex> lock(coverMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return nullptr;
+    int victim = -1;
+    for (int i = 0; i < kMaxCovers; ++i) {
+        CoverSlot& slot = covers[i];
+        if (slot.state != CoverState::Empty && slot.key == bvid && slot.width == width && slot.height == height) {
+            slot.lastUse = coverFrame;
+            return slot.state == CoverState::Ready ? &slot : nullptr;
+        }
+        if (slot.state == CoverState::Loading) continue;
+        if (slot.state == CoverState::Empty) { if (victim < 0 || covers[victim].state != CoverState::Empty) victim = i; continue; }
+        if (slot.lastUse == coverFrame) continue;  // drawn this frame: keep it
+        if (victim < 0 || (covers[victim].state != CoverState::Empty && slot.lastUse < covers[victim].lastUse)) victim = i;
     }
-    if (coverDecodesThisFrame >= 1) return nullptr;
-    ++coverDecodesThisFrame;
-    CoverSlot& slot = covers[next_cover++ % kMaxCovers];
+    if (victim < 0) return nullptr;  // every slot is busy or on screen; ask again next frame
+    CoverSlot& slot = covers[victim];
+    std::vector<uint32_t>().swap(slot.pixels);  // free the old image before the decoder allocates the new one
     slot.key = bvid;
-    slot.width = width; slot.height = height;
-    slot.pixels.clear();
-    char path[256]{};
-    std::snprintf(path, sizeof(path), "%s/cache/%s.jpg", CLIENT_ROOT, bvid.c_str());
-#ifdef BILI_UI_FRAME_STATS
-    const uint64_t decodeStart = sceKernelGetSystemTimeWide();
-#endif
-    if (!loadJpeg(path, slot.pixels, nullptr, nullptr, width, height)) slot.pixels.clear();
-#ifdef BILI_UI_FRAME_STATS
-    statCoverDecodeUs += sceKernelGetSystemTimeWide() - decodeStart;
-    ++statCoverDecodes;
-#endif
-    return &slot;
+    slot.width = width;
+    slot.height = height;
+    slot.state = CoverState::Loading;
+    slot.ticket = ++coverTicket;
+    slot.lastUse = coverFrame;
+    coverPending.push_back({victim, slot.ticket, width, height, bvid});
+    sceKernelSignalSema(coverWake, 1);
+    return nullptr;
 }
 
 void drawCover(const std::string& bvid, int x, int y, int width, int height, bool detailed = false,
@@ -2441,6 +2558,7 @@ void ui_startup_status(const char *message) {
 }
 
 void ui_shutdown() {
+    coverDecoderStop();
     bitmapFontShutdown();
     titleFontShutdown();
     sceGuTerm();
@@ -2448,12 +2566,11 @@ void ui_shutdown() {
 
 void ui_prepare_playback() {
     // Decoded covers are cheap to reload after playback and can otherwise keep
-    // nearly 1.8 MiB alive while FFmpeg needs reference pictures and RGB frames.
-    for (auto& cover : covers) {
-        cover.key.clear();
-        std::vector<uint32_t>().swap(cover.pixels);
-    }
-    next_cover = 0;
+    // nearly 1.8 MiB alive while FFmpeg needs reference pictures and RGB frames. The decoder thread
+    // and its stack are released too; the first cover lookup after playback starts it again.
+    coverDecoderStop();
+    std::lock_guard<std::mutex> lock(coverMutex);
+    for (auto& cover : covers) cover = CoverSlot{};
 }
 
 void ui_resume() {
@@ -2483,12 +2600,14 @@ void ui_dialog_present() {
 void ui_render(const pspapp::App& app) {
 #ifdef BILI_UI_FRAME_STATS
     const uint64_t statsStart = sceKernelGetSystemTimeWide();
-    statCoverDecodeUs = statCoverBlitUs = 0;
-    statCoverDecodes = statCoverBlits = 0;
+    statCoverBlitUs = 0;
+    statCoverBlits = 0;
 #endif
     applyPreferences(app.preferences());
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
+        // A reset slot has ticket 0, so a decode still in flight for it is discarded on publish.
+        std::lock_guard<std::mutex> lock(coverMutex);
         for (auto& cover : covers)
             if (app.completedCoverKey().empty() || cover.key == app.completedCoverKey())
                 cover = CoverSlot{};
@@ -2546,10 +2665,8 @@ void ui_render(const pspapp::App& app) {
         const char phase = hub ? (app.tileLaunching() ? 'L' : (nowMs - hubFx.enterMs < 500 ? 'E' : 'H'))
                          : (nowMs - pageFx.enterMs < 200 ? 'P' : 'S');
         WLOG_D(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
-        if (statCoverDecodes || statCoverBlits)
-            WLOG_D(WLC_CLIENT, "UICOVER decode_us=%u n=%u blit_us=%u n=%u",
-                   static_cast<unsigned>(statCoverDecodeUs), statCoverDecodes,
-                   static_cast<unsigned>(statCoverBlitUs), statCoverBlits);
+        if (statCoverBlits)
+            WLOG_D(WLC_CLIENT, "UICOVER blit_us=%u n=%u", static_cast<unsigned>(statCoverBlitUs), statCoverBlits);
     }
 #endif
     presentFrame();
