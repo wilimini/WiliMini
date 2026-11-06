@@ -33,8 +33,10 @@ typedef struct {
      * download. Called with 0 only after all old readers have joined. */
     void (*interrupt_reads)(void *opaque, int interrupted);
 } PspVideoSource;
+/* The most quality tiers one video can offer in the player's menu (Bilibili has eight). */
+#define PSP_VIDEO_QUALITY_MAX 8
 typedef struct {
-    int quality, quality_count, qualities[3];
+    int quality, quality_count, qualities[PSP_VIDEO_QUALITY_MAX]; /* ascending Bilibili quality ids */
     int danmaku_enabled, danmaku_density, danmaku_opacity;
     int subtitle_track, subtitle_count; /* 0 is off; tracks are 1-based. */
 } PspVideoSettings;
@@ -84,12 +86,15 @@ typedef struct {
     /* Optional, restart_seek streams on the SCE_MPEG backend only. With it a seek does not end the
      * session: the player stops reading, closes its decoder and demuxer, and calls reopen to get new
      * sources positioned at target_ms. The UI, controls, presenter and the session itself stay up.
-     * The callee must release the old sources (nothing reads them any more) and write the new ones to
-     * *video and *audio (audio may be NULL), valid until the next reopen or the end of the session.
+     * quality is the tier the user just picked in the quality menu (a seek to the current position), or
+     * 0 for a plain seek. The callee must release the old sources (nothing reads them any more) and
+     * write the new ones to *video and *audio (audio may be NULL), valid until the next reopen or the
+     * end of the session.
      * Return 0, or a negative value to fall back to the behaviour without this hook: the session ends
      * with seek_requested set and the caller reopens. It runs on the player thread and may block, but
      * should poll psp_video_cancelled() and give up once that is nonzero. */
-    int (*reopen)(void *opaque, int64_t target_ms, const PspVideoSource **video, const PspVideoSource **audio);
+    int (*reopen)(void *opaque, int64_t target_ms, int quality,
+                  const PspVideoSource **video, const PspVideoSource **audio);
     void *reopen_opaque;
 } PspVideoOptions;
 typedef enum {

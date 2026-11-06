@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -145,5 +146,25 @@ func TestAttemptsCarrySourceFPS(t *testing.T) {
 	got := Attempts(&bili.Media{Video: []string{"v"}, Audio: []string{"a"}, FPS: 60})
 	if len(got) != 1 || got[0].SourceFPS != 60 {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestQualityHeadersListWhatTheVideoOffers(t *testing.T) {
+	h := http.Header{}
+	setQualityHeaders(h, &bili.Media{QN: 80, Qualities: []int{16, 32, 64, 80, 116}})
+	if h.Get(HeaderQuality) != "80" || h.Get(HeaderQualities) != "16,32,64,80,116" {
+		t.Fatalf("%v", h)
+	}
+	// A muxed fallback has one quality and no list; no media means no headers at all.
+	h = http.Header{}
+	setQualityHeaders(h, &bili.Media{QN: 32})
+	if h.Get(HeaderQuality) != "32" || h.Get(HeaderQualities) != "" {
+		t.Fatalf("%v", h)
+	}
+	h = http.Header{}
+	setQualityHeaders(h, nil)
+	setQualityHeaders(h, &bili.Media{})
+	if len(h) != 0 {
+		t.Fatalf("%v", h)
 	}
 }

@@ -55,8 +55,10 @@ bool noMe = false;
 // which was cancelled to get here, so it is released first and two streams never hold memory at once.
 // On failure the old one stays released and the player falls back to ending the session, after which
 // seekPlayback() prepares the stream the long way (finishing an empty playback is harmless).
-int reopenServerStream(void* opaque, int64_t targetMs, const PspVideoSource** video, const PspVideoSource** audio) {
+int reopenServerStream(void* opaque, int64_t targetMs, int quality,
+                       const PspVideoSource** video, const PspVideoSource** audio) {
     auto* app = static_cast<pspapp::App*>(opaque);
+    if (quality > 0) app->rememberStreamQuality(quality); // picked in the quality menu
     bili_finish_playback(&app->playback());
     app->playback() = BiliPlayback{};
     bili_stream_abort = psp_video_cancelled;
@@ -316,7 +318,7 @@ int main(int argc, char** argv) {
         } else if (direction && now >= repeatAt) {
             // Repeat navigation only; held confirm/back must never activate twice.
             const bool adjustingSetting = app.screen() == pspapp::Screen::Settings &&
-                app.settingSelection() < static_cast<size_t>(pspapp::SettingItem::Wifi);
+                pspapp::settingAdjustable(app.currentSetting());
             // Settings values and comment like/replies must not fire repeatedly while held.
             pressed |= (adjustingSetting || app.commentPage()) ? direction & (PSP_CTRL_UP | PSP_CTRL_DOWN) : direction;
             repeatAt = now + (app.preferences().slowRepeat ? 180000 : 90000);
@@ -330,13 +332,16 @@ int main(int argc, char** argv) {
             if (pressed & backButton) app.back();
             else if (pressed & confirmButton) {
                 if (app.screen() == pspapp::Screen::Settings &&
-                    app.settingSelection() == static_cast<size_t>(pspapp::SettingItem::Wifi)) {
+                    app.currentSetting() == pspapp::SettingItem::Wifi) {
                     networkDialog();
                     app.setStatus(network_ready() ? "Wi-Fi 已连接" : "已返回 · 未连接 Wi-Fi");
                     previous = ~0u;
                 } else app.activate();
             } else if ((pressed & PSP_CTRL_TRIANGLE) && app.screen() == pspapp::Screen::Storage)
                 app.updateStorage();
+            else if ((pressed & PSP_CTRL_TRIANGLE) && app.screen() == pspapp::Screen::Settings &&
+                     app.settingsPage() == pspapp::SettingsPage::ServerSetup)
+                app.wizardAlt();
             else if (pressed & PSP_CTRL_UP) {
                 if (app.screen() == pspapp::Screen::LicenseText) ui_scroll_document(app, -1);
                 else app.moveSelection(0, -1);

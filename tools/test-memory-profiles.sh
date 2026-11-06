@@ -16,6 +16,10 @@ for frames in 2 8; do
         "$out/stream_server.o" -o "$out/preferences-$frames-test"
     "$out/preferences-$frames-test" "$out/settings-test.json" "$frames"
 done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient -I"$out/generated" -Ithird_party/nlohmann \
+    tests/settings_layout_test.cpp client/preferences.cpp client/memory_budget.cpp client/localization.cpp \
+    "$out/generated/localization.generated.cpp" "$out/stream_server.o" -o "$out/settings-layout-test"
+"$out/settings-layout-test"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/tile_layout_test.cpp -o "$out/tile-layout-test"
 "$out/tile-layout-test"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/comment_layout_test.cpp -o "$out/comment-layout-test"

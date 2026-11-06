@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -226,7 +227,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	attempts := Attempts(media)
 	var lastErr string
 	for i, in := range attempts {
-		started, serr := m.runFFmpeg(ctx, w, req, in, sess)
+		started, serr := m.runFFmpeg(ctx, w, req, in, sess, media)
 		if started {
 			m.event("stream", "#%d finished after %d KiB", sess.ID, sess.bytes.Load()/1024)
 			return
@@ -243,7 +244,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // runFFmpeg runs one attempt. It returns started=true once response bytes were
 // sent (after which a retry is impossible); otherwise it returns ffmpeg's last
 // complaint without having written anything.
-func (m *Manager) runFFmpeg(ctx context.Context, w http.ResponseWriter, req Request, in Inputs, sess *session) (started bool, problem string) {
+func (m *Manager) runFFmpeg(ctx context.Context, w http.ResponseWriter, req Request, in Inputs, sess *session, media *bili.Media) (started bool, problem string) {
 	cmd := exec.CommandContext(ctx, m.FFmpeg, BuildArgs(req, in, m.Bili.UA)...)
 	cmd.WaitDelay = 3 * time.Second
 	var errTail tailBuffer
@@ -289,6 +290,7 @@ func (m *Manager) runFFmpeg(ctx context.Context, w http.ResponseWriter, req Requ
 	h.Set("Content-Type", "video/x-flv")
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
+	setQualityHeaders(h, media)
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Time{}) // a long film must not hit a server write timeout
 	w.WriteHeader(http.StatusOK)
@@ -314,6 +316,27 @@ func (m *Manager) runFFmpeg(ctx context.Context, w http.ResponseWriter, req Requ
 		if err != nil {
 			return true, ""
 		}
+	}
+}
+
+// Headers that tell the PSP which tier this stream is and which others the video offers, so its
+// quality menu lists what this video really has (the tiers differ from video to video).
+const (
+	HeaderQuality   = "X-Wili-Quality"   // the tier being streamed
+	HeaderQualities = "X-Wili-Qualities" // comma-separated tiers the video can be played at
+)
+
+func setQualityHeaders(h http.Header, media *bili.Media) {
+	if media == nil || media.QN <= 0 {
+		return
+	}
+	h.Set(HeaderQuality, strconv.Itoa(media.QN))
+	if len(media.Qualities) > 0 {
+		parts := make([]string, len(media.Qualities))
+		for i, q := range media.Qualities {
+			parts[i] = strconv.Itoa(q)
+		}
+		h.Set(HeaderQualities, strings.Join(parts, ","))
 	}
 }
 

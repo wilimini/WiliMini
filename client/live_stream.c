@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define LIVE_CAPACITY (2 * 1024 * 1024)
 #define LIVE_LOOKBACK (64 * 1024)
@@ -22,6 +23,8 @@ struct BiliLiveStream {
   volatile int cancelled, ended, failed;
   volatile int status; /* HTTP status line seen, 0 until the headers arrive */
   char error[160];     /* start of a non-200 body, kept for the caller */
+  /* From X-Wili-Quality / X-Wili-Qualities: the tier streamed and the tiers this video offers. */
+  int quality, quality_count, qualities[PSP_VIDEO_QUALITY_MAX];
   SceUID lock, thread;
   LiveReader readers[2];
   PspVideoSource sources[2];
@@ -40,6 +43,18 @@ static size_t live_header(char *data, size_t size, size_t count, void *opaque) {
       code = code * 10 + (*p - '0');
     s->status = code; /* a redirect's final response overwrites the first */
     s->error[0] = 0;
+    s->quality = s->quality_count = 0;
+  } else {
+    const char *colon = memchr(data, ':', total);
+    if (colon) {
+      const size_t name = (size_t)(colon - data);
+      const char *value = colon + 1;
+      const size_t length = total - name - 1;
+      if (name == 14 && !strncasecmp(data, "X-Wili-Quality", 14))
+        s->quality = wili_parse_quality(value, length);
+      else if (name == 15 && !strncasecmp(data, "X-Wili-Qualities", 15))
+        s->quality_count = wili_parse_quality_list(value, length, s->qualities, PSP_VIDEO_QUALITY_MAX);
+    }
   }
   return total;
 }
@@ -269,7 +284,13 @@ int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_sta
   sceKernelSignalSema(s->lock, 1);
   const int status = s->status;
   if (http_status) *http_status = status;
-  if (written > 0 && status == 200) return 0;
+  if (written > 0 && status == 200) {
+    /* The tiers this particular video offers, for the player's quality menu. */
+    out->quality = s->quality;
+    out->quality_count = s->quality_count;
+    for (int i = 0; i < s->quality_count; ++i) out->qualities[i] = s->qualities[i];
+    return 0;
+  }
   if (error && error_cap) live_error_code(s, error, error_cap);
   bili_live_finish(s);
   memset(out, 0, sizeof(*out));

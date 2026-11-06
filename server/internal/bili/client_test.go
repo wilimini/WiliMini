@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -276,5 +277,26 @@ func TestPlayURLUGCSignsAndParses(t *testing.T) {
 	m, err := c.PlayURL(context.Background(), PlayRequest{BVID: "BV1xx", CID: 7})
 	if err != nil || m.Video[0] != "V" || m.Audio[0] != "A" {
 		t.Fatalf("%v %+v", err, m)
+	}
+}
+
+func TestSelectMediaListsOnlyTheTiersThisVideoOffers(t *testing.T) {
+	// Videos differ: this one has no 720P60 and its 1080P60 is HEVC-only; AV1-only and
+	// URL-less renditions are not playable and must not appear in the PSP's menu.
+	data := json.RawMessage(`{"dash":{
+	  "video":[
+	    {"id":80,"codecid":7,"base_url":"v80"},
+	    {"id":32,"codecid":7,"base_url":"v32"},
+	    {"id":32,"codecid":12,"base_url":"h32"},
+	    {"id":116,"codecid":12,"base_url":"h116"},
+	    {"id":120,"codecid":13,"base_url":"av1"},
+	    {"id":64,"codecid":7}],
+	  "audio":[{"id":30280,"base_url":"a"}]}}`)
+	m, err := SelectMedia(data, QN1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{32, 80, 116}; !slices.Equal(m.Qualities, want) || m.QN != 80 {
+		t.Fatalf("qualities %v (want %v) qn %d", m.Qualities, want, m.QN)
 	}
 }

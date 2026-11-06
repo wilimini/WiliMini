@@ -464,8 +464,9 @@ static int sce_reseek_source(const PspVideoOptions *options) {
     set_io_sources(NULL, NULL);
     /* The new stream can take seconds to start; show the target and the buffering state meanwhile. */
     if (presenter) present_video(NULL, output_pixel_format);
-    int ret = options->reopen(options->reopen_opaque, target, &video, &audio);
-    if (ret < 0) return ret;
+    int ret = options->reopen(options->reopen_opaque, target, quality_requested, &video, &audio);
+    if (ret < 0) return ret; /* quality_requested stays set: the caller reopens with it */
+    quality_requested = 0;
     if (!video) return -1;
     set_io_sources(video, audio);
     /* A stop that arrived while the sources were unset could not cancel the new ones. The stop sets

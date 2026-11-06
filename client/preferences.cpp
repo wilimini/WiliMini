@@ -30,19 +30,6 @@ const char* streamFpsCode(StreamFps fps) {
     return fps == StreamFps::Max30 ? "30" : "auto";
 }
 
-const char* streamQualityLabel(int qn) {
-    switch (qn) {
-        case WILI_QN_360P: return "360P";
-        case WILI_QN_720P: return "720P";
-        case WILI_QN_720P60: return "720P60";
-        case WILI_QN_1080P: return "1080P";
-        case WILI_QN_1080P_PLUS: return "1080P+";
-        case WILI_QN_1080P60: return "1080P60";
-        case WILI_QN_4K: return "4K";
-        default: return "480P";
-    }
-}
-
 const char* streamProfileCode(StreamProfile profile) {
     return profile == StreamProfile::Cavlc ? "cavlc" : profile == StreamProfile::Cabac ? "cabac" : "auto";
 }

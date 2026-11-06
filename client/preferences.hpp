@@ -7,36 +7,52 @@
 #include "stream_server.h"
 
 namespace pspapp {
+// Settings is a short list of pages, not one long list. Every row has one id; which ids a page shows
+// (and, on the engine page, which engine's rows) is decided in settings_layout.hpp.
+enum class SettingsPage : int { Main, Engine, Interface, Input, Diagnostics, ServerSetup };
+
+// How WiliMini plays video. On-device decodes on this PSP's Media Engine and talks to Bilibili itself;
+// PC stream asks wili-server on a PC to fetch and transcode, and decodes with the firmware's sceMpeg.
+enum class Engine : int { Device, Stream };
+
 enum class SettingItem : std::size_t {
+    // Main page: entries that open a page or screen.
+    GoEngine,
+    GoInterface,
+    GoInput,
+    Wifi,
+    CoverCache,
+    GoDiagnostics,
+    Help,
+    About,
+    // Playback engine page. Which of these show depends on the engine.
+    Engine,
+    MeBackend,
+    PlaybackBufferFrames,
+    PlaybackPixelFormat,
+    StreamSetup,
+    StreamTest,
+    StreamFps,
+    StreamPreset,
+    StreamProfile,
+    // Interface page.
     DarkTheme,
     HomeStyle,
     BodySize,
     ShowCovers,
     SlowRepeat,
-    PlaybackBufferFrames,
-    PlaybackPixelFormat,
-    MeBackend,
-    ConfirmWithCircle,
     Language,
+    // Input page.
+    ConfirmWithCircle,
     InputMethod,
+    // Diagnostics page.
     LogLevel,
     LogFiles,
-    StreamServer,
-    StreamFind,
-    StreamAddress,
-    StreamToken,
-    StreamQuality,
-    StreamFps,
-    StreamPreset,
-    StreamProfile,
-    StreamTest,
-    Wifi,
-    CoverCache,
-    Help,
-    About,
     Count
 };
 inline constexpr std::size_t settingsVisibleRows = 11;
+
+inline Engine engineOf(bool streamServer) { return streamServer ? Engine::Stream : Engine::Device; }
 
 // Values match ME_BACKEND_* in decoder/me/me_bridge.h and client/me_backend_select.h.
 // The bootstrap loads the matching bridge PRX, so a change applies on next launch.
@@ -73,8 +89,6 @@ enum class StreamFps : int { Auto = 0, Max30 = 30 };
 const char* streamPresetCode(StreamPreset preset);
 const char* streamProfileCode(StreamProfile profile);
 const char* streamFpsCode(StreamFps fps);
-// "480P", "1080P60", "4K"; the same in every language.
-const char* streamQualityLabel(int qn);
 
 struct Preferences {
     bool darkTheme = false;
@@ -99,6 +113,8 @@ struct Preferences {
     std::string serverHost;
     int serverPort = WILI_SERVER_PORT;
     std::string serverToken; // stored in plain text on the memory stick, like the Wi-Fi profile
+    // The tier last picked in the player's quality menu: the first one the next stream asks for. It is
+    // not a settings row, because which tiers exist differs from video to video.
     int streamQuality = WILI_QN_DEFAULT;
     StreamFps streamFps = StreamFps::Auto;
     StreamPreset streamPreset = StreamPreset::Balanced;
@@ -112,6 +128,8 @@ struct Preferences {
         return server;
     }
     bool serverReady() const { WiliServer s = serverConfig(); return wili_server_ready(&s) != 0; }
+    // Derived, not stored: the engine is "PC stream" exactly when the stream server is switched on.
+    Engine engine() const { return engineOf(streamServer); }
     bool tileHome() const { return homeStyle != HomeStyle::Classic; }
     bool metro() const { return homeStyle == HomeStyle::Metro; }
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in

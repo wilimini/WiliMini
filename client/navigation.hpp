@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "preferences.hpp"
 #include "services/community_service.hpp"
 #include "services/search_service.hpp"
 
@@ -111,8 +112,11 @@ struct BrowseRoute {
 struct LoginRoute { static constexpr Screen kind = Screen::Login; };
 struct SettingsRoute {
     static constexpr Screen kind = Screen::Settings;
-    size_t selection = 0;
+    SettingsPage page = SettingsPage::Main;
+    size_t selection = 0;  // row within the current page
     size_t scroll = 0;
+    size_t mainSelection = 0, mainScroll = 0;  // where the main page was left
+    int wizardStep = 0;    // ServerSetup: 0 find, 1 token, 2 test, 3 done
 };
 struct StorageRoute {
     static constexpr Screen kind = Screen::Storage;

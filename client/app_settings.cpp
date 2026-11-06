@@ -60,13 +60,79 @@ void App::openSettings() {
                          {{"confirm", preferences_.confirmButton()}});
 }
 
-void App::changeSetting() {
-    if (screen() != Screen::Settings || navigation_.get<SettingsRoute>().selection >=
-            static_cast<size_t>(SettingItem::Wifi)) return;
-    if (defaultPlaybackBufferFrames() == 2 &&
-        navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)) return;
+SettingItem App::currentSetting() const {
+    if (screen() != Screen::Settings) return SettingItem::Count;
+    const auto rows = settingRows();
+    const size_t selection = navigation_.get<SettingsRoute>().selection;
+    return selection < rows.size() ? rows[selection] : SettingItem::Count;
+}
+
+void App::openSettingsPage(SettingsPage page) {
+    auto& route = navigation_.get<SettingsRoute>();
+    if (route.page == SettingsPage::Main) {
+        route.mainSelection = route.selection;
+        route.mainScroll = route.scroll;
+    }
+    route.page = page;
+    route.selection = route.scroll = 0;
+    route.wizardStep = 0;
+    // The wizard starts by looking for a server, unless one is already chosen.
+    if (page == SettingsPage::ServerSetup && preferences_.serverHost.empty()) startServerFind();
+}
+
+bool App::settingsBack() {
+    auto& route = navigation_.get<SettingsRoute>();
+    if (route.page == SettingsPage::Main) return false;
+    if (route.page == SettingsPage::ServerSetup) {
+        if (route.wizardStep > 0) { --route.wizardStep; return true; }
+        // Back to the engine page, on the row that opened the wizard.
+        route.page = SettingsPage::Engine;
+        route.selection = route.scroll = 0;
+        const auto rows = settingRows();
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i] == SettingItem::StreamSetup) route.selection = i;
+        return true;
+    }
+    route.page = SettingsPage::Main;
+    route.selection = route.mainSelection;
+    route.scroll = route.mainScroll;
+    return true;
+}
+
+void App::setEngine(Engine engine) {
+    if (preferences_.engine() == engine) return;
     Preferences next = preferences_;
-    switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
+    if (engine == Engine::Stream) {
+        // Streaming is decoded by sceMpeg, which needs the ME to itself: select that backend now (the
+        // loader then starts no bridge after a restart) and go back to the chosen core when it is left.
+        if (next.meBackend != MeBackend::SceMpeg) next.meBackendBeforeStream = next.meBackend;
+        next.streamServer = true;
+        next.meBackend = MeBackend::SceMpeg;
+    } else {
+        next.streamServer = false;
+        if (next.meBackend == MeBackend::SceMpeg) next.meBackend = next.meBackendBeforeStream;
+    }
+    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
+        status_ = text(TextId::settings_save_failed, preferences_.locale);
+        return;
+    }
+    preferences_ = next;
+    applyServerConfig();
+    status_ = text(restartPending() ? TextId::stream_status_restart : TextId::settings_saved, preferences_.locale);
+}
+
+void App::changeSetting() {
+    const SettingItem item = currentSetting();
+    if (!settingAdjustable(item)) return;
+    if (defaultPlaybackBufferFrames() == 2 && item == SettingItem::PlaybackBufferFrames) return;
+    Preferences next = preferences_;
+    switch (item) {
+        case SettingItem::Engine:
+            setEngine(preferences_.engine() == Engine::Stream ? Engine::Device : Engine::Stream);
+            // Streaming with no server chosen yet: walk through setting one up.
+            if (preferences_.engine() == Engine::Stream && !preferences_.serverReady())
+                openSettingsPage(SettingsPage::ServerSetup);
+            return;
         case SettingItem::DarkTheme: next.darkTheme = !next.darkTheme; break;
         case SettingItem::HomeStyle:
             next.homeStyle = next.homeStyle == HomeStyle::Classic ? HomeStyle::Tiles
@@ -84,11 +150,9 @@ void App::changeSetting() {
                     ? PlaybackPixelFormat::Rgba8888 : PlaybackPixelFormat::Auto;
             break;
         case SettingItem::MeBackend:
-            next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore
-                           : next.meBackend == MeBackend::CustomCore ? MeBackend::SceMpeg : MeBackend::Mist;
-            // The stream server only works with sceMpeg; leaving it turns the server off.
-            if (next.meBackend != MeBackend::SceMpeg) next.streamServer = false;
-            else next.meBackendBeforeStream = MeBackend::CustomCore;
+            // The two ME cores. sceMpeg is not a core: it is what the PC stream engine selects.
+            next.meBackend = next.meBackend == MeBackend::CustomCore ? MeBackend::Mist : MeBackend::CustomCore;
+            next.meBackendBeforeStream = next.meBackend;
             break;
         case SettingItem::InputMethod:
             next.inputMethod = next.inputMethod == InputMethod::Pinyin ? InputMethod::System : InputMethod::Pinyin;
@@ -99,20 +163,6 @@ void App::changeSetting() {
                           : next.logLevel == LogVerbosity::Info ? LogVerbosity::Debug : LogVerbosity::Error;
             break;
         case SettingItem::LogFiles: next.saveLogFiles = !next.saveLogFiles; break;
-        case SettingItem::StreamServer:
-            next.streamServer = !next.streamServer;
-            // Streaming is decoded by sceMpeg, which needs the ME to itself: select that backend now
-            // (the loader then starts no bridge after a restart) and go back when it is switched off.
-            if (next.streamServer) {
-                if (next.meBackend != MeBackend::SceMpeg) next.meBackendBeforeStream = next.meBackend;
-                next.meBackend = MeBackend::SceMpeg;
-            } else if (next.meBackend == MeBackend::SceMpeg) {
-                next.meBackend = next.meBackendBeforeStream;
-            }
-            break;
-        case SettingItem::StreamQuality:
-            next.streamQuality = wili_stream_quality_next(next.streamQuality);
-            break;
         case SettingItem::StreamFps:
             next.streamFps = next.streamFps == StreamFps::Auto ? StreamFps::Max30 : StreamFps::Auto;
             break;
@@ -126,16 +176,10 @@ void App::changeSetting() {
                                : next.streamProfile == StreamProfile::Cavlc ? StreamProfile::Cabac
                                                                             : StreamProfile::Auto;
             break;
-        // Search / address / token / test only act on Confirm; see activateUtility().
-        case SettingItem::StreamFind:
-        case SettingItem::StreamAddress:
-        case SettingItem::StreamToken:
-        case SettingItem::StreamTest:
-            return;
-        case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         case SettingItem::Language:
             next.locale = next.locale == Locale::ZhHans ? Locale::EnUs : Locale::ZhHans;
             break;
+        case SettingItem::ConfirmWithCircle: next.confirmWithCircle = !next.confirmWithCircle; break;
         default: return;
     }
     if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
@@ -143,22 +187,23 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
-    const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
-    if (changed == SettingItem::HomeStyle) {
+    if (item == SettingItem::HomeStyle) {
         // Settings sits above the root, so the hub shows once this page is popped.
         hubOpen_ = preferences_.tileHome();
         hubSelection_ = 0;
     }
-    if (changed == SettingItem::LogLevel || changed == SettingItem::LogFiles) applyLogPreferences(preferences_);
-    if (changed == SettingItem::StreamServer) applyServerConfig();
-    const auto selected = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
-    status_ = selected == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
-            : selected == SettingItem::MeBackend && activeMeBackend_ != static_cast<int>(preferences_.meBackend)
+    if (item == SettingItem::LogLevel || item == SettingItem::LogFiles) applyLogPreferences(preferences_);
+    status_ = item == SettingItem::PlaybackBufferFrames ? text(TextId::settings_saved_buffer, preferences_.locale)
+            : item == SettingItem::MeBackend && restartPending()
                 ? text(TextId::settings_saved_me_backend, preferences_.locale)
             : text(TextId::settings_saved, preferences_.locale);
-    // The loader decides at start-up whether to load an ME bridge, so a change needs a restart.
-    if (selected == SettingItem::StreamServer && activeMeBackend_ != static_cast<int>(preferences_.meBackend))
-        status_ = text(TextId::stream_status_restart, preferences_.locale);
+}
+
+void App::rememberStreamQuality(int qn) {
+    if (!wili_stream_quality_valid(qn) || qn == preferences_.streamQuality) return;
+    Preferences next = preferences_;
+    next.streamQuality = qn;
+    if (savePreferences(CLIENT_PATH("/settings.json"), next)) preferences_ = next;
 }
 
 bool App::streamTarget(StreamTarget& target, long long startMs) const {
@@ -212,6 +257,7 @@ void App::startServerTest() {
 void App::runServerTest() {
     const Locale locale = preferences_.locale;
     stagedServerMessage_.clear();
+    stagedServerOk_ = false;
     char url[256];
     if (wili_server_hello_url(&jobServer_, url, sizeof(url)) != 0) {
         stagedServerMessage_ = text(TextId::stream_status_incomplete, locale);
@@ -251,11 +297,47 @@ void App::runServerTest() {
                 : formatText(TextId::stream_test_ffmpeg_bad, locale, {{"problem", ffmpeg.value("problem", std::string("?"))}});
             stagedServerMessage_ = formatText(TextId::stream_test_ok, locale,
                 {{"name", reply.at("name").get<std::string>()}, {"account", account}, {"codec", codec}});
+            stagedServerOk_ = ffmpeg.at("ok").get<bool>();
         }
     } catch (const std::exception&) {
         stagedServerMessage_ = text(TextId::stream_test_garbled, locale);
     }
     bili_http_free(response.text);
+}
+
+// Server setup wizard. 0 find, 1 token, 2 test, 3 done. Confirm moves on once a step has what it needs
+// and otherwise does that step's work; the alternate key (triangle) is the step's other action.
+void App::wizardConfirm() {
+    auto& route = navigation_.get<SettingsRoute>();
+    switch (route.wizardStep) {
+        case 0:
+            if (preferences_.serverHost.empty()) startServerFind();
+            else route.wizardStep = 1;
+            break;
+        case 1:
+            if (preferences_.serverToken.empty()) settingsInput_ = SettingsInput::Token;
+            else { route.wizardStep = 2; startServerTest(); }
+            break;
+        case 2:
+            if (serverTestOk_) route.wizardStep = 3;
+            else startServerTest();
+            break;
+        default:
+            if (preferences_.engine() != Engine::Stream) setEngine(Engine::Stream);
+            // Back to the engine page (the route may have been rebuilt by the engine switch).
+            navigation_.get<SettingsRoute>().wizardStep = 0;
+            settingsBack();
+            break;
+    }
+}
+
+void App::wizardAlt() {
+    switch (navigation_.get<SettingsRoute>().wizardStep) {
+        case 0: settingsInput_ = SettingsInput::Address; break;
+        case 1: settingsInput_ = SettingsInput::Token; break;
+        case 2: startServerTest(); break;
+        default: break;
+    }
 }
 
 void App::commitServerFind() {
@@ -279,6 +361,8 @@ void App::commitServerFind() {
     }
     preferences_ = next;
     applyServerConfig();
+    serverTestOk_ = false;
+    serverTestText_.clear();
     const std::string address = std::string(server.host) + ":" + std::to_string(server.port);
     const std::string name = server.name[0] ? server.name : address;
     status_ = stagedFound_.size() > 1
@@ -333,8 +417,16 @@ void App::submitSettingsInput(const std::string& raw) {
     }
     preferences_ = next;
     applyServerConfig();
+    serverTestOk_ = false; // the address or token changed, so the last test no longer applies
+    serverTestText_.clear();
     status_ = text(preferences_.streamServer && !preferences_.serverReady() ? TextId::stream_status_incomplete
                                                                            : TextId::settings_saved, preferences_.locale);
+    // A token typed in the wizard moves it straight on to the connection test.
+    if (kind == SettingsInput::Token && screen() == Screen::Settings && settingsPage() == SettingsPage::ServerSetup &&
+        navigation_.get<SettingsRoute>().wizardStep == 1 && !preferences_.serverToken.empty()) {
+        navigation_.get<SettingsRoute>().wizardStep = 2;
+        startServerTest();
+    }
 }
 
 std::string App::streamErrorMessage(const AppError& error) const {
@@ -377,19 +469,24 @@ std::string App::buildVersion() const {
 // Called by App::activate for the utility pages, without changing list selection.
 void App::activateUtility() {
     if (screen() == Screen::Settings) {
-        if (navigation_.get<SettingsRoute>().selection < static_cast<size_t>(SettingItem::Wifi)) {
-            switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
-                case SettingItem::StreamFind: startServerFind(); break;
-                case SettingItem::StreamTest: startServerTest(); break;
-                case SettingItem::StreamAddress: settingsInput_ = SettingsInput::Address; break;
-                case SettingItem::StreamToken: settingsInput_ = SettingsInput::Token; break;
-                default: changeSetting(); break;
-            }
-        } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::CoverCache)) {
-            navigation_.push<StorageRoute>();
-            updateStorage();
-        } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::Help)) navigation_.push<HelpRoute>();
-        else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::About)) navigation_.push<AboutRoute>();
+        if (settingsPage() == SettingsPage::ServerSetup) { wizardConfirm(); return; }
+        const SettingItem item = currentSetting();
+        switch (item) {
+            case SettingItem::GoEngine: case SettingItem::GoInterface: case SettingItem::GoInput:
+            case SettingItem::GoDiagnostics:
+                openSettingsPage(settingsPageFor(item));
+                break;
+            case SettingItem::StreamSetup: openSettingsPage(SettingsPage::ServerSetup); break;
+            case SettingItem::StreamTest: startServerTest(); break;
+            case SettingItem::CoverCache:
+                navigation_.push<StorageRoute>();
+                updateStorage();
+                break;
+            case SettingItem::Help: navigation_.push<HelpRoute>(); break;
+            case SettingItem::About: navigation_.push<AboutRoute>(); break;
+            case SettingItem::Wifi: break; // the system network dialog is opened by main.cpp
+            default: changeSetting(); break;
+        }
     } else if (screen() == Screen::About) {
         navigation_.push<LicensesRoute>();
     } else if (screen() == Screen::Licenses) {

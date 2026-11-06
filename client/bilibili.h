@@ -47,7 +47,7 @@ typedef struct {
     BiliRangeStream *video;
     BiliRangeStream *audio;
     BiliLiveStream *live;
-    int quality, quality_count, qualities[3];
+    int quality, quality_count, qualities[PSP_VIDEO_QUALITY_MAX];
     /* Server streams restart at the requested time instead of seeking in place.
      * Their own clock starts at 0, so the player adds the offset and takes the
      * duration from the hint (the stream has none). */

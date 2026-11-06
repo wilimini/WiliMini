@@ -80,6 +80,24 @@ static void test_rewrite(void) {
     }
 }
 
+static void test_quality_headers(void) {
+    int tiers[8];
+    CHECK(wili_parse_quality("80", 2) == 80 && wili_parse_quality(" 116\r\n", 6) == 116);
+    CHECK(wili_parse_quality("81", 2) == 0 && wili_parse_quality("", 0) == 0 && wili_parse_quality("8x", 2) == 0);
+    CHECK(wili_parse_quality("99999", 5) == 0 && wili_parse_quality(NULL, 0) == 0);
+    const char list[] = "16,32,64,80,116";
+    CHECK(wili_parse_quality_list(list, sizeof(list) - 1, tiers, 8) == 5);
+    CHECK(tiers[0] == 16 && tiers[3] == 80 && tiers[4] == 116);
+    /* Unknown ids and repeats are dropped, order is kept, and the capacity is respected. */
+    const char messy[] = "120, 32,,7,32 ,80,abc,16";
+    CHECK(wili_parse_quality_list(messy, sizeof(messy) - 1, tiers, 8) == 4);
+    CHECK(tiers[0] == 120 && tiers[1] == 32 && tiers[2] == 80 && tiers[3] == 16);
+    CHECK(wili_parse_quality_list(list, sizeof(list) - 1, tiers, 2) == 2 && tiers[1] == 32);
+    CHECK(wili_parse_quality_list(list, sizeof(list) - 1, tiers, 0) == 0);
+    const char all[] = "16,32,64,74,80,112,116,120";
+    CHECK(wili_parse_quality_list(all, sizeof(all) - 1, tiers, 8) == 8);
+}
+
 static void test_quality_tiers(void) {
     /* Ascending cycle through every tier that wraps, so Settings can step through them. */
     int qn = WILI_QN_360P, seen = 0;
@@ -188,7 +206,7 @@ static void test_discovery(const char *dir) {
 int main(int argc, char **argv) {
     if (argc < 2) { puts("usage: stream_server_test tests/data"); return 2; }
     test_address(); test_token(); test_rewrite(); test_stream_url(); test_discovery(argv[1]);
-    test_quality_tiers();
+    test_quality_tiers(); test_quality_headers();
     WiliStreamParams p = wili_stream_params(WILI_PRESET_BALANCED);
     CHECK(p.video_kbps == 1000 && p.audio_kbps == 96);
     CHECK(wili_stream_params(WILI_PRESET_PERFORMANCE).video_kbps == 700);

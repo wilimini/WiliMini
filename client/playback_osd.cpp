@@ -17,6 +17,17 @@ namespace pspapp {
 namespace {
 constexpr unsigned frameBytes = 512 * 272 * 4;
 void* vram(unsigned offset) { return reinterpret_cast<void*>(0x44000000u + offset); }
+// Bilibili quality tiers a video can offer, in menu order (WILI_QN_* in stream_server.h).
+struct QualityLabel { int qn; const char* en; const char* zh; };
+constexpr QualityLabel kQualityLabels[PSP_VIDEO_QUALITY_MAX] = {
+    {16, "360P", "360P 流畅"}, {32, "480P", "480P 清晰"}, {64, "720P", "720P 高清"},
+    {74, "720P60", "720P 60帧"}, {80, "1080P", "1080P 高清"}, {112, "1080P+", "1080P+ 高码率"},
+    {116, "1080P60", "1080P 60帧"}, {120, "4K", "4K 超清"}};
+int qualityIndex(int qn) {
+    for (int i = 0; i < PSP_VIDEO_QUALITY_MAX; ++i)
+        if (kQualityLabels[i].qn == qn) return i;
+    return 0;
+}
 void timestamp(char* value, size_t size, int64_t ms) {
     const auto seconds = std::max<int64_t>(0, ms) / 1000;
     if (seconds >= 3600)
@@ -45,10 +56,11 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
         for (unsigned y = 0; y < 20; ++y)
             std::memcpy(atlas_ + y * 512 + u, player_icons::alpha[i] + y * 20, 20);
     }
-    qualityNames_[0] = en ? "360P" : "360P 流畅";
-    qualityNames_[1] = en ? "480P" : "480P 清晰";
-    qualityNames_[2] = en ? "720P" : "720P 高清";
-    for (const auto& label : qualityNames_) cache(label);
+    for (int i = 0; i < PSP_VIDEO_QUALITY_MAX; ++i) {
+        qualityNames_[i] = en ? kQualityLabels[i].en : kQualityLabels[i].zh;
+        cache(qualityNames_[i]);
+        cache(kQualityLabels[i].en); // the footer shows the short form in both languages
+    }
     cache("P");
     cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
     for (const auto& label : menuLabels_) cache(label);
@@ -557,7 +569,7 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
             const int x = 276 + i * 64;
             const int category = categories[i];
             const bool focus = status.menu_open && (status.menu_row == category || (category == 1 && (status.menu_row == 2 || status.menu_row == 3)));
-            const char* quality = status.settings.quality == 64 ? "720P" : status.settings.quality == 32 ? "480P" : "360P";
+            const char* quality = kQualityLabels[qualityIndex(status.settings.quality)].en;
             text(x, 239, category == 0 ? std::string_view(quality) : std::string_view(menuLabels_[category]), focus ? pink : white, x + 62, 12);
             if (focus) rectangle(x, 260, 28, 2, pink);
         }
@@ -579,7 +591,10 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
         rectangle(286, 91, 166, 1, 0x55ffffff);
         const int row = status.menu_row;
         const int count = danmakuMenu ? 3 : row == 0 ? status.settings.quality_count : row == 1 ? 2 : row == 4 ? static_cast<int>(subtitles_.size()) + 1 : 3;
+        // Eight tiers do not fit at the usual spacing; the tier list tightens up to stay inside the panel.
+        const int rowStep = row == 0 && !danmakuMenu && count > 4 ? 112 / count : 25;
         for (int i = 0; i < count; ++i) {
+            const int y = 100 + i * rowStep;
             bool selected;
             std::string_view label;
             char opacity[12];
@@ -588,16 +603,16 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
                 label = i == 0 ? std::string_view(display_) : std::string_view(menuLabels_[i + 1]);
                 const auto value = i == 0 ? std::string_view(status.settings.danmaku_enabled ? on_ : off_) :
                     i == 1 ? std::string_view(density_[status.settings.danmaku_density]) : std::string_view();
-                if (i < 2) text(388, 100 + i * 25, value, muted, 439, 12);
+                if (i < 2) text(388, y, value, muted, 439, 12);
                 else {
                     std::snprintf(opacity, sizeof(opacity), "%d%%", status.settings.danmaku_opacity);
-                    text(388, 100 + i * 25, opacity, muted, 439, 12);
+                    text(388, y, opacity, muted, 439, 12);
                 }
             } else if (row == 0) {
                 // Display highest quality first; input still cycles through available streams.
                 const int quality = status.settings.qualities[count - i - 1];
                 selected = quality == status.quality_preview;
-                label = qualityNames_[quality == 64 ? 2 : quality == 32 ? 1 : 0];
+                label = qualityNames_[qualityIndex(quality)];
             } else if (row == 1) {
                 selected = status.settings.danmaku_enabled == (i == 0);
                 label = i == 0 ? on_ : off_;
@@ -613,8 +628,8 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
                 std::snprintf(opacity, sizeof(opacity), "%d%%", value);
                 label = opacity;
             }
-            text(286, 100 + i * 25, label, selected ? pink : muted, danmakuMenu ? 382 : 436, 13);
-            if (selected) rectangle(446, 107 + i * 25, 4, 4, pink);
+            text(286, y, label, selected ? pink : muted, danmakuMenu ? 382 : 436, 13);
+            if (selected) rectangle(446, y + 7, 4, 4, pink);
         }
         if (row == 4 && subtitles_.empty()) text(286, 132, overlayThread_ >= 0 && metadataCount_ < 0 ? overlayMessages_[3] : noSubtitles_, muted, 448, 12);
     }

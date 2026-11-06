@@ -62,6 +62,13 @@ typedef struct {
     int max_fps;        /* frame-rate cap; 0 leaves it to the server (30) */
 } WiliStreamRequest;
 
+/* Parses the server's "X-Wili-Qualities" header value ("16,32,64,80"): up to cap tier ids, each
+ * one of the WILI_QN_* tiers, in the order sent and without repeats. Anything else is skipped.
+ * Returns how many were stored. */
+int wili_parse_quality_list(const char *value, size_t length, int *out, int cap);
+/* The same for a single tier ("X-Wili-Quality"); 0 when it is not a known tier. */
+int wili_parse_quality(const char *value, size_t length);
+
 /* 1 for one of the WILI_QN_* tiers. */
 int wili_stream_quality_valid(int qn);
 /* The next tier in ascending order, wrapping from the highest to the lowest. An unknown value

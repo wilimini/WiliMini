@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,6 +82,9 @@ type Media struct {
 	Width  int
 	Height int
 	FPS    float64 // source frame rate; 0 when unknown
+	// Qualities lists every tier this video can be played at (ascending, one entry per tier),
+	// so the PSP can offer exactly those. Empty for a muxed fallback stream, which has one quality.
+	Qualities []int
 }
 
 // PlayRequest identifies what to play.
@@ -171,7 +175,8 @@ func SelectMedia(data json.RawMessage, wantQN int) (*Media, error) {
 	if dash != nil && len(dash.Video) > 0 {
 		video := pickVideo(dash.Video, wantQN)
 		if video != nil {
-			m := &Media{Video: video.urls(), QN: video.ID, Width: video.Width, Height: video.Height, FPS: video.fps()}
+			m := &Media{Video: video.urls(), QN: video.ID, Width: video.Width, Height: video.Height, FPS: video.fps(),
+				Qualities: playableTiers(dash.Video)}
 			if audio := pickAudio(dash.Audio); audio != nil {
 				m.Audio = audio.urls()
 			}
@@ -214,6 +219,21 @@ func pickVideo(items []dashItem, wantQN int) *dashItem {
 		return a.Bandwidth < b.Bandwidth
 	})
 	return &usable[0]
+}
+
+// playableTiers is the distinct quality ids of the renditions pickVideo could choose, ascending.
+func playableTiers(items []dashItem) []int {
+	var tiers []int
+	for _, it := range items {
+		if (it.CodecID != codecAVC && it.CodecID != codecHEVC) || len(it.urls()) == 0 {
+			continue
+		}
+		if !slices.Contains(tiers, it.ID) {
+			tiers = append(tiers, it.ID)
+		}
+	}
+	sort.Ints(tiers)
+	return tiers
 }
 
 func pickAudio(items []dashItem) *dashItem {

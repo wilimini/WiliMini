@@ -48,6 +48,22 @@ int main(void) {
     pc_input(&s, PC_BACK, 1500000); pc_input(&s, PC_CONFIRM, 1600000);
     assert(s.quality_index == 0); // Cancel discards preview.
     pc_input(&s, PC_UP, 1700000); assert(pc_input(&s, PC_CONFIRM, 1800000) == PC_QUALITY);
+    {   /* A video can offer every tier: the menu walks all eight, wraps, and picks the one chosen. */
+        static const int tiers[PSP_VIDEO_QUALITY_MAX] = {16, 32, 64, 74, 80, 112, 116, 120};
+        init(&s); s.settings.quality_count = PSP_VIDEO_QUALITY_MAX;
+        for (int i = 0; i < PSP_VIDEO_QUALITY_MAX; ++i) s.settings.qualities[i] = tiers[i];
+        s.settings.quality = 80; /* playing 1080P */
+        pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_CONFIRM, 1200000);
+        assert(s.menu_open == PC_MENU && s.quality_index == 4);
+        int64_t t = 1500000;
+        for (int i = 0; i < 3; ++i) { pc_input(&s, PC_UP, t += 100000); pc_input(&s, 0, t += 100000); } /* 112, 116, 120 */
+        assert(s.quality_index == 7);
+        pc_input(&s, PC_UP, t += 100000); pc_input(&s, 0, t += 100000);
+        assert(s.quality_index == 0); /* wraps to the lowest */
+        pc_input(&s, PC_DOWN, t += 100000); pc_input(&s, 0, t += 100000);
+        assert(s.quality_index == 7);
+        assert(pc_input(&s, PC_CONFIRM, t += 100000) == PC_QUALITY && s.settings.qualities[s.quality_index] == 120);
+    }
     init(&s); s.settings.subtitle_count = 2;
     pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_LEFT, 1200000);
     pc_input(&s, PC_CONFIRM, 1300000); pc_input(&s, PC_DOWN, 1400000);

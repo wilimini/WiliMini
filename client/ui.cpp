@@ -429,7 +429,13 @@ void drawFooter(const pspapp::App& app) {
     fillRect(0, 258, kWidth, 14, kBackground);
     std::string hint;
     if (app.utilityPage()) {
-        if (app.screen() == pspapp::Screen::Settings)
+        if (app.screen() == pspapp::Screen::Settings && app.settingsPage() == pspapp::SettingsPage::ServerSetup) {
+            const int step = app.wizardStep();
+            hint = uiText(app, step == 0 ? pspapp::TextId::hint_wizard_find
+                             : step == 1 ? pspapp::TextId::hint_wizard_token
+                             : step == 2 ? pspapp::TextId::hint_wizard_test : pspapp::TextId::hint_wizard_done,
+                          {{"confirm", confirm}, {"back", back}});
+        } else if (app.screen() == pspapp::Screen::Settings)
             hint = uiText(app, pspapp::TextId::hint_settings, {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::Storage)
             hint = uiText(app, app.clearingCovers() ? pspapp::TextId::hint_storage_confirm
@@ -2030,119 +2036,252 @@ void drawSearch(const pspapp::App& app) {
     }
 }
 
+pspapp::TextId settingLabelId(pspapp::SettingItem item) {
+    using I = pspapp::SettingItem;
+    using T = pspapp::TextId;
+    switch (item) {
+        case I::GoEngine: case I::Engine: return T::page_engine;
+        case I::GoInterface: return T::page_interface;
+        case I::GoInput: return T::page_input;
+        case I::GoDiagnostics: return T::page_diagnostics;
+        case I::Wifi: return T::settings_wifi;
+        case I::CoverCache: return T::settings_cover_cache;
+        case I::Help: return T::settings_help;
+        case I::About: return T::settings_about;
+        case I::MeBackend: return T::settings_me_backend;
+        case I::PlaybackBufferFrames: return T::settings_playback_buffer;
+        case I::PlaybackPixelFormat: return T::settings_playback_pixel_format;
+        case I::StreamSetup: return T::settings_stream_setup;
+        case I::StreamTest: return T::settings_stream_test;
+        case I::StreamFps: return T::settings_stream_fps;
+        case I::StreamPreset: return T::settings_stream_preset;
+        case I::StreamProfile: return T::settings_stream_profile;
+        case I::DarkTheme: return T::settings_theme;
+        case I::HomeStyle: return T::settings_home_style;
+        case I::BodySize: return T::settings_body_size;
+        case I::ShowCovers: return T::settings_covers;
+        case I::SlowRepeat: return T::settings_repeat;
+        case I::Language: return T::settings_language;
+        case I::ConfirmWithCircle: return T::settings_confirm_button;
+        case I::InputMethod: return T::settings_input_method;
+        case I::LogLevel: return T::settings_log_level;
+        case I::LogFiles: return T::settings_log_files;
+        default: return T::settings_header;
+    }
+}
+
+std::string serverAddress(const pspapp::Preferences& preferences) {
+    if (preferences.serverHost.empty()) return {};
+    return preferences.serverHost + (preferences.serverPort == WILI_SERVER_PORT
+                                         ? std::string() : ":" + std::to_string(preferences.serverPort));
+}
+
+std::string settingValueText(const pspapp::App& app, pspapp::SettingItem item) {
+    using I = pspapp::SettingItem;
+    using T = pspapp::TextId;
+    const auto& preferences = app.preferences();
+    const auto locale = preferences.locale;
+    switch (item) {
+        case I::GoEngine: case I::Engine: {
+            const std::string name = pspapp::text(preferences.engine() == pspapp::Engine::Stream
+                                                      ? T::value_engine_stream : T::value_engine_device, locale);
+            return app.restartPending() ? pspapp::formatText(T::value_engine_restart, locale, {{"engine", name}}) : name;
+        }
+        case I::GoInterface: case I::GoInput: case I::GoDiagnostics:
+            return pspapp::text(T::value_open, locale);
+        case I::Wifi: return pspapp::text(T::value_system_connect, locale);
+        case I::CoverCache: return pspapp::text(T::value_manage, locale);
+        case I::Help: case I::About: return pspapp::text(T::value_view, locale);
+        case I::MeBackend: {
+            const std::string backend = pspapp::text(
+                preferences.meBackend == pspapp::MeBackend::SceMpeg ? T::value_me_sce_mpeg
+                : preferences.meBackend == pspapp::MeBackend::CustomCore ? T::value_me_custom_core
+                                                                         : T::value_me_mist, locale);
+            // A saved change only takes effect after the loader picks the other bridge PRX.
+            return app.restartPending() ? pspapp::formatText(T::value_me_restart, locale, {{"backend", backend}})
+                                        : backend;
+        }
+        case I::PlaybackBufferFrames:
+            return pspapp::formatText(T::value_buffer, locale,
+                {{"frames", std::to_string(preferences.playbackBufferFrames)},
+                 {"memory", std::to_string(preferences.playbackBufferFrames *
+                     (pspapp::playbackUsesRgb565(preferences.playbackPixelFormat) ? 272 : 544))}});
+        case I::PlaybackPixelFormat:
+            return pspapp::text(preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Auto
+                    ? (pspapp::defaultPlaybackRgb565() ? T::value_pixel_auto_565 : T::value_pixel_auto_rgba8888)
+                : preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Rgb565
+                    ? T::value_pixel_565 : T::value_pixel_rgba8888, locale);
+        case I::StreamSetup: {
+            const std::string address = serverAddress(preferences);
+            return address.empty() ? std::string(pspapp::text(T::value_stream_unset, locale)) : address;
+        }
+        case I::StreamTest: return pspapp::text(T::value_stream_run, locale);
+        case I::StreamFps:
+            return pspapp::text(preferences.streamFps == pspapp::StreamFps::Max30 ? T::value_stream_fps_30
+                                                                                  : T::value_stream_fps_auto, locale);
+        case I::StreamPreset:
+            return pspapp::text(preferences.streamPreset == pspapp::StreamPreset::Performance
+                                    ? T::value_stream_preset_performance
+                                : preferences.streamPreset == pspapp::StreamPreset::Quality
+                                    ? T::value_stream_preset_quality : T::value_stream_preset_balanced, locale);
+        case I::StreamProfile:
+            return pspapp::text(preferences.streamProfile == pspapp::StreamProfile::Cavlc
+                                    ? T::value_stream_profile_cavlc
+                                : preferences.streamProfile == pspapp::StreamProfile::Cabac
+                                    ? T::value_stream_profile_cabac : T::value_stream_profile_auto, locale);
+        case I::DarkTheme:
+            return pspapp::text(preferences.darkTheme ? T::value_dark : T::value_light, locale);
+        case I::HomeStyle:
+            return pspapp::text(preferences.metro() ? T::value_home_metro
+                                : preferences.tileHome() ? T::value_home_tiles : T::value_home_classic, locale);
+        case I::BodySize: return std::to_string(preferences.bodySize) + " px";
+        case I::ShowCovers:
+            return pspapp::text(preferences.showCovers ? T::value_on_demand : T::value_off, locale);
+        case I::SlowRepeat:
+            return pspapp::text(preferences.slowRepeat ? T::value_slow : T::value_standard, locale);
+        case I::Language:
+            return pspapp::text(locale == pspapp::Locale::ZhHans ? T::value_language_zh : T::value_language_en, locale);
+        case I::ConfirmWithCircle:
+            return pspapp::formatText(T::value_confirm, locale, {{"button", preferences.confirmButton()}});
+        case I::InputMethod:
+            return pspapp::text(preferences.inputMethod == pspapp::InputMethod::Pinyin ? T::value_input_pinyin
+                                                                                      : T::value_input_system, locale);
+        case I::LogLevel:
+            return preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
+                 : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
+                 : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO";
+        case I::LogFiles:
+            return pspapp::text(preferences.saveLogFiles ? T::value_log_files_on : T::value_off, locale);
+        default: return {};
+    }
+}
+
+void drawSettingRow(const pspapp::Preferences& preferences, int y, bool selected,
+                    const std::string& label, const std::string& value) {
+    if (preferences.tileHome()) {
+        if (preferences.metro()) {
+            if (selected) drawSelection(33, y - 1, 436, 18, 0, kHeight);
+            drawText(39, y, 0.7f, kText, label, 250);
+            drawText(300, y, 0.7f, selected ? kPink : kTextDim, value, 168);
+        } else {
+            // Tiles style: the selected row becomes an accent tile.
+            if (selected) fillRect(33, y - 1, 436, 18, kTilePalette[0]);
+            drawText(39, y, 0.7f, selected ? color(255, 255, 255) : kText, label, 250);
+            drawText(300, y, 0.7f, selected ? color(255, 255, 255) : kTextDim, value, 168);
+        }
+        return;
+    }
+    if (selected) fillRect(33, y + 2, 2, 13, kPink);
+    drawText(39, y, 0.7f, kText, label, 250);
+    drawText(300, y, 0.7f, selected ? kPink : kTextDim, value, 168);
+}
+
+// Under the engine rows: where the server is (PC stream only), what the engine means, and the
+// restart notice when the engine has been changed but not yet applied.
+void drawEnginePanel(const pspapp::App& app, int y) {
+    using T = pspapp::TextId;
+    const auto& preferences = app.preferences();
+    const auto locale = preferences.locale;
+    if (preferences.engine() == pspapp::Engine::Stream) {
+        const std::string address = serverAddress(preferences);
+        drawText(39, y, 0.6f, address.empty() ? kPink : kText,
+                 address.empty() ? std::string(pspapp::text(T::engine_card_unset, locale))
+                                 : pspapp::formatText(T::engine_card_server, locale, {{"address", address}}), 428);
+        const std::string& test = app.serverTestText();
+        if (!test.empty()) drawText(39, y + 16, 0.5f, app.serverTestOk() ? kTextDim : kPink, test, 428);
+        y += 34;
+    }
+    if (app.restartPending()) {
+        drawWrapped(39, y, 0.5f, kPink, pspapp::text(T::engine_restart_banner, locale), 428, 2, 14);
+        return;
+    }
+    const pspapp::EngineCaps caps = pspapp::engineCaps(preferences.engine());
+    const std::string line = std::string(pspapp::text(caps.accountOnPsp ? T::caps_account_psp : T::caps_account_pc, locale)) +
+        " · " + pspapp::text(caps.usesMe ? T::caps_decode_me : T::caps_decode_pc, locale) +
+        " · " + pspapp::text(caps.seekInPlace ? T::caps_seek_in_place : T::caps_seek_reopens, locale);
+    drawWrapped(39, y, 0.5f, kTextDim, line, 428, 2, 14);
+}
+
+// The server setup wizard: find the server, enter the token, test, then switch the engine.
+void drawServerWizard(const pspapp::App& app) {
+    using T = pspapp::TextId;
+    const auto& preferences = app.preferences();
+    const auto locale = preferences.locale;
+    const int step = app.wizardStep();
+    drawText(39, 31, 0.5f, kTextDim, pspapp::text(T::page_server_setup, locale), 340);
+    drawText(382, 31, 0.5f, kTextDim,
+             std::to_string(step + 1) + " / " + std::to_string(pspapp::kServerWizardSteps), 85);
+    const T names[pspapp::kServerWizardSteps] = {T::wizard_step_find, T::wizard_step_token,
+                                                 T::wizard_step_test, T::wizard_step_done};
+    for (int i = 0; i < pspapp::kServerWizardSteps; ++i) {
+        const int x = 39 + i * 108;
+        drawText(x, 49, 0.7f, i == step ? kPink : i < step ? kText : kTextDim,
+                 std::to_string(i + 1) + " " + pspapp::text(names[i], locale), 104);
+    }
+    fillRect(39 + step * 108, 70, 100, 2, kPink);
+    fillRect(39, 73, 428, 1, kLine);
+    const std::string address = serverAddress(preferences);
+    const int y = 88;
+    if (step == 0) {
+        drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_find_title, locale), 428);
+        if (app.busy()) drawText(39, y + 30, 0.6f, kTextDim, pspapp::text(T::stream_searching, locale), 428);
+        else if (!address.empty())
+            drawText(39, y + 30, 0.6f, kText, pspapp::formatText(T::wizard_find_found, locale, {{"address", address}}), 428);
+        else drawWrapped(39, y + 30, 0.5f, kPink, pspapp::text(T::wizard_find_none, locale), 428, 3, 15);
+    } else if (step == 1) {
+        drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_token_title, locale), 428);
+        drawWrapped(39, y + 30, 0.5f, kTextDim, pspapp::text(T::wizard_token_help, locale), 428, 3, 15);
+        if (!preferences.serverToken.empty())
+            drawText(39, y + 82, 0.6f, kText, pspapp::text(T::wizard_token_set, locale), 428);
+    } else if (step == 2) {
+        drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_test_title, locale), 428);
+        if (app.busy()) drawText(39, y + 30, 0.6f, kTextDim, pspapp::text(T::wizard_test_running, locale), 428);
+        else drawWrapped(39, y + 30, 0.5f, app.serverTestOk() ? kText : kPink,
+                         app.serverTestText().empty() ? std::string(pspapp::text(T::stream_status_incomplete, locale))
+                                                      : app.serverTestText(), 428, 4, 15);
+    } else {
+        drawText(39, y, 0.7f, kText, pspapp::text(T::wizard_done_title, locale), 428);
+        if (!address.empty()) drawText(39, y + 30, 0.6f, kTextDim, address, 428);
+        if (preferences.engine() == pspapp::Engine::Stream) {
+            drawText(39, y + 52, 0.6f, kText, pspapp::text(T::wizard_done_already, locale), 428);
+            if (app.restartPending())
+                drawWrapped(39, y + 74, 0.5f, kPink, pspapp::text(T::engine_restart_banner, locale), 428, 2, 15);
+        } else {
+            drawText(39, y + 52, 0.6f, kText,
+                     pspapp::formatText(T::wizard_done_enable, locale, {{"confirm", preferences.confirmButton()}}), 428);
+            drawWrapped(39, y + 74, 0.5f, kPink, pspapp::text(T::wizard_done_restart, locale), 428, 2, 15);
+        }
+    }
+}
+
+void drawSettings(const pspapp::App& app) {
+    using pspapp::SettingsPage;
+    using T = pspapp::TextId;
+    const auto& preferences = app.preferences();
+    const auto locale = preferences.locale;
+    const SettingsPage page = app.settingsPage();
+    if (page == SettingsPage::ServerSetup) { drawServerWizard(app); return; }
+    const auto rows = app.settingRows();
+    const T title = page == SettingsPage::Engine ? T::page_engine
+                  : page == SettingsPage::Interface ? T::page_interface
+                  : page == SettingsPage::Input ? T::page_input
+                  : page == SettingsPage::Diagnostics ? T::page_diagnostics : T::settings_header;
+    drawText(39, 31, 0.5f, kTextDim, pspapp::text(title, locale), 340);
+    drawText(382, 31, 0.5f, kTextDim,
+             std::to_string(app.settingSelection() + 1) + " / " + std::to_string(rows.size()), 85);
+    const size_t end = std::min(rows.size(), app.settingsScroll() + pspapp::settingsVisibleRows);
+    int y = 49;
+    for (size_t i = app.settingsScroll(); i < end; ++i, y += 18)
+        drawSettingRow(preferences, y, app.settingSelection() == i,
+                       pspapp::text(settingLabelId(rows[i]), locale), settingValueText(app, rows[i]));
+    if (page == SettingsPage::Engine) drawEnginePanel(app, y + 6);
+}
+
 void drawUtility(const pspapp::App& app) {
     using pspapp::Screen;
     const auto locale = app.preferences().locale;
     if (app.screen() == Screen::Settings) {
-        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::settings_header, locale), 340);
-        drawText(382, 31, 0.5f, kTextDim,
-                 std::to_string(app.settingSelection() + 1) + " / " +
-                     std::to_string(static_cast<size_t>(pspapp::SettingItem::Count)), 85);
-        const pspapp::TextId labels[] = {
-            pspapp::TextId::settings_theme, pspapp::TextId::settings_home_style,
-            pspapp::TextId::settings_body_size,
-            pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
-            pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
-            pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
-            pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
-            pspapp::TextId::settings_log_level,
-            pspapp::TextId::settings_log_files,
-            pspapp::TextId::settings_stream_server, pspapp::TextId::settings_stream_find,
-            pspapp::TextId::settings_stream_address, pspapp::TextId::settings_stream_token,
-            pspapp::TextId::settings_stream_quality, pspapp::TextId::settings_stream_fps,
-            pspapp::TextId::settings_stream_preset, pspapp::TextId::settings_stream_profile,
-            pspapp::TextId::settings_stream_test, pspapp::TextId::settings_wifi,
-            pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
-            pspapp::TextId::settings_about};
-        const auto& preferences = app.preferences();
-        const std::string meBackend = pspapp::text(
-            preferences.meBackend == pspapp::MeBackend::SceMpeg ? pspapp::TextId::value_me_sce_mpeg
-            : preferences.meBackend == pspapp::MeBackend::CustomCore ? pspapp::TextId::value_me_custom_core
-                                                                     : pspapp::TextId::value_me_mist, locale);
-        // A saved change only takes effect after the loader picks the other bridge PRX.
-        const bool meRestart = app.activeMeBackend() >= 0 &&
-            app.activeMeBackend() != static_cast<int>(preferences.meBackend);
-        const std::string streamAddress = preferences.serverHost.empty()
-            ? std::string(pspapp::text(pspapp::TextId::value_stream_unset, locale))
-            : preferences.serverHost + (preferences.serverPort == WILI_SERVER_PORT
-                                            ? std::string() : ":" + std::to_string(preferences.serverPort));
-        const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
-                                                                         : pspapp::TextId::value_light, locale),
-            pspapp::text(preferences.metro() ? pspapp::TextId::value_home_metro
-                         : preferences.tileHome() ? pspapp::TextId::value_home_tiles
-                                                  : pspapp::TextId::value_home_classic, locale),
-            std::to_string(preferences.bodySize) + " px",
-            pspapp::text(preferences.showCovers ? pspapp::TextId::value_on_demand
-                                               : pspapp::TextId::value_off, locale),
-            pspapp::text(preferences.slowRepeat ? pspapp::TextId::value_slow
-                                                : pspapp::TextId::value_standard, locale),
-            pspapp::formatText(pspapp::TextId::value_buffer, locale,
-                {{"frames", std::to_string(preferences.playbackBufferFrames)},
-                 {"memory", std::to_string(preferences.playbackBufferFrames *
-                     (pspapp::playbackUsesRgb565(preferences.playbackPixelFormat) ? 272 : 544))}}),
-            pspapp::text(preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Auto
-                    ? (pspapp::defaultPlaybackRgb565() ? pspapp::TextId::value_pixel_auto_565
-                                                       : pspapp::TextId::value_pixel_auto_rgba8888)
-                : preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Rgb565
-                    ? pspapp::TextId::value_pixel_565 : pspapp::TextId::value_pixel_rgba8888, locale),
-            meRestart ? pspapp::formatText(pspapp::TextId::value_me_restart, locale, {{"backend", meBackend}})
-                      : meBackend,
-            pspapp::formatText(pspapp::TextId::value_confirm, locale,
-                {{"button", preferences.confirmButton()}}),
-            pspapp::text(locale == pspapp::Locale::ZhHans ? pspapp::TextId::value_language_zh
-                                                          : pspapp::TextId::value_language_en, locale),
-            pspapp::text(preferences.inputMethod == pspapp::InputMethod::Pinyin ? pspapp::TextId::value_input_pinyin
-                                                                                : pspapp::TextId::value_input_system, locale),
-            preferences.logLevel == pspapp::LogVerbosity::Error ? "ERROR"
-                : preferences.logLevel == pspapp::LogVerbosity::Warn ? "WARN"
-                : preferences.logLevel == pspapp::LogVerbosity::Debug ? "DEBUG" : "INFO",
-            pspapp::text(preferences.saveLogFiles ? pspapp::TextId::value_log_files_on : pspapp::TextId::value_off, locale),
-            pspapp::text(preferences.streamServer ? pspapp::TextId::value_stream_on : pspapp::TextId::value_off, locale),
-            pspapp::text(pspapp::TextId::value_stream_search, locale),
-            streamAddress,
-            pspapp::text(preferences.serverToken.empty() ? pspapp::TextId::value_stream_unset
-                                                         : pspapp::TextId::value_stream_token_set, locale),
-            pspapp::streamQualityLabel(preferences.streamQuality),
-            pspapp::text(preferences.streamFps == pspapp::StreamFps::Max30 ? pspapp::TextId::value_stream_fps_30
-                                                                           : pspapp::TextId::value_stream_fps_auto, locale),
-            pspapp::text(preferences.streamPreset == pspapp::StreamPreset::Performance
-                             ? pspapp::TextId::value_stream_preset_performance
-                         : preferences.streamPreset == pspapp::StreamPreset::Quality
-                             ? pspapp::TextId::value_stream_preset_quality
-                             : pspapp::TextId::value_stream_preset_balanced, locale),
-            pspapp::text(preferences.streamProfile == pspapp::StreamProfile::Cavlc
-                             ? pspapp::TextId::value_stream_profile_cavlc
-                         : preferences.streamProfile == pspapp::StreamProfile::Cabac
-                             ? pspapp::TextId::value_stream_profile_cabac
-                             : pspapp::TextId::value_stream_profile_auto, locale),
-            pspapp::text(pspapp::TextId::value_stream_run, locale),
-            pspapp::text(pspapp::TextId::value_system_connect, locale),
-            pspapp::text(pspapp::TextId::value_manage, locale),
-            pspapp::text(pspapp::TextId::value_view, locale),
-            pspapp::text(pspapp::TextId::value_view, locale)};
-        const size_t end = std::min(static_cast<size_t>(pspapp::SettingItem::Count),
-                                    app.settingsScroll() + pspapp::settingsVisibleRows);
-        for (size_t i = app.settingsScroll(); i < end; ++i) {
-            const int y = 49 + static_cast<int>(i - app.settingsScroll()) * 18;
-            const bool selected = app.settingSelection() == i;
-            if (preferences.tileHome()) {
-                // Tile theme: the selected row becomes an accent tile.
-                if (preferences.metro()) {
-                    if (selected) drawSelection(33, y - 1, 436, 18, 0, kHeight);
-                    drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
-                    drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
-                } else {
-                    // Tiles style: the selected row becomes an accent tile.
-                    if (selected) fillRect(33, y - 1, 436, 18, kTilePalette[0]);
-                    drawText(39, y, 0.7f, selected ? color(255, 255, 255) : kText, pspapp::text(labels[i], locale), 250);
-                    drawText(300, y, 0.7f, selected ? color(255, 255, 255) : kTextDim, values[i], 168);
-                }
-                continue;
-            }
-            if (selected) fillRect(33, y + 2, 2, 13, kPink);
-            drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
-            drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
-        }
+        drawSettings(app);
     } else if (app.screen() == Screen::Storage) {
         drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::storage_title, locale), 428);
         drawText(39, 60, 0.7f, kText, pspapp::text(pspapp::TextId::storage_cover_count, locale), 260);

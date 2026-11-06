@@ -110,9 +110,7 @@ int prepareServerPlayback(const BiliVideo& video, bool pgc, const StreamTarget& 
     playback.restart_seek = 1;
     playback.timeline_offset_ms = stream.startMs;
     playback.timeline_duration_ms = video.duration > 0 ? static_cast<long long>(video.duration) * 1000 : 0;
-    // The source tier comes from Settings (Stream source); the on-screen quality menu has nothing to offer.
-    playback.quality = 0;
-    playback.quality_count = 0;
+    // The quality menu lists the tiers this video offers, as reported by the server (live_stream.c).
     liveLog("server stream ready offset=%lld", stream.startMs);
     return 0;
 }

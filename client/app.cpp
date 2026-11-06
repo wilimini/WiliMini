@@ -541,15 +541,16 @@ void App::moveSelection(int dx, int dy) {
     if (utilityPage()) {
         if (screen() == Screen::Settings) {
             auto &settings = navigation_.get<SettingsRoute>();
-            if (dy) {
+            if (settings.page == SettingsPage::ServerSetup) return; // the wizard has steps, not rows
+            const int rows = static_cast<int>(settingRows().size());
+            if (dy && rows > 0) {
                 settings.selection = static_cast<size_t>(std::max(0, std::min(
-                    static_cast<int>(SettingItem::Count) - 1,
-                    static_cast<int>(settings.selection) + dy)));
+                    rows - 1, static_cast<int>(settings.selection) + dy)));
                 if (settings.selection < settings.scroll) settings.scroll = settings.selection;
                 else if (settings.selection >= settings.scroll + settingsVisibleRows)
                     settings.scroll = settings.selection - settingsVisibleRows + 1;
             }
-            else if (dx && settings.selection < static_cast<size_t>(SettingItem::Wifi)) changeSetting();
+            else if (dx && settingAdjustable(currentSetting())) changeSetting();
         } else if (screen() == Screen::Licenses && dy) {
             auto &selected = navigation_.get<LicensesRoute>().selection;
             selected = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1,
@@ -774,6 +775,7 @@ void App::back() {
         }
         return;
     }
+    if (screen() == Screen::Settings && settingsBack()) return; // wizard step or sub-page, not the screen
     if (screen() == Screen::Browse && browseState().confirmingDelete) {
         browseState().confirmingDelete = false;
         status_ = "已取消删除";
@@ -1582,6 +1584,8 @@ void App::commitJob() {
         commitServerFind();
     } else if (job_ == Job::ServerTest) {
         status_ = stagedServerMessage_;
+        serverTestText_ = stagedServerMessage_;
+        serverTestOk_ = stagedServerOk_;
     } else if (job_ == Job::Play || job_ == Job::CommunityPlay) {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;
@@ -1921,6 +1925,7 @@ void App::runJob() {
 
 void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
     if (quality) playbackQuality_ = quality;
+    if (quality && serverStreaming()) rememberStreamQuality(quality);
     // Decoder and all source readers have joined. Cancelled range sources
     // cannot be reused; prepare fresh ones through the existing worker.
     bili_finish_playback(&playback_);

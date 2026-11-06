@@ -149,8 +149,6 @@ int main(int argc, char** argv) {
            serverRestored.streamPreset == pspapp::StreamPreset::Quality &&
            serverRestored.streamProfile == pspapp::StreamProfile::Cabac &&
            serverRestored.streamQuality == WILI_QN_1080P60 && serverRestored.streamFps == pspapp::StreamFps::Max30);
-    assert(std::string(pspapp::streamQualityLabel(WILI_QN_1080P60)) == "1080P60" &&
-           std::string(pspapp::streamQualityLabel(WILI_QN_4K)) == "4K");
     {
         const WiliServer config = serverRestored.serverConfig();
         assert(config.enabled == 1 && config.port == 9000 && std::string(config.host) == "192.168.1.20" &&

@@ -19,11 +19,14 @@ exactly as before.
    pairing **token**. Allow it through the PC's firewall (TCP 8787, UDP 5353 and 47612).
 4. Optional: `wili-server login` shows a QR code to scan with the Bilibili app. Without
    an account you get guest quality. You can also sign in from the PSP's own login page.
-5. On the PSP: *Settings → Stream server*
-   - **Find server on network** (mDNS + UDP beacon) fills in the address, or use
-     **Server address** (`192.168.1.20` or `192.168.1.20:8787`);
-   - **Pairing token**: type the token the server printed;
-   - turn **Stream server** on, then **Test connection**.
+5. On the PSP: *Settings → Playback engine*, set the engine to **PC stream**. With no server
+   chosen yet, the setup wizard opens (it is also *Change server…* on that page):
+   1. **Find**: searches the network (mDNS + UDP beacon) and fills in the address; press △ to type
+      one instead (`192.168.1.20` or `192.168.1.20:8787`);
+   2. **Token**: type the token the server printed;
+   3. **Test**: checks the server, its ffmpeg and the Bilibili login;
+   4. **Done**: switches the engine. The engine is chosen when WiliMini starts, so quit (START) and
+      reopen it; until then the page shows *restart needed* and the current engine keeps working.
 
 `wili-server token` prints the token, `wili-server token --new` replaces it (the PSP
 must be updated), `wili-server logout` forgets the Bilibili account.
@@ -36,24 +39,45 @@ must be updated), `wili-server logout` forgets the Bilibili account.
 | Account | cookies in `session.json` on the memory stick | on the PC; the PSP keeps nothing |
 | Video | DASH ranges decoded by the ME decoder | one FLV: H.264 Main profile (CAVLC) + AAC, always fitted into 480×272, **decoded by the firmware's sceMpeg** |
 | Seeking | in place | a new stream is requested at the new time (`t=`) while the player keeps running (see *Seeking* below) |
-| Quality menu | Bilibili qualities | none; the source tier is *Stream source* in Settings |
+| Quality menu | the video's Bilibili qualities | the video's qualities as the server reports them (up to eight: 360P to 4K, including the 60 fps tiers) |
 | Live rooms | direct | API via the server, media still direct |
 
-Settings (`settings.json`): `stream_server`, `server_host`, `server_port`,
-`server_token` (plain text, like the Wi-Fi profile), `stream_quality` (the source tier, a
-number: 16, 32, 64, 74, 80, 112, 116 or 120; default 32), `stream_fps` (`auto|30`; `auto` allows
-up to 60 fps), `stream_preset` (the bitrate: `performance` 700 k, `balanced` 1000 k, `quality`
-1500 k), `stream_profile` (`auto|cavlc|cabac`). The picture is always 480×272; only the source,
-the frame-rate cap and the bitrate vary. Files from before these settings load with the old
-behaviour (480P source, frame rate left to the source).
+## Settings
 
-### Source quality and frame rate
+Settings is a short list of pages. **Playback engine** is the one that matters here: its first row
+switches between *On-device* (Bilibili straight from the PSP, decoded by the Media Engine) and
+*PC stream*, and below it the page shows only the rows of the engine in use.
 
-*Stream source* is the Bilibili tier the PC downloads, so the 60 fps tiers and 4K are
-available even though the PSP shows 480×272. The server decodes the source with ffmpeg and
-scales it down, so a higher tier costs the PC more CPU, not the PSP or the Wi-Fi.
+| | On-device | PC stream |
+|---|---|---|
+| Rows | ME core, playback buffer, pixel format | server (*Change server…*), test connection, frame rate, bitrate, encoding, pixel format |
+| Decoder | Media Engine (loads an ME bridge at start-up) | the firmware's sceMpeg (no bridge) |
+| Account | on the PSP | on the PC |
+| Seeking | stays inside the video | asks for a new stream (the player keeps running) |
 
-| Setting | `qn` | Notes |
+The row sets and this table are code, not text: `client/settings_layout.hpp`
+(`settingsRows`, `engineCaps`), covered by `tests/settings_layout_test.cpp`. The page also shows
+what the engine means in one line and the restart notice while a change is pending.
+
+`settings.json`: `stream_server` (this is what makes the engine *PC stream*), `server_host`,
+`server_port`, `server_token` (plain text, like the Wi-Fi profile), `stream_fps` (`auto|30`; `auto`
+allows up to 60 fps), `stream_preset` (the bitrate: `performance` 700 k, `balanced` 1000 k,
+`quality` 1500 k), `stream_profile` (`auto|cavlc|cabac`), and `stream_quality`. The picture is
+always 480×272; the bitrate and frame-rate cap are settings, but the **quality is not**: it is chosen
+per video in the player's quality menu, because the tiers differ from video to video.
+`stream_quality` only remembers the last tier picked there, as the first one the next stream asks
+for (the server falls back to the nearest tier that video has). Older files load with the previous
+behaviour (480P first, frame rate left to the source).
+
+### Quality and frame rate
+
+The quality menu (△ in the player) lists the tiers *this* video offers. The server reports them
+with the stream (`X-Wili-Qualities`, below), so a video without a 60 fps or 4K rendition simply
+doesn't list it. Picking a tier reopens the stream at the current position without leaving the
+player. The PC downloads the chosen tier, decodes it with ffmpeg and scales it to 480×272, so a
+higher tier costs the PC more CPU, not the PSP or the Wi-Fi.
+
+| Tier | `qn` | Notes |
 |---|---|---|
 | 360P / 480P / 720P | 16 / 32 / 64 | |
 | 720P60 | 74 | 60 fps; needs a signed-in account |
@@ -62,9 +86,10 @@ scales it down, so a higher tier costs the PC more CPU, not the PSP or the Wi-Fi
 | 4K | 120 | needs a signed-in account (VIP); often offered only as HEVC |
 
 The ids come from Bilibili's public API documentation and have not been checked against the
-live service from the development environment. A tier the account or video cannot get falls
-back to the best one below it (logged by the server as `source qn=…`). H.264 is preferred at
-a tier; HEVC is used when that is all Bilibili offers. AV1 is not used.
+live service from the development environment, nor has it been confirmed that Bilibili lists every
+tier of a video regardless of the `qn` asked for. A tier the account or video cannot get falls back
+to the best one below it (logged by the server as `source qn=…`). H.264 is preferred at a tier;
+HEVC is used when that is all Bilibili offers. AV1 is not used.
 
 The output frame rate is `min(source rate, cap)`; ffmpeg never adds frames. *Auto* caps at
 60 fps, *30 fps* halves the 60 fps tiers. Level 3.0 allows 480×272 at 60 fps, but the sceMpeg
@@ -94,7 +119,8 @@ refuses redirects off the allow-list, and forwards `Accept-Encoding` untouched.
 `profile` (`auto|cavlc|cabac`; `auto` is `cavlc`, both are Main profile), `qn` (source tier,
 16 to 120), `fps` (frame-rate cap, 5 to 60, default 30), `vb`, `ab` (kbps). `w` and `h` are
 accepted and ignored: the picture is always fitted into 480×272. Output is
-`video/x-flv` without a duration, timestamps starting at 0, Main profile level 3.0, no
+`video/x-flv` without a duration, timestamps starting at 0, response headers `X-Wili-Quality`
+(the tier being streamed) and `X-Wili-Qualities` (comma-separated tiers this video offers, ascending), Main profile level 3.0, no
 B-frames, one reference frame, a two-second GOP (counted at the frame rate actually produced),
 and a picture padded with black to a
 multiple of 16 in both directions (480×270 becomes 480×272), which the PSP decoder wants. Errors are JSON `{"error": code, "message": text}` with a
@@ -171,15 +197,19 @@ packet checks and PSP packaging; playback on hardware still needs verification.
   firmware accepts the synthesized PSMF header and the PES wrapping, the `sceMpegCreate`
   arguments (512-pixel frame width, mode 0), and that Main/CAVLC at level 3.0 with one reference
   frame decodes. `profile=cabac` may be rejected by the firmware's decoder.
-- sceMpeg is the third **ME backend** (Settings → ME backend: MIST, Custom Core, sceMpeg). It owns
-  the Media Engine, so with it selected the loader starts **no ME bridge or core at all** and the
-  client never calls into one; changing it needs a restart of WiliMini. Scaling, colour
-  conversion, audio and drawing run on the CPU and GE.
-- With sceMpeg selected, every video and live room plays through it, whether or not *Stream
-  server* is on (as under PPSSPP). Direct Bilibili video is whatever the firmware's decoder
-  accepts; the server's transcode is what is shaped for it. Turning *Stream server* on selects
-  sceMpeg (turning the server off, or choosing another ME backend, goes back), and the server
-  only plays after the restart.
+- sceMpeg owns the Media Engine, so with the **PC stream** engine the loader starts **no ME
+  bridge or core at all** and the client never calls into one; changing the engine needs a restart
+  of WiliMini. Scaling, colour conversion, audio and drawing run on the CPU and GE. In
+  `settings.json` the engine is `stream_server`, and the loader still reads `me_backend`
+  (`sce-mpeg` while streaming, `me_backend_before_stream` is the core to go back to).
+- With sceMpeg selected, every video and live room plays through it (as under PPSSPP), so
+  direct Bilibili video is whatever the firmware's decoder accepts; the server's transcode is
+  what is shaped for it. Choosing *PC stream* selects sceMpeg and choosing *On-device* goes back
+  to the chosen ME core; either only takes effect after the restart.
+- The settings pages, the engine switch, the setup wizard and the per-video quality menu are
+  written and compile with the PSP toolchain, but have not been seen on a screen or run on a
+  device. The row tables, the tier-list parsing and the eight-tier menu logic are covered by host
+  tests.
 - The bitrates (700 k, 1000 k, 1500 k) are starting points and need tuning on a PSP.
 - Bilibili may throttle or change its API; the proxy passes JSON through, so most changes
   need no client update, but WBI signing and login live on the server.

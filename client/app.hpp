@@ -10,6 +10,7 @@
 #include "bilibili.h"
 #include "navigation.hpp"
 #include "preferences.hpp"
+#include "settings_layout.hpp"
 #include "tile_layout.hpp"
 #include "services/auth_service.hpp"
 #include "server_discovery.h"
@@ -88,6 +89,27 @@ public:
     void setActiveMeBackend(int backend) { activeMeBackend_ = backend; }
     size_t settingSelection() const { return navigation_.get<SettingsRoute>().selection; }
     size_t settingsScroll() const { return navigation_.get<SettingsRoute>().scroll; }
+    SettingsPage settingsPage() const { return navigation_.get<SettingsRoute>().page; }
+    // The rows of the page being shown (the engine page depends on the engine) and the one selected.
+    std::vector<SettingItem> settingRows() const {
+        return settingsRows(settingsPage(), preferences_.engine());
+    }
+    SettingItem currentSetting() const;
+    void openSettingsPage(SettingsPage page);
+    // Back inside Settings: wizard step, then sub-page, then the main page. False on the main page.
+    bool settingsBack();
+    // Switches the playback engine and saves it. Streaming needs a restart (the loader decides at
+    // start-up whether to load an ME bridge), so restartPending() says when the change has not taken effect.
+    void setEngine(Engine engine);
+    bool restartPending() const {
+        return activeMeBackend_ >= 0 && activeMeBackend_ != static_cast<int>(preferences_.meBackend);
+    }
+    // Server setup wizard (find, token, test, done); confirm and the alternate key act on a step.
+    int wizardStep() const { return navigation_.get<SettingsRoute>().wizardStep; }
+    void wizardConfirm();
+    void wizardAlt();
+    bool serverTestOk() const { return serverTestOk_; }
+    const std::string& serverTestText() const { return serverTestText_; }
     size_t licenseSelection() const { return navigation_.get<LicensesRoute>().selection; }
     const std::string& licenseText() const { return navigation_.get<LicenseTextRoute>().text; }
     int documentScroll() const { return navigation_.get<LicenseTextRoute>().scroll; }
@@ -176,6 +198,9 @@ public:
     // Prepares the current video's wili-server stream again at positionMs, for a seek that keeps the
     // player running. Returns false when it is not a server stream or the server refuses.
     bool reopenServerPlayback(int64_t positionMs, BiliPlayback& out);
+    // The tier picked in the player's quality menu becomes the one the next stream asks for first
+    // (the server falls back to the nearest tier the next video really has).
+    void rememberStreamQuality(int qn);
     const VideoCard& playbackCard() const { return playbackCard_; }
     PspVideoSettings playerSettings() const { return playerSettings_; }
     void setPlayerSettings(const PspVideoSettings& settings) { playerSettings_ = settings; }
@@ -345,6 +370,8 @@ private:
     WiliServer jobServer_{};
     std::vector<WiliFoundServer> stagedFound_;
     std::string stagedServerMessage_;
+    std::string serverTestText_;          // the last test's result, shown on the engine page
+    bool stagedServerOk_ = false, serverTestOk_ = false;
     AppError jobTypedError_, authError_;
     std::string jobAuthKey_;
     uint64_t authPollAt_ = 0;

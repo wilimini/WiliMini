@@ -154,7 +154,16 @@ static int video_cancel_thread(SceSize size, void *arg) {
             sceKernelWaitSema(controls_lock, 1, NULL);
             if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
-            if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
+            if (action == PC_QUALITY) {
+                quality_requested = controls.settings.qualities[controls.quality_index];
+                if (soft_reseek_enabled) {
+                    /* Same position, other tier: the stream is reopened without leaving the player. */
+                    seek_target_ms = controls.position_ms;
+                    seek_paused = controls.paused;
+                    controls.settings.quality = quality_requested;
+                    controls.menu_open = PC_PLAYING;
+                }
+            }
             if (action == PC_SEEK) {
                 seek_target_ms = controls.preview_ms;
                 seek_paused = controls.paused;
@@ -176,6 +185,7 @@ static int video_cancel_thread(SceSize size, void *arg) {
                 else if (soft_reseek_enabled) begin_soft_reseek();
                 else psp_video_stop();
             }
+            else if (action == PC_QUALITY && soft_reseek_enabled) begin_soft_reseek();
             else if (action == PC_EXIT || action == PC_QUALITY) psp_video_stop();
         } else if (pad.Buttons & cancel_button) psp_video_stop();
         sceKernelDelayThreadCB(10000);
@@ -1435,7 +1445,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         pc_init(&controls, sceKernelGetSystemTimeWide(), options->start_paused);
         controls.position_ms = (options->start_ms > 0 ? options->start_ms : 0) + timeline_offset_ms;
         if (options->settings) controls.settings = *options->settings;
-        if (controls.settings.quality_count < 0 || controls.settings.quality_count > 3) controls.settings.quality_count = 0;
+        if (controls.settings.quality_count < 0 || controls.settings.quality_count > PSP_VIDEO_QUALITY_MAX) controls.settings.quality_count = 0;
         for (int i = 0; i < controls.settings.quality_count; ++i)
             if (controls.settings.qualities[i] == controls.settings.quality) controls.quality_index = i;
     }

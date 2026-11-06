@@ -193,6 +193,33 @@ int wili_stream_quality_valid(int qn) {
     return 0;
 }
 
+int wili_parse_quality(const char *value, size_t length) {
+    if (!value) return 0;
+    int number = 0, digits = 0;
+    size_t i = 0;
+    while (i < length && (value[i] == ' ' || value[i] == '\t')) ++i;
+    for (; i < length && value[i] >= '0' && value[i] <= '9' && digits < 4; ++i, ++digits)
+        number = number * 10 + (value[i] - '0');
+    while (i < length && (value[i] == ' ' || value[i] == '\t' || value[i] == '\r' || value[i] == '\n')) ++i;
+    return i == length && digits && wili_stream_quality_valid(number) ? number : 0;
+}
+
+int wili_parse_quality_list(const char *value, size_t length, int *out, int cap) {
+    int count = 0;
+    if (!value || !out || cap <= 0) return 0;
+    size_t start = 0;
+    for (size_t i = 0; i <= length; ++i) {
+        if (i < length && value[i] != ',') continue;
+        const int qn = wili_parse_quality(value + start, i - start);
+        start = i + 1;
+        if (!qn || count >= cap) continue;
+        int seen = 0;
+        for (int k = 0; k < count; ++k) seen |= out[k] == qn;
+        if (!seen) out[count++] = qn;
+    }
+    return count;
+}
+
 int wili_stream_quality_next(int qn) {
     const size_t count = sizeof(quality_tiers) / sizeof(quality_tiers[0]);
     for (size_t i = 0; i < count; ++i)
