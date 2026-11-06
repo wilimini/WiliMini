@@ -4,8 +4,6 @@
 #include <psp_runtime.h>
 #include <libavutil/intreadwrite.h>
 #include "psmf_header.h"
-#include "sce_mpeg_options.h"
-#include <pspmpegbase.h>
 
 /* Included by player.c to share source IO, cancellation and the AAC clock.
  *
@@ -20,26 +18,16 @@
  *
  * The stream is expected to be what wili-server sends: AVC Main profile with CAVLC,
  * no B-frames, level 3.0, dimensions that are multiples of 16, at most 480x272. */
-/* The ring buffer size, the refill size, the header layout and the stream registration are switchable
- * (sce_mpeg_options.h, read from sce_mpeg.cfg): real PSP homebrew (pspdev/libpspav) uses a 60-packet ring
- * refilled 32 packets at a time with both streams registered, but whether the firmware accepts our
- * stream that way is only known from a PSP. An access unit has to fit in the ring, so a keyframe bigger
- * than about ring_packets * 2000 bytes is reported, not waited for. */
-static SceMpegOptions sce_opt;
+/* The ring buffer and the refill size follow what real PSP homebrew does (pspdev/libpspav): 60 packets
+ * of 2048 bytes, refilled at most 32 packets per sceMpegRingbufferPut. An access unit has to fit in
+ * the ring, so a keyframe bigger than about EMU_RING_PACKETS * 2000 bytes is reported, not waited for. */
+#define EMU_RING_PACKETS 60
+#define EMU_PUT_PACKETS 32
 #define EMU_MAX_AU (4 * 1024 * 1024)
-/* Direct feed (how PMPlayer Advance decodes raw H.264 on a PSP): a frame is copied by the Media Engine's
- * DMA into a fixed buffer in ME memory and then decoded, with no program stream involved. The address and
- * the DMA block size are the ones that code uses; frames are limited to what that buffer can be trusted
- * to hold. */
-#define EMU_ME_AVC_BUFFER 0x4a000
-#define EMU_DMA_BLOCK 4095
-#define EMU_DIRECT_MAX_FRAME (512 * 1024)
 typedef struct {
     AVFormatContext *format;
     AVPacket *packet;
     int stream, nal_length, eof, error;
-    int ring_packets;           /* the ring's size, to refuse a frame that cannot fit */
-    unsigned aus, last_au;      /* frames handed to the ring so far, and the size of the last one */
     uint8_t *parameters, *data;
     unsigned parameters_size, size, offset;
     int64_t pts, dts;
@@ -151,14 +139,12 @@ static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
             }
             /* A packet carries at most 2025 bytes of an access unit (1987 for the first), and the
              * ring must hold the whole unit before the firmware can hand it out. */
-            if (mux->ring_packets && mux->size / 2000 + 2 > (unsigned)mux->ring_packets) {
+            if (mux->size / 2000 + 2 > EMU_RING_PACKETS) {
                 WLOG_E(WLC_PLAYER, "sceMpeg: access unit of %u bytes does not fit the %d-packet ring; "
-                       "lower the stream bitrate or raise ring_packets", mux->size, mux->ring_packets);
+                       "lower the stream bitrate", mux->size, EMU_RING_PACKETS);
                 mux->error = AVERROR(ENOSPC);
                 break;
             }
-            ++mux->aus;
-            mux->last_au = mux->size;
         }
         uint8_t *p = (uint8_t *)output + written * 2048;
         memset(p, 0xff, 2048); memcpy(p, pack, sizeof(pack));
@@ -214,7 +200,6 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     SceMpegStream *stream = NULL, *atrac_stream = NULL;
     SceMpegAu au __attribute__((aligned(64))), atrac_au __attribute__((aligned(64)));
     void *atrac_es = NULL;
-    SceMpegLLI *lli = NULL;          /* DMA chain for the direct feed */
     SceInt32 atrac_es_size = 0, atrac_out_size = 0;
     void *state = NULL, *ring_data = NULL, *es = NULL;
     void *rgb = NULL, *frame = NULL;
@@ -230,8 +215,6 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     stats->eof = 0;
     video_stage = PSP_VIDEO_STAGE_SOURCE;
     const int emulator = psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
-    const int feed_direct = sce_opt.direct_feed < 0 ? !emulator : sce_opt.direct_feed;
-    WLOG_I(WLC_PLAYER, "sceMpeg feed=%s", feed_direct ? "direct (frames DMA'd to the ME)" : "program stream");
     const char *backend_name = emulator ? "ppsspp-sceMpeg" : "psp-sceMpeg";
     WLOG_I(WLC_PLAYER, "backend=%s", backend_name);
     ret = source_open(&mux.format, SOURCE, video_io_source, &input);
@@ -270,19 +253,18 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         goto done;
     }
     initialized = 1;
-    int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(sce_opt.ring_packets);
+    int state_size = sceMpegQueryMemSize(0), ring_size = sceMpegRingbufferQueryMemSize(EMU_RING_PACKETS);
     if (state_size <= 0 || ring_size <= 0) { ret = -1; goto done; }
     /* The Media Engine writes pictures straight into this buffer, so it must be a whole
      * number of cache lines and the CPU's cached view has to be dropped around each decode. */
     const size_t rgb_bytes = ((size_t)stride * ((height + 15) & ~15) * rgb_pixel_bytes + 63) & ~(size_t)63;
-    state = memalign(64, state_size);
-    if (!feed_direct) ring_data = memalign(64, ring_size);
+    state = memalign(64, state_size); ring_data = memalign(64, ring_size);
     rgb = memalign(64, rgb_bytes);
     /* The picture is placed and converted here, in cached RAM, on the CPU. The presenter then
      * reads it from RAM; going through VRAM (uncached) made both sides several times slower. */
     const size_t frame_bytes = (size_t)512 * 272 * rgb_pixel_bytes;
     frame = memalign(64, frame_bytes);
-    if (!state || (!feed_direct && !ring_data) || !rgb || !frame) { ret = AVERROR(ENOMEM); goto done; }
+    if (!state || !ring_data || !rgb || !frame) { ret = AVERROR(ENOMEM); goto done; }
     memset(frame, 0, frame_bytes); /* the borders stay black: only the picture area is rewritten */
     int out_w = 480, out_h = (int)((int64_t)height * 480 / width);
     if (out_h > 272) { out_h = 272; out_w = (int)((int64_t)width * 272 / height); }
@@ -295,10 +277,7 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         for (int x = 0; x < out_w; ++x) xmap[x] = (uint16_t)(x * width / out_w);
         for (int y = 0; y < out_h; ++y) ymap[y] = (uint16_t)(y * height / out_h);
     }
-    mux.ring_packets = sce_opt.ring_packets;
-    /* The direct feed never reads the ring, and constructs it empty like PMPlayer Advance does. */
-    ret = feed_direct ? sceMpegRingbufferConstruct(&ring, 0, 0, 0, 0, 0)
-                      : sceMpegRingbufferConstruct(&ring, sce_opt.ring_packets, ring_data, ring_size, emu_ring_read, &mux);
+    ret = sceMpegRingbufferConstruct(&ring, EMU_RING_PACKETS, ring_data, ring_size, emu_ring_read, &mux);
     if (ret < 0) goto done;
     constructed = 1;
     ret = sceMpegCreate(&mpeg, state, state_size, &ring, stride, 0, 0);
@@ -307,44 +286,31 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         goto done;
     }
     created = 1;
-    if (feed_direct) {
-        /* As PMPlayer Advance does: an ES buffer, an access unit set to "all unknown" with just a
-         * placeholder buffer handle, and a DMA chain long enough for the largest frame. */
-        es = sceMpegMallocAvcEsBuf(&mpeg);
-        if (!es) { ret = AVERROR(ENOMEM); goto done; }
-        memset(&au, -1, sizeof(au));
-        au.iEsBuffer = 1;
-        lli = memalign(64, sizeof(SceMpegLLI) * (EMU_DIRECT_MAX_FRAME / EMU_DMA_BLOCK + 2));
-        if (!lli) { ret = AVERROR(ENOMEM); goto done; }
-    } else {
     /* A PSMF header laid out like a real one (see psmf_header.h). PS timestamps are 90 kHz, offset by
      * one second like the first timestamp of a real PSMF file. */
-    psmf_build_header(header, width, height, sce_opt.psmf_version, sce_opt.psmf_full);
+    psmf_build_header(header, width, height);
     SceInt32 offset;
     sceKernelDcacheWritebackRange(header, sizeof(header));
     ret = sceMpegQueryStreamOffset(&mpeg,header,&offset);
     if (ret < 0) goto done;
-    /* Video stream, and with register_atrac the audio stream too, in the order real PSP players do
-     * (pspdev/libpspav). No ATRAC data is ever sent: FFmpeg decodes the audio. */
+    /* Both streams are registered, the video one and the audio one, in the order real PSP players do
+     * (pspdev/libpspav). No ATRAC data is ever sent: FFmpeg decodes the audio, so the audio stream
+     * is only registered, with its own access unit and buffer, to leave the firmware in the state a
+     * player with audio would. */
     stream = sceMpegRegistStream(&mpeg,0,0);
     if (!stream) { ret = -1; goto done; }
-    if (sce_opt.register_atrac) {
-        atrac_stream = sceMpegRegistStream(&mpeg,1,0);
-        if (!atrac_stream) { ret = -1; goto done; }
-    }
+    atrac_stream = sceMpegRegistStream(&mpeg,1,0);
+    if (!atrac_stream) { ret = -1; goto done; }
     es = sceMpegMallocAvcEsBuf(&mpeg);
     if (!es) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegInitAu(&mpeg,es,&au);
     if (ret < 0) goto done;
-    if (sce_opt.register_atrac) {
-        ret = sceMpegQueryAtracEsSize(&mpeg,&atrac_es_size,&atrac_out_size);
-        if (ret < 0) goto done;
-        atrac_es = memalign(64, atrac_es_size > 0 ? (size_t)atrac_es_size : 64);
-        if (!atrac_es) { ret = AVERROR(ENOMEM); goto done; }
-        ret = sceMpegInitAu(&mpeg,atrac_es,&atrac_au);
-        if (ret < 0) goto done;
-    }
-    }
+    ret = sceMpegQueryAtracEsSize(&mpeg,&atrac_es_size,&atrac_out_size);
+    if (ret < 0) goto done;
+    atrac_es = memalign(64, atrac_es_size > 0 ? (size_t)atrac_es_size : 64);
+    if (!atrac_es) { ret = AVERROR(ENOMEM); goto done; }
+    ret = sceMpegInitAu(&mpeg,atrac_es,&atrac_au);
+    if (ret < 0) goto done;
     SceMpegAvcMode mode = {-1,output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
                                    ? SCE_MPEG_AVC_FORMAT_5650 : SCE_MPEG_AVC_FORMAT_8888};
     ret = sceMpegAvcDecodeMode(&mpeg,&mode);
@@ -357,94 +323,35 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     video_stage = PSP_VIDEO_STAGE_PLAY;
     playback_seeking = 0; /* a soft reseek is complete once the new segment can play; keys are live again */
     unsigned page = 0, empty = 0, no_data = 0;
-    uint64_t no_data_since = 0;      /* when the current run of "no data" answers began */
-    unsigned long put_total = 0;     /* packets the firmware has taken from us in this segment */
     while (!quit_requested && !soft_reseek_request) {
-        SceInt32 unknown = 0, got = 0;
-        if (feed_direct) {
-            /* One frame from FFmpeg, converted to Annex B as before, then straight into the Media Engine. */
-            playback_operation_set("sce_next_frame");
-            ret = mux.error ? mux.error : emu_next_packet(&mux);
-            if (ret < 0) {
-                if (ret == AVERROR_EOF) {
-                    stats->eof = 1;
-                    ret = stats->total_frames ? 0 : AVERROR_INVALIDDATA;
-                } else if (!quit_requested && !soft_reseek_request) {
-                    WLOG_E(WLC_PLAYER, "sceMpeg direct feed: reading a frame failed: %d frames=%u", ret, stats->total_frames);
-                }
-                break;
-            }
-            if (mux.size > EMU_DIRECT_MAX_FRAME) {
-                WLOG_E(WLC_PLAYER, "sceMpeg direct feed: a frame of %u bytes is more than the %d the ME buffer is trusted "
-                       "with; lower the stream bitrate", mux.size, EMU_DIRECT_MAX_FRAME);
-                ret = AVERROR(ENOSPC);
-                break;
-            }
-            ++mux.aus;
-            mux.last_au = mux.size;
-            playback_operation_set("sce_me_copy");
-            unsigned blocks = 0, left = mux.size;
-            uint8_t *copy_from = mux.data, *copy_to = (uint8_t *)EMU_ME_AVC_BUFFER;
-            for (;;) {
-                const unsigned n = left > EMU_DMA_BLOCK ? EMU_DMA_BLOCK : left;
-                lli[blocks].pSrc = copy_from;
-                lli[blocks].pDst = copy_to;
-                lli[blocks].iSize = (SceInt32)n;
-                copy_from += n; copy_to += n; left -= n;
-                if (!left) { lli[blocks].Next = NULL; ++blocks; break; }
-                lli[blocks].Next = &lli[blocks + 1];
-                ++blocks;
-            }
-            /* The DMA engine reads RAM, not the cache. */
-            sceKernelDcacheWritebackRange(mux.data, mux.size);
-            sceKernelDcacheWritebackRange(lli, blocks * sizeof(SceMpegLLI));
-            ret = sceMpegBasePESpacketCopy(lli);
-            if (ret < 0) {
-                WLOG_E(WLC_PLAYER, "sceMpegBasePESpacketCopy failed 0x%08x frame_bytes=%u frames=%u",
-                       (unsigned)ret, mux.size, stats->total_frames);
-                break;
-            }
-            au.iAuSize = mux.size;
-        } else {
         playback_operation_set("sce_ring_available");
         int available = sceMpegRingbufferAvailableSize(&ring);
         if (available < 0) { ret = available; break; }
         if (!mux.eof && available) {
             playback_operation_set("sce_ring_put");
-            /* put_packets caps one refill (0: all that is free); the free space is the third argument. */
-            const int put = sce_opt.put_packets && sce_opt.put_packets < available ? sce_opt.put_packets : available;
-            ret = sceMpegRingbufferPut(&ring,put,available);
+            /* At most EMU_PUT_PACKETS at a time, with the whole free space as the third argument. */
+            ret = sceMpegRingbufferPut(&ring,available < EMU_PUT_PACKETS ? available : EMU_PUT_PACKETS,available);
             if (ret < 0) break;
-            put_total += (unsigned long)ret;
         }
         if (mux.error) { ret = mux.error; break; }
+        SceInt32 unknown = 0, got = 0;
         playback_operation_set("sce_get_au");
         ret = sceMpegGetAvcAu(&mpeg,stream,&au,&unknown);
         if (ret < 0) {
             if (mux.eof && (unsigned)ret == 0x80618001u) {
                 stats->eof = 1;
                 ret = stats->total_frames ? 0 : AVERROR_INVALIDDATA;
-            } else if ((unsigned)ret == 0x80618001u && !quit_requested) {
-                /* "No data" is the normal answer while a frame is still arriving (it can span refills, and
-                 * a network stream can be slow), as real players treat it. Keep waiting, with cancellation
-                 * responsive, but not for ever: after 3 s of it the firmware is not getting a frame out of
-                 * what we feed it. */
-                const uint64_t now = sceKernelGetSystemTimeWide();
-                if (!no_data) no_data_since = now;
-                ++no_data;
-                if (now - no_data_since < 3000000) {
-                    sceKernelDelayThreadCB(1000);
-                    continue;
-                }
+            } else if ((unsigned)ret == 0x80618001u && ++no_data <= 64 &&
+                       sceMpegRingbufferAvailableSize(&ring) > 0) {
+                /* An AU can span refills. Keep cancellation responsive and
+                 * bound retries so malformed input cannot spin forever. */
+                sceKernelDelayThreadCB(1000);
+                continue;
             }
             if (ret < 0)
-                WLOG_E(WLC_PLAYER, "sceMpegGetAvcAu failed 0x%08x frames=%u eof=%d retries=%u waited_ms=%u "
-                       "ring_free=%d/%d put=%lu frames_fed=%u last_frame_bytes=%u",
-                       (unsigned)ret, stats->total_frames, mux.eof, no_data,
-                       no_data ? (unsigned)((sceKernelGetSystemTimeWide() - no_data_since) / 1000) : 0u,
-                       (int)sceMpegRingbufferAvailableSize(&ring), sce_opt.ring_packets, put_total, mux.aus, mux.last_au);
+                WLOG_E(WLC_PLAYER, "sceMpegGetAvcAu failed 0x%08x frames=%u eof=%d retries=%u",
+                       (unsigned)ret, stats->total_frames, mux.eof, no_data);
             break;
-        }
         }
         no_data = 0;
         void *pixels = rgb;
@@ -463,8 +370,7 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         }
         empty = 0;
         /* PPSSPP updates the AU with the reordered output timestamp. */
-        int64_t pts_us = feed_direct ? (mux.pts - 90000) * 1000000 / 90000
-                                     : (((int64_t)au.iPtsMSB << 32 | au.iPts) - 90000) * 1000000 / 90000;
+        int64_t pts_us = (((int64_t)au.iPtsMSB << 32 | au.iPts) - 90000) * 1000000 / 90000;
         if (stats->total_frames < 3 || stats->total_frames % 60 == 0)
             WLOG_I(WLC_PLAYER, "sce_frame frames=%u got=%d pts_us=%lld audio_us=%lld size=%dx%d stride=%d format=%d",
                    stats->total_frames, (int)got, (long long)pts_us,
@@ -546,12 +452,12 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     if (created) {
         playback_operation_set("sce_cleanup_mpeg");
         /* Like real PSP players: stop the decoder and flush the streams before taking them apart. */
-        if (sce_opt.stop_flush && stream && segment_frames) {
+        if (stream && segment_frames) {
             SceInt32 stop_status = 0;
             void *last = rgb;
             sceMpegAvcDecodeStop(&mpeg,stride,&last,&stop_status);
         }
-        if (sce_opt.stop_flush && stream) sceMpegFlushAllStream(&mpeg);
+        if (stream) sceMpegFlushAllStream(&mpeg);
         if (es) sceMpegFreeAvcEsBuf(&mpeg,es);
         /* PSPSDK declares the first argument as SceMpeg, but the firmware
          * and PPSSPP ABI take the address of the handle, like Delete. */
@@ -561,7 +467,7 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     }
     if (constructed) sceMpegRingbufferDestruct(&ring);
     if (initialized) sceMpegFinish();
-    free(frame); free(rgb); free(ring_data); free(state); free(atrac_es); free(lli);
+    free(frame); free(rgb); free(ring_data); free(state); free(atrac_es);
     av_packet_free(&mux.packet); av_free(mux.parameters); av_free(mux.data);
     source_close(&mux.format,&input);
     if (run_path[0]) {
@@ -611,16 +517,6 @@ static int sce_reseek_source(const PspVideoOptions *options) {
 static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) {
     char run_path[192] = {0};
     int ret = 0, first = 1;
-    /* The experiment switches: defaults, then whatever sce_mpeg.cfg in the WiliMini folder sets. */
-    char config[224];
-    snprintf(config, sizeof(config), "%s/sce_mpeg.cfg", ROOT);
-    int rejected = 0;
-    sce_opt = sce_mpeg_default_options();
-    const int applied = sce_mpeg_load_options(config, &sce_opt, &rejected);
-    WLOG_I(WLC_PLAYER, "sceMpeg options (%s): psmf_version=%d psmf_full=%d ring_packets=%d put_packets=%d "
-           "register_atrac=%d stop_flush=%d%s", applied < 0 ? "defaults, no sce_mpeg.cfg" : "from sce_mpeg.cfg",
-           sce_opt.psmf_version, sce_opt.psmf_full, sce_opt.ring_packets, sce_opt.put_packets,
-           sce_opt.register_atrac, sce_opt.stop_flush, rejected ? " (some lines ignored)" : "");
     for (;;) {
         ret = sce_mpeg_run_segment(options, stats, run_path, sizeof(run_path), first);
         first = 0;

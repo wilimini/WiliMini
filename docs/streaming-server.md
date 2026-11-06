@@ -179,68 +179,12 @@ a sceMpeg ring buffer behind a synthesized PSMF header, and gets RGB pictures ba
 decoded by FFmpeg and keeps the existing clock; video frames are shown when the audio clock
 reaches their time. The same file runs on PPSSPP's sceMpeg implementation.
 
-### How frames reach the decoder
-
-There are two ways, chosen by `direct_feed` in `sce_mpeg.cfg` (a text file of `key=value` lines in the
-WiliMini folder; `#` starts a comment; the player logs the values it used at start-up):
-
-- **Direct feed** (`direct_feed=1`, the default on a PSP). Each frame is converted to Annex B as before and
-  copied by DMA into the Media Engine's AVC input buffer, then `sceMpegAvcDecode` is called with only the
-  frame size set. No program stream, no PSMF header, no ring-buffer contents, no `sceMpegGetAvcAu`. This
-  is how PMPlayer Advance (Cooleyes, from code posted by magiK on the ps2dev forums) decodes raw H.264 on
-  real hardware; see `avcdecoder.c` in its archived source
-  (`code.google.com/archive/p/pmplayer-advance`). The buffer address (`0x4a000`) and the DMA block size
-  (4095) are the ones that code uses.
-- **Program stream** (`direct_feed=0`, the default under PPSSPP, which only understands this). Frames
-  are wrapped as an MPEG program stream and fed through the ring buffer, which `sceMpegGetAvcAu` splits
-  back into frames. This is the path that decoded about 58 frames on a PSP and then answered "no data".
-
-The program-stream path has its own switches, for finding out what the firmware objects to. The
-defaults are the setup that last produced pictures:
-
-| Key | Default | Real homebrew / real files |
-|---|---|---|
-| `direct_feed` | auto | 1 on a PSP, 0 in the emulator |
-| `psmf_version` | 15 | 12 or 14 (what Sony's tool and a real test file say) |
-| `psmf_full` | 0 | 1 (every field a real header has; 0 = only what PPSSPP reads, one video stream) |
-| `ring_packets` | 256 | 60 (`pspdev/libpspav`) |
-| `put_packets` | 0 (all free) | 32 (at most this many per `sceMpegRingbufferPut`) |
-| `register_atrac` | 0 | 1 (also register the audio stream; no ATRAC data is ever sent) |
-| `stop_flush` | 0 | 1 (`sceMpegAvcDecodeStop` + `sceMpegFlushAllStream` before teardown) |
-
-An access unit has to fit in the ring (about `ring_packets * 2000` bytes) or, with the direct feed,
-in 512 KB; a bigger one is reported as an error naming the bitrate. On a deliberately hard test clip at the
-highest preset (1500 kbps) the largest keyframe was about 25 KB.
-
-### What a real PMF looks like
-
-Measured on `test.pmf` from the PPSSPP team's `pspautotests` (`tests/video/mpeg`, a file the real
-firmware plays; version `0014`, video only):
-
-- The stream starts with a pack header, a **system header** (`BB`, 12 bytes: rate bound 25000, then
-  `B9 E055` for the video P-STD buffer and `BD E008` for private stream 1), then a private-stream-2
-  packet (`BF`), then video. This repeats at the start of every GOP, and a GOP ends with padding to a
-  whole 2048-byte sector.
-- The `BF` packet is **one per GOP and lists the size of every frame in it**: a 14-byte prefix
-  (`01 E0` and four 16-bit numbers that differ per GOP), a 16-bit length, a 16-bit frame count, then one
-  4-byte entry per frame, `0080` plus a 16-bit size, with `0000` marking the last frame. All 190 entries
-  matched the actual frame sizes exactly. Our program stream sends a `BF` per frame with one entry whose
-  marker is `0000`, i.e. every frame claims to end its own group.
-- Every frame starts with an access unit delimiter (`00 00 00 01 09 10` on keyframes, `09 30` on the
-  rest), has SEI, and the first of a GOP carries SPS and PPS. Frames are P-only, as ours.
-- Pack headers carry a real mux rate (25000, `01 86 A3`) and an SCR that advances about 147 ticks per
-  sector. Ours write a mux rate of 0 and a constant SCR.
-- A PES with a timestamp covers 4 to 17 frames, not one, and carries a P-STD extension
-  (`81 C1 0D`, extension byte `1E`, `60 55`).
-- GOPs were 59, 52, 59 and 20 frames. Our GOP is 60 frames, so the second keyframe arrives right where the
-  58 or so frames that decode on a PSP end; the program-stream path may be failing at the second keyframe.
-
-`sceMpegGetAvcAu` answering `0x80618001` ("no data", `-2141093887`) is normal while a frame is still
-arriving, so the player waits up to 3 s for one before failing. The failure line in the log then shows
-the ring state: `ring_free`, packets put, frames fed to the ring and the last frame's size. The stream
-the server sends was checked with the player's own packetizer on the host (a 12 s transcode: all 360
-frames well formed, sizes adding up, timestamps increasing), so that error means the firmware does
-not accept the stream as a frame, not that the server's data is damaged.
+The calls follow what real PSP homebrew does (`pspdev/libpspav`): a 60-packet ring buffer refilled at
+most 32 packets per `sceMpegRingbufferPut`, both the video and the audio stream registered (no ATRAC data is
+ever sent; FFmpeg decodes the audio), and `sceMpegAvcDecodeStop` plus `sceMpegFlushAllStream` before the
+objects are torn down. An access unit has to fit in the ring (about 116 KB); a bigger keyframe is
+reported as an error naming the bitrate. On a deliberately hard test clip at the highest preset (1500 kbps)
+the largest keyframe was about 25 KB, so the limit should not be reached in practice.
 
 The PSMF header (`decoder/src/psmf_header.h`) follows a real one rather than only the fields PPSSPP
 reads. A real PMF is a 2048-byte header, then the program stream. The layout was decoded from the

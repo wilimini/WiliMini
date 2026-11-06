@@ -356,7 +356,7 @@ foreach(client_target wili_mini wili_mini_1000)
         pspdebug pspdisplay pspge pspctrl)
     # User-mode sceMpeg stubs (the kernel-side pspmpeg_driver is not needed). The bootstrap
     # loads the AVCODEC and MPEGBASE AV modules before this PRX is linked.
-    target_link_libraries(${client_target} PRIVATE pspmpeg pspmpegbase)
+    target_link_libraries(${client_target} PRIVATE pspmpeg)
     set_target_properties(${client_target} PROPERTIES
         OUTPUT_NAME ${client_target}
         SUFFIX ".elf"
