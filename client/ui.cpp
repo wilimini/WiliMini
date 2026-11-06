@@ -138,6 +138,11 @@ void fillRect(int x, int y, int width, int height, uint32_t shade) {
 // Decoding a cover takes tens of milliseconds, so at most one is decoded per frame; the others
 // show their placeholder and appear on the next frames instead of freezing the first frame of a page.
 unsigned coverDecodesThisFrame = 0;
+#ifdef BILI_UI_FRAME_STATS
+// Per-frame cover cost (diagnostic): JPEG decode time and the per-frame pixel copy.
+uint64_t statCoverDecodeUs = 0, statCoverBlitUs = 0;
+unsigned statCoverDecodes = 0, statCoverBlits = 0;
+#endif
 
 void beginFrame() {
     coverDecodesThisFrame = 0;
@@ -320,7 +325,14 @@ CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int heigh
     slot.pixels.clear();
     char path[256]{};
     std::snprintf(path, sizeof(path), "%s/cache/%s.jpg", CLIENT_ROOT, bvid.c_str());
+#ifdef BILI_UI_FRAME_STATS
+    const uint64_t decodeStart = sceKernelGetSystemTimeWide();
+#endif
     if (!loadJpeg(path, slot.pixels, nullptr, nullptr, width, height)) slot.pixels.clear();
+#ifdef BILI_UI_FRAME_STATS
+    statCoverDecodeUs += sceKernelGetSystemTimeWide() - decodeStart;
+    ++statCoverDecodes;
+#endif
     return &slot;
 }
 
@@ -336,6 +348,9 @@ void drawCover(const std::string& bvid, int x, int y, int width, int height, boo
                      false, clipTop, clipBottom);
         return;
     }
+#ifdef BILI_UI_FRAME_STATS
+    const uint64_t blitStart = sceKernelGetSystemTimeWide();
+#endif
     uint32_t* destination = framebuffer();
     for (int row = 0; row < height; ++row) {
         if (y + row < clipTop || y + row >= clipBottom) continue;
@@ -347,6 +362,10 @@ void drawCover(const std::string& bvid, int x, int y, int width, int height, boo
             line[column] = source[sourceX];
         }
     }
+#ifdef BILI_UI_FRAME_STATS
+    statCoverBlitUs += sceKernelGetSystemTimeWide() - blitStart;
+    ++statCoverBlits;
+#endif
 }
 
 void drawMetroHeader(const pspapp::App& app);
@@ -2464,6 +2483,8 @@ void ui_dialog_present() {
 void ui_render(const pspapp::App& app) {
 #ifdef BILI_UI_FRAME_STATS
     const uint64_t statsStart = sceKernelGetSystemTimeWide();
+    statCoverDecodeUs = statCoverBlitUs = 0;
+    statCoverDecodes = statCoverBlits = 0;
 #endif
     applyPreferences(app.preferences());
     static unsigned coverGeneration = 0;
@@ -2525,6 +2546,10 @@ void ui_render(const pspapp::App& app) {
         const char phase = hub ? (app.tileLaunching() ? 'L' : (nowMs - hubFx.enterMs < 500 ? 'E' : 'H'))
                          : (nowMs - pageFx.enterMs < 200 ? 'P' : 'S');
         WLOG_D(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
+        if (statCoverDecodes || statCoverBlits)
+            WLOG_D(WLC_CLIENT, "UICOVER decode_us=%u n=%u blit_us=%u n=%u",
+                   static_cast<unsigned>(statCoverDecodeUs), statCoverDecodes,
+                   static_cast<unsigned>(statCoverBlitUs), statCoverBlits);
     }
 #endif
     presentFrame();
