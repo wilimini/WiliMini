@@ -69,13 +69,14 @@ int main(int argc,char **argv){
      * ME bridge or core is loaded at all and the client is told with --no-me. */
     const int sce_backend=!sce_mpeg && saved_me_backend(settings,settings_length)==WILI_ME_BACKEND_SCE_MPEG;
     const int stream_server=sce_backend;
-    /* The client links sceMpeg stubs, so the AV modules must be resident before it is linked.
-     * On a real PSP in PC stream mode only AVCODEC is: the client loads the XMB's sceMpeg
-     * (mpeg_vsh.prx) itself and avc_helper.prx binds it, as Moonlight-PSP does. The game sceMpeg
-     * (MPEGBASE) would export the same library. */
-    r=sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
-    if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
+    /* The AV modules must be resident before the client is linked, except in PC stream mode on a
+     * real PSP: there the client's sceMpeg imports have to stay unresolved until the client loads
+     * the XMB's sceMpeg (mpeg_vsh.prx) and avc_helper.prx binds them to it, as Moonlight-PSP
+     * does. With the game's sceMpeg resident at link time they bind to it instead, and
+     * sceMpegInit then fails (0x800201ae). The client loads AVCODEC itself in that mode. */
     if(!sce_backend){
+        r=sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
+        if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
         r=sceUtilityLoadAvModule(PSP_AV_MODULE_MPEGBASE);
         if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;
     }

@@ -173,9 +173,10 @@ On a real PSP, server streams are decoded by the PSP's hardware H.264 decoder, d
 [Moonlight-PSP](https://github.com/k4idyn/Moonlight-PSP) does it (GPL-3.0, like WiliMini; see
 `decoder/avc/NOTICE.txt`). There is no program stream, ring buffer or PSMF header:
 
-1. In PC stream mode the loader loads only the `AVCODEC` AV module (not `MPEGBASE`, the game
-   sceMpeg) and starts `avc_helper.prx`, a small kernel module (`decoder/avc/avc_helper.c`).
-2. When the first stream starts, the client loads `flash0:/kd/mpeg_vsh.prx` (the XMB's sceMpeg)
+1. In PC stream mode the loader loads **no** AV module (the game's sceMpeg would bind the
+   client's sceMpeg imports to itself and `sceMpegInit` then fails with `0x800201ae`) and starts
+   `avc_helper.prx`, a small kernel module (`decoder/avc/avc_helper.c`).
+2. When the first stream starts, the client loads `AVCODEC`, then `flash0:/kd/mpeg_vsh.prx` (the XMB's sceMpeg)
    into the user partition with kubridge, and the helper binds the client's sceMpeg imports to
    it. Only that module exports `sceMpegGetAvcNalAu`.
 3. The helper boots the Media Engine in H.264 mode 3 (Main/CABAC) or 4 (Baseline/CAVLC), picked
