@@ -220,6 +220,36 @@ int wili_parse_quality_list(const char *value, size_t length, int *out, int cap)
     return count;
 }
 
+static int header_name_is(const char *line, size_t name_length, const char *name) {
+    size_t n = 0;
+    for (; name[n]; ++n) {
+        char c = n < name_length ? line[n] : 0;
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        char d = name[n];
+        if (d >= 'A' && d <= 'Z') d = (char)(d - 'A' + 'a');
+        if (c != d) return 0;
+    }
+    return n == name_length; /* the whole name, not just a prefix of it */
+}
+
+int wili_parse_stream_header(const char *line, size_t length, int *quality, int *list, int *count, int cap) {
+    if (!line || !quality || !list || !count) return 0;
+    const char *colon = memchr(line, ':', length);
+    if (!colon) return 0;
+    const size_t name = (size_t)(colon - line);
+    const char *value = colon + 1;
+    const size_t value_length = length - name - 1;
+    if (header_name_is(line, name, "X-Wili-Quality")) {
+        *quality = wili_parse_quality(value, value_length);
+        return 1;
+    }
+    if (header_name_is(line, name, "X-Wili-Qualities")) {
+        *count = wili_parse_quality_list(value, value_length, list, cap);
+        return 1;
+    }
+    return 0;
+}
+
 int wili_stream_quality_next(int qn) {
     const size_t count = sizeof(quality_tiers) / sizeof(quality_tiers[0]);
     for (size_t i = 0; i < count; ++i)

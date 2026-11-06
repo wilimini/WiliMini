@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 #define LIVE_CAPACITY (2 * 1024 * 1024)
 #define LIVE_LOOKBACK (64 * 1024)
@@ -45,16 +44,8 @@ static size_t live_header(char *data, size_t size, size_t count, void *opaque) {
     s->error[0] = 0;
     s->quality = s->quality_count = 0;
   } else {
-    const char *colon = memchr(data, ':', total);
-    if (colon) {
-      const size_t name = (size_t)(colon - data);
-      const char *value = colon + 1;
-      const size_t length = total - name - 1;
-      if (name == 14 && !strncasecmp(data, "X-Wili-Quality", 14))
-        s->quality = wili_parse_quality(value, length);
-      else if (name == 15 && !strncasecmp(data, "X-Wili-Qualities", 15))
-        s->quality_count = wili_parse_quality_list(value, length, s->qualities, PSP_VIDEO_QUALITY_MAX);
-    }
+    wili_parse_stream_header(data, total, &s->quality, s->qualities, &s->quality_count,
+                             PSP_VIDEO_QUALITY_MAX);
   }
   return total;
 }

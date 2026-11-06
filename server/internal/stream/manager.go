@@ -223,7 +223,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.event("error", "#%d play url: %v", sess.ID, err)
 		return
 	}
-	m.event("stream", "#%d source qn=%d %dx%d %.0f fps", sess.ID, media.QN, media.Width, media.Height, media.FPS)
+	m.event("stream", "#%d source qn=%d %dx%d %.0f fps, video offers %v", sess.ID, media.QN, media.Width, media.Height, media.FPS, media.Qualities)
 	attempts := Attempts(media)
 	var lastErr string
 	for i, in := range attempts {

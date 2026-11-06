@@ -69,6 +69,12 @@ int wili_parse_quality_list(const char *value, size_t length, int *out, int cap)
 /* The same for a single tier ("X-Wili-Quality"); 0 when it is not a known tier. */
 int wili_parse_quality(const char *value, size_t length);
 
+/* One response header line from /wili/v1/stream ("X-Wili-Qualities: 16,32,64\r\n"). Header names are
+ * case-insensitive. Fills quality (X-Wili-Quality, the tier being streamed) or list and count
+ * (X-Wili-Qualities, the tiers this video offers, at most cap). Returns 1 when the line was one of
+ * those two headers, 0 otherwise. */
+int wili_parse_stream_header(const char *line, size_t length, int *quality, int *list, int *count, int cap);
+
 /* 1 for one of the WILI_QN_* tiers. */
 int wili_stream_quality_valid(int qn);
 /* The next tier in ascending order, wrapping from the highest to the lowest. An unknown value

@@ -98,6 +98,25 @@ static void test_quality_headers(void) {
     CHECK(wili_parse_quality_list(all, sizeof(all) - 1, tiers, 8) == 8);
 }
 
+/* The header names are what wili-server sends (server/internal/stream/manager.go). */
+static void test_stream_headers(void) {
+    int quality = 0, count = 0, tiers[8] = {0};
+    CHECK(wili_parse_stream_header("X-Wili-Quality: 80\r\n", 20, &quality, tiers, &count, 8) == 1 && quality == 80);
+    const char list[] = "X-Wili-Qualities: 16,32,64,80,116\r\n";
+    CHECK(wili_parse_stream_header(list, sizeof(list) - 1, &quality, tiers, &count, 8) == 1);
+    CHECK(count == 5 && tiers[0] == 16 && tiers[4] == 116 && quality == 80);
+    /* Case does not matter (HTTP/2 and proxies lower-case names), and nothing else matches. */
+    const char lower[] = "x-wili-qualities: 32,120\r\n";
+    CHECK(wili_parse_stream_header(lower, sizeof(lower) - 1, &quality, tiers, &count, 8) == 1 && count == 2 && tiers[1] == 120);
+    const char longer[] = "X-Wili-Qualities-Extra: 1,2\r\n";
+    CHECK(wili_parse_stream_header(longer, sizeof(longer) - 1, &quality, tiers, &count, 8) == 0 && count == 2);
+    const char other[] = "Content-Type: video/x-flv\r\n";
+    CHECK(wili_parse_stream_header(other, sizeof(other) - 1, &quality, tiers, &count, 8) == 0);
+    CHECK(wili_parse_stream_header("X-Wili-Quality", 14, &quality, tiers, &count, 8) == 0); /* no colon */
+    /* A bad value clears the field instead of keeping an old one. */
+    CHECK(wili_parse_stream_header("X-Wili-Quality: abc\r\n", 22, &quality, tiers, &count, 8) == 1 && quality == 0);
+}
+
 static void test_quality_tiers(void) {
     /* Ascending cycle through every tier that wraps, so Settings can step through them. */
     int qn = WILI_QN_360P, seen = 0;
@@ -206,7 +225,7 @@ static void test_discovery(const char *dir) {
 int main(int argc, char **argv) {
     if (argc < 2) { puts("usage: stream_server_test tests/data"); return 2; }
     test_address(); test_token(); test_rewrite(); test_stream_url(); test_discovery(argv[1]);
-    test_quality_tiers(); test_quality_headers();
+    test_quality_tiers(); test_quality_headers(); test_stream_headers();
     WiliStreamParams p = wili_stream_params(WILI_PRESET_BALANCED);
     CHECK(p.video_kbps == 1000 && p.audio_kbps == 96);
     CHECK(wili_stream_params(WILI_PRESET_PERFORMANCE).video_kbps == 700);
