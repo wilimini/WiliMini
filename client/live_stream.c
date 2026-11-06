@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wili_log.h>
 
 #define LIVE_CAPACITY (2 * 1024 * 1024)
 #define LIVE_LOOKBACK (64 * 1024)
@@ -280,6 +281,9 @@ int bili_prepare_stream_server(const char *url, BiliPlayback *out, int *http_sta
     out->quality = s->quality;
     out->quality_count = s->quality_count;
     for (int i = 0; i < s->quality_count; ++i) out->qualities[i] = s->qualities[i];
+    /* Zero tiers here means the server did not send X-Wili-Qualities (an older wili-server). */
+    WLOG_I(WLC_NET, "stream tiers current=%d count=%d first=%d last=%d", s->quality, s->quality_count,
+           s->quality_count ? s->qualities[0] : 0, s->quality_count ? s->qualities[s->quality_count - 1] : 0);
     return 0;
   }
   if (error && error_cap) live_error_code(s, error, error_cap);

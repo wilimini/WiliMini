@@ -290,6 +290,7 @@ int main(int argc, char** argv) {
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
             options.settings = &settings;
+            WLOG_I(WLC_CLIENT, "quality menu current=%d count=%d", settings.quality, settings.quality_count);
             PspVideoResult result{};
             playbackActive = 1;
             const int error = psp_video_play(&options, &result);

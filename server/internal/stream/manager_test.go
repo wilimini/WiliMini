@@ -82,6 +82,13 @@ func newFixture(t *testing.T, max int, seconds int) *fixture {
 			fmt.Fprint(w, `{"code":-101,"message":"账号未登录"}`)
 		case "BV1ONLYAV100":
 			fmt.Fprint(w, `{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":13,"base_url":"x"}],"audio":[{"id":30280,"base_url":"y"}]}}}`)
+		case "BV1MULTITIER":
+			// Several tiers, as a real video has; every one points at the same small test media.
+			fmt.Fprintf(w, `{"code":0,"data":{"dash":{"video":[
+				{"id":16,"codecid":7,"base_url":"%[1]s/media/v.mp4"},{"id":32,"codecid":7,"base_url":"%[1]s/media/v.mp4"},
+				{"id":64,"codecid":7,"base_url":"%[1]s/media/v.mp4"},{"id":80,"codecid":7,"base_url":"%[1]s/media/v.mp4"},
+				{"id":116,"codecid":12,"base_url":"%[1]s/media/v.mp4"}],
+				"audio":[{"id":30280,"base_url":"%[1]s/media/a.m4a"}]}}}`, base)
 		case "BV1BADCDN000":
 			// The first CDN URL fails, the backup works.
 			fmt.Fprintf(w, `{"code":0,"data":{"dash":{"video":[{"id":32,"codecid":7,"base_url":"%[1]s/media/missing.mp4","backup_url":["%[1]s/media/v.mp4"]}],"audio":[{"id":30280,"base_url":"%[1]s/media/missing.m4a","backup_url":["%[1]s/media/a.m4a"]}]}}}`, base)
@@ -346,5 +353,33 @@ func TestProbeReportsMissingBinary(t *testing.T) {
 	info := Probe(context.Background(), "/nonexistent/ffmpeg-nope")
 	if info.OK || !strings.Contains(info.Problem, "not found") {
 		t.Fatalf("%+v", info)
+	}
+}
+
+// The PSP builds its quality menu from these two response headers, so check them on the real HTTP
+// response of a real transcode, not only on the helper that sets them.
+func TestStreamResponseTellsThePSPWhichTiersTheVideoHas(t *testing.T) {
+	f := newFixture(t, 2, 3)
+	for _, tc := range []struct{ query, wantQuality string }{
+		{"qn=64", "64"},   // asked for 720P: streamed as 720P
+		{"qn=120", "116"}, // asked for 4K: falls back to the best tier below it that exists
+		{"qn=16", "16"},
+	} {
+		resp, _ := fetch(t, f.front.URL+"/?bvid=BV1MULTITIER&cid=9&"+tc.query)
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: status %d", tc.query, resp.StatusCode)
+		}
+		if got := resp.Header.Get("X-Wili-Quality"); got != tc.wantQuality {
+			t.Errorf("%s: X-Wili-Quality %q, want %s", tc.query, got, tc.wantQuality)
+		}
+		// The list is the same whichever tier was asked for: it is what the video offers.
+		if got := resp.Header.Get("X-Wili-Qualities"); got != "16,32,64,80,116" {
+			t.Errorf("%s: X-Wili-Qualities %q", tc.query, got)
+		}
+	}
+	// A video with a single tier lists just that one.
+	resp, _ := fetch(t, f.front.URL+"/?bvid=BV1xx411c7mD&cid=9")
+	if resp.Header.Get("X-Wili-Qualities") != "32" || resp.Header.Get("X-Wili-Quality") != "32" {
+		t.Errorf("single tier: %v", resp.Header)
 	}
 }
