@@ -65,8 +65,10 @@ static int hw_avc_load(void) {
         WLOG_E(WLC_PLAYER, "hw-avc: firmware 0x%08x; needs 6.60 or 6.61", version);
         return -1;
     }
+    /* The bootstrap already loaded AVCODEC; loading it again answers "already loaded", which
+     * is 0x80110f02 for AV modules (0x80111102 is the plain utility modules' code). */
     int r = sceUtilityLoadAvModule(PSP_AV_MODULE_AVCODEC);
-    if (r < 0 && (unsigned)r != 0x80020139u /* already loaded */) {
+    if (r < 0 && (unsigned)r != 0x80110f02u && (unsigned)r != 0x80111102u) {
         WLOG_E(WLC_PLAYER, "hw-avc: avcodec load failed 0x%08x", (unsigned)r);
         return r;
     }
