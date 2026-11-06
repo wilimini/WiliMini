@@ -18,19 +18,38 @@
  *
  * The stream is expected to be what wili-server sends: AVC Main profile with CAVLC,
  * no B-frames, level 3.0, dimensions that are multiples of 16, at most 480x272. */
-/* The ring buffer and the refill size follow what real PSP homebrew does (pspdev/libpspav): 60 packets
- * of 2048 bytes, refilled at most 32 packets per sceMpegRingbufferPut. An access unit has to fit in
- * the ring, so a keyframe bigger than about EMU_RING_PACKETS * 2000 bytes is reported, not waited for. */
-#define EMU_RING_PACKETS 60
-#define EMU_PUT_PACKETS 32
+/* Match the independently verified video-only PMF test: 256 packs in the ring and a full refill.
+ * A whole H.264 access unit must fit before the firmware hands it to the decoder. */
+#define EMU_RING_PACKETS 256
 #define EMU_MAX_AU (4 * 1024 * 1024)
+#define EMU_MAX_GOP_AUS 128
+#define EMU_MAX_GOP_BYTES (4 * 1024 * 1024)
+#define EMU_MAX_STAMPS 512
+#define EMU_PSMF_PACK 2048
+#define EMU_MUX_RATE 25000
+#define EMU_PSTD_KB 235
+typedef struct {
+    unsigned offset, size;
+    int64_t pts, dts;
+} EmuAu;
 typedef struct {
     AVFormatContext *format;
     AVPacket *packet;
-    int stream, nal_length, eof, error;
+    int stream, nal_length, eof, error, native, first_chunk;
     uint8_t *parameters, *data;
     unsigned parameters_size, size, offset;
     int64_t pts, dts;
+    EmuAu *aus;
+    unsigned count, index, pack_in_gop;
+    uint8_t *gop, *pending;
+    size_t gop_used, gop_capacity;
+    unsigned pending_size;
+    int64_t pending_pts, pending_dts;
+    int has_pending, gop_ready;
+    uint64_t scr;
+    int scr_valid;
+    int64_t stamps[EMU_MAX_STAMPS];
+    unsigned stamp_head, stamp_count;
 } EmuMux;
 
 static void emu_timestamp(uint8_t *p, int prefix, int64_t value) {
@@ -75,6 +94,46 @@ static int emu_parameters(EmuMux *mux, const AVCodecParameters *par) {
     return 0;
 }
 
+static int emu_scan_nals(const AVPacket *packet, int nal_length, unsigned *types,
+                         int *first_type, unsigned *first_end) {
+    unsigned seen = 0, end = 0, at = 0, size = packet->size;
+    int first = -1;
+    if (nal_length) {
+        while (at < size) {
+            if ((unsigned)nal_length > size - at) return AVERROR_INVALIDDATA;
+            unsigned n = 0;
+            for (int i = 0; i < nal_length; ++i) n = (n << 8) | packet->data[at++];
+            if (!n || n > size - at) return AVERROR_INVALIDDATA;
+            int type = packet->data[at] & 0x1f;
+            if (first < 0) first = type;
+            seen |= 1u << type;
+            at += n;
+            if (!end) end = at;
+        }
+    } else {
+        while (at + 3 <= size) {
+            if (packet->data[at] || packet->data[at + 1] || packet->data[at + 2] != 1) {
+                ++at;
+                continue;
+            }
+            at += 3;
+            if (at >= size) break;
+            int type = packet->data[at] & 0x1f;
+            if (first < 0) first = type;
+            seen |= 1u << type;
+            unsigned next = at + 1;
+            while (next + 3 <= size &&
+                   (packet->data[next] || packet->data[next + 1] || packet->data[next + 2] != 1))
+                ++next;
+            if (!end) end = next;
+            at = next;
+        }
+    }
+    if (!seen) return AVERROR_INVALIDDATA;
+    *types = seen; *first_type = first; *first_end = end;
+    return 0;
+}
+
 static int emu_next_packet(EmuMux *mux) {
     av_freep(&mux->data);
     mux->size = mux->offset = 0;
@@ -86,14 +145,30 @@ static int emu_next_packet(EmuMux *mux) {
     } while (mux->packet->stream_index != mux->stream && !quit_requested);
     if (quit_requested) return AVERROR_EXIT;
     AVPacket *packet = mux->packet;
-    unsigned extra = (packet->flags & AV_PKT_FLAG_KEY) ? mux->parameters_size : 0;
     unsigned size = packet->size;
     if (size > EMU_MAX_AU) return AVERROR_INVALIDDATA;
+    unsigned types = 0, first_end = 0;
+    int first_type = -1;
+    ret = emu_scan_nals(packet, mux->nal_length, &types, &first_type, &first_end);
+    if (ret < 0) return ret;
+    const int has_aud = first_type == 9;
+    const int has_parameters = (types & (1u << 7)) && (types & (1u << 8));
+    unsigned extra = (packet->flags & AV_PKT_FLAG_KEY) && !has_parameters ? mux->parameters_size : 0;
+    const unsigned aud_size = has_aud ? 0 : 6;
     /* At most four output bytes for every one-byte NAL length. */
-    mux->data = av_malloc(size * 4 + extra + AV_INPUT_BUFFER_PADDING_SIZE);
+    mux->data = av_malloc(size * 4 + extra + aud_size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!mux->data) return AVERROR(ENOMEM);
-    if (extra) memcpy(mux->data, mux->parameters, extra);
-    mux->size = extra;
+    mux->size = 0;
+    if (!has_aud) {
+        static const uint8_t aud[6] = {0, 0, 0, 1, 9, 0xf0};
+        memcpy(mux->data, aud, sizeof(aud));
+        mux->size = sizeof(aud);
+        if (extra) {
+            memcpy(mux->data + mux->size, mux->parameters, extra);
+            mux->size += extra;
+            extra = 0;
+        }
+    }
     if (mux->nal_length) {
         unsigned at = 0;
         while (at < size) {
@@ -104,9 +179,24 @@ static int emu_next_packet(EmuMux *mux) {
             AV_WB32(mux->data + mux->size, 1); mux->size += 4;
             memcpy(mux->data + mux->size, packet->data + at, n);
             mux->size += n; at += n;
+            if (extra) {
+                memcpy(mux->data + mux->size, mux->parameters, extra);
+                mux->size += extra;
+                extra = 0;
+            }
         }
     } else {
-        memcpy(mux->data + mux->size, packet->data, size); mux->size += size;
+        if (extra) {
+            memcpy(mux->data + mux->size, packet->data, first_end);
+            mux->size += first_end;
+            memcpy(mux->data + mux->size, mux->parameters, extra);
+            mux->size += extra;
+            memcpy(mux->data + mux->size, packet->data + first_end, size - first_end);
+            mux->size += size - first_end;
+        } else {
+            memcpy(mux->data + mux->size, packet->data, size);
+            mux->size += size;
+        }
     }
     AVRational tb = mux->format->streams[mux->stream]->time_base;
     int64_t pts = packet->pts == AV_NOPTS_VALUE ? packet->dts : packet->pts;
@@ -118,10 +208,206 @@ static int emu_next_packet(EmuMux *mux) {
     return 0;
 }
 
+static int emu_gop_append(EmuMux *mux, const uint8_t *data, unsigned size,
+                          int64_t pts, int64_t dts) {
+    if (mux->count >= EMU_MAX_GOP_AUS || size > 0xffffu ||
+        size > EMU_MAX_GOP_BYTES - mux->gop_used ||
+        mux->stamp_count >= EMU_MAX_STAMPS)
+        return AVERROR_INVALIDDATA;
+    size_t needed = mux->gop_used + size;
+    if (needed > mux->gop_capacity) {
+        size_t capacity = mux->gop_capacity ? mux->gop_capacity : 64 * 1024;
+        while (capacity < needed) {
+            if (capacity >= EMU_MAX_GOP_BYTES / 2) { capacity = EMU_MAX_GOP_BYTES; break; }
+            capacity *= 2;
+        }
+        uint8_t *grown = av_realloc(mux->gop, capacity);
+        if (!grown) return AVERROR(ENOMEM);
+        mux->gop = grown;
+        mux->gop_capacity = capacity;
+    }
+    if (!mux->aus) {
+        mux->aus = av_calloc(EMU_MAX_GOP_AUS, sizeof(*mux->aus));
+        if (!mux->aus) return AVERROR(ENOMEM);
+    }
+    EmuAu *au = &mux->aus[mux->count++];
+    au->offset = (unsigned)mux->gop_used;
+    au->size = size;
+    au->pts = pts;
+    au->dts = dts;
+    memcpy(mux->gop + mux->gop_used, data, size);
+    mux->gop_used = needed;
+    mux->stamps[(mux->stamp_head + mux->stamp_count++) % EMU_MAX_STAMPS] = pts;
+    return 0;
+}
+
+static int64_t emu_take_stamp(EmuMux *mux) {
+    if (!mux->stamp_count) return AV_NOPTS_VALUE;
+    int64_t pts = mux->stamps[mux->stamp_head];
+    mux->stamp_head = (mux->stamp_head + 1) % EMU_MAX_STAMPS;
+    --mux->stamp_count;
+    return pts;
+}
+
+/* The PSP indexes the AUs of one IDR chunk before their first video pack. Buffer one
+ * GOP so the 0xBF table has every AU size and does not end in the middle of a chunk. */
+static int emu_load_gop(EmuMux *mux) {
+    mux->count = mux->index = mux->pack_in_gop = mux->gop_used = 0;
+    mux->gop_ready = 0;
+    mux->scr_valid = 0;
+    int ret;
+    if (mux->has_pending) {
+        ret = emu_gop_append(mux, mux->pending, mux->pending_size, mux->pending_pts, mux->pending_dts);
+        mux->has_pending = 0;
+        if (ret < 0) return ret;
+    } else {
+        do {
+            ret = emu_next_packet(mux);
+            if (ret < 0) return ret;
+        } while (!(mux->packet->flags & AV_PKT_FLAG_KEY) && !quit_requested);
+        if (quit_requested) return AVERROR_EXIT;
+        ret = emu_gop_append(mux, mux->data, mux->size, mux->pts, mux->dts);
+        if (ret < 0) return ret;
+    }
+    for (;;) {
+        ret = emu_next_packet(mux);
+        if (ret == AVERROR_EOF) { mux->eof = 1; break; }
+        if (ret < 0) return ret;
+        if (mux->packet->flags & AV_PKT_FLAG_KEY) {
+            mux->pending = av_realloc(mux->pending, mux->size);
+            if (!mux->pending) return AVERROR(ENOMEM);
+            memcpy(mux->pending, mux->data, mux->size);
+            mux->pending_size = mux->size;
+            mux->pending_pts = mux->pts;
+            mux->pending_dts = mux->dts;
+            mux->has_pending = 1;
+            break;
+        }
+        ret = emu_gop_append(mux, mux->data, mux->size, mux->pts, mux->dts);
+        if (ret < 0) return ret;
+    }
+    if (!mux->count) return AVERROR_INVALIDDATA;
+    mux->gop_ready = 1;
+    return 0;
+}
+
+static void emu_pack_header(uint8_t *p, uint64_t scr27) {
+    const uint32_t base = (uint32_t)(scr27 / 300), ext = (uint32_t)(scr27 % 300);
+    p[0] = 0; p[1] = 0; p[2] = 1; p[3] = 0xba;
+    p[4] = (uint8_t)(0x40 | (((base >> 30) & 7) << 3) | 0x04 | ((base >> 28) & 3));
+    p[5] = (uint8_t)(base >> 20);
+    p[6] = (uint8_t)((((base >> 15) & 0x1f) << 3) | 4 | ((base >> 13) & 3));
+    p[7] = (uint8_t)(base >> 5);
+    p[8] = (uint8_t)(((base & 0x1f) << 3) | 4 | ((ext >> 7) & 3));
+    p[9] = (uint8_t)(((ext & 0x7f) << 1) | 1);
+    p[10] = (uint8_t)(EMU_MUX_RATE >> 14);
+    p[11] = (uint8_t)(EMU_MUX_RATE >> 6);
+    p[12] = (uint8_t)(((EMU_MUX_RATE & 0x3f) << 2) | 3);
+    p[13] = 0xf8;
+}
+
+static void emu_system_header(uint8_t *p) {
+    p[0] = 0; p[1] = 0; p[2] = 1; p[3] = 0xbb; AV_WB16(p + 4, 12);
+    p[6] = (uint8_t)(0x80 | ((EMU_MUX_RATE >> 15) & 0x7f));
+    p[7] = (uint8_t)(EMU_MUX_RATE >> 7);
+    p[8] = (uint8_t)(((EMU_MUX_RATE & 0x7f) << 1) | 1);
+    p[9] = 0x80; p[10] = 0xf0; p[11] = 0x7f; p[12] = 0xb9;
+    p[13] = (uint8_t)(0xe0 | (EMU_PSTD_KB >> 8)); p[14] = (uint8_t)EMU_PSTD_KB;
+    p[15] = 0xbd; p[16] = 0xe3; p[17] = 0x08;
+}
+
+static void emu_chunk_header(uint8_t *p, const EmuMux *mux) {
+    const unsigned size = 24 + 4 * mux->count;
+    p[0] = 0; p[1] = 0; p[2] = 1; p[3] = 0xbf;
+    AV_WB16(p + 4, size - 6);
+    p[6] = 1; p[7] = 0xe0;
+    if (mux->first_chunk) {
+        AV_WB16(p + 8, 0); AV_WB16(p + 10, 0); AV_WB16(p + 12, 1); AV_WB16(p + 14, 1);
+    } else {
+        AV_WB16(p + 8, 0); AV_WB16(p + 10, 1); AV_WB16(p + 12, 1); AV_WB16(p + 14, 2);
+    }
+    AV_WB32(p + 16, 0);
+    AV_WB16(p + 20, 2 + 4 * mux->count);
+    AV_WB16(p + 22, mux->count);
+    for (unsigned i = 0; i < mux->count; ++i) {
+        AV_WB16(p + 24 + 4 * i, i + 1 == mux->count ? 0x0000 : 0x0080);
+        AV_WB16(p + 26 + 4 * i, mux->aus[i].size);
+    }
+}
+
+static SceInt32 emu_native_ring_read(void *output, SceInt32 packets, EmuMux *mux) {
+    const uint64_t pack_ticks = ((uint64_t)EMU_PSMF_PACK * 27000000ull +
+                                 EMU_MUX_RATE * 50ull - 1) / (EMU_MUX_RATE * 50ull);
+    int written = 0;
+    while (written < packets && !quit_requested && !mux->error) {
+        if (!mux->gop_ready || mux->index >= mux->count) {
+            if (mux->eof) break;
+            int ret = emu_load_gop(mux);
+            if (ret < 0) {
+                if (ret == AVERROR_EOF) mux->eof = 1;
+                else mux->error = ret;
+                break;
+            }
+            WLOG_I(WLC_PLAYER, "sce_gop aus=%u bytes=%zu pts=%lld", mux->count, mux->gop_used,
+                   (long long)mux->aus[0].pts);
+        }
+        EmuAu *au = &mux->aus[mux->index];
+        uint8_t *p = (uint8_t *)output + written * EMU_PSMF_PACK;
+        const int first_pack = mux->pack_in_gop == 0;
+        const int first_au_pack = au->offset == 0;
+        uint64_t want = au->dts > 36000 ? (uint64_t)(au->dts - 36000) * 300 : 0;
+        mux->scr = mux->scr_valid && mux->scr + pack_ticks > want ? mux->scr + pack_ticks : want;
+        mux->scr_valid = 1;
+        memset(p, 0xff, EMU_PSMF_PACK);
+        emu_pack_header(p, mux->scr);
+        p += 14;
+        unsigned remaining = EMU_PSMF_PACK - 14;
+        if (first_pack && mux->first_chunk) {
+            emu_system_header(p); p += 18; remaining -= 18;
+        }
+        if (first_pack) {
+            const unsigned chunk_size = 24 + 4 * mux->count;
+            emu_chunk_header(p, mux); p += chunk_size; remaining -= chunk_size;
+        }
+        unsigned flags = 0, optional = 0;
+        if (first_au_pack) { flags |= 0xc0; optional += 10; }
+        if (first_pack) { flags |= 1; optional += 3; }
+        unsigned header = 9 + optional;
+        unsigned n = au->size - au->offset;
+        if (n > remaining - header) n = remaining - header;
+        const unsigned padding = remaining - header - n;
+        const unsigned stuffing = padding < 6 ? padding : 0;
+        p[0] = 0; p[1] = 0; p[2] = 1; p[3] = 0xe0;
+        AV_WB16(p + 4, header + stuffing + n - 6);
+        p[6] = 0x81; p[7] = (uint8_t)flags; p[8] = (uint8_t)(optional + stuffing);
+        if (first_au_pack) {
+            emu_timestamp(p + 9, 3, au->pts);
+            emu_timestamp(p + 14, 1, au->dts);
+        }
+        if (first_pack) {
+            p[19] = 0x1e; p[20] = (uint8_t)(0x60 | (EMU_PSTD_KB >> 8)); p[21] = (uint8_t)EMU_PSTD_KB;
+        }
+        memcpy(p + header + stuffing, mux->gop + au->offset, n);
+        if (padding >= 6) {
+            uint8_t *q = p + header + n;
+            q[0] = 0; q[1] = 0; q[2] = 1; q[3] = 0xbe; AV_WB16(q + 4, padding - 6);
+        }
+        au->offset += n;
+        if (au->offset == au->size) ++mux->index;
+        ++mux->pack_in_gop;
+        ++written;
+        if (first_pack) mux->first_chunk = 0;
+        if (mux->index >= mux->count) mux->gop_ready = 0;
+    }
+    if (written > 0) sceKernelDcacheWritebackRange(output, (unsigned)written * EMU_PSMF_PACK);
+    return written;
+}
+
 /* Each callback packet is a complete MPEG-2 pack/PES, padded to 2048 bytes.
  * Keep packets bounded so streaming never needs a complete movie in memory. */
 static SceInt32 emu_ring_read(void *output, SceInt32 packets, void *opaque) {
     EmuMux *mux = opaque;
+    if (mux->native) return emu_native_ring_read(output, packets, mux);
     static const uint8_t pack[14] = {0,0,1,0xba,0x44,0,4,0,4,1,0,0,3,0xf8};
     int written = 0;
     while (written < packets && !quit_requested && !mux->error) {
@@ -197,10 +483,8 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     unsigned segment_frames = 0; /* frames shown since this segment started */
     SceMpeg mpeg = NULL;
     SceMpegRingbuffer ring = {0};
-    SceMpegStream *stream = NULL, *atrac_stream = NULL;
-    SceMpegAu au __attribute__((aligned(64))), atrac_au __attribute__((aligned(64)));
-    void *atrac_es = NULL;
-    SceInt32 atrac_es_size = 0, atrac_out_size = 0;
+    SceMpegStream *stream = NULL;
+    SceMpegAu au __attribute__((aligned(64)));
     void *state = NULL, *ring_data = NULL, *es = NULL;
     void *rgb = NULL, *frame = NULL;
     VideoSourceIO input = {0};
@@ -215,6 +499,8 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     stats->eof = 0;
     video_stage = PSP_VIDEO_STAGE_SOURCE;
     const int emulator = psp_runtime_detect() == PSP_RUNTIME_PPSSPP;
+    mux.native = !emulator;
+    mux.first_chunk = 1;
     const char *backend_name = emulator ? "ppsspp-sceMpeg" : "psp-sceMpeg";
     WLOG_I(WLC_PLAYER, "backend=%s", backend_name);
     ret = source_open(&mux.format, SOURCE, video_io_source, &input);
@@ -293,23 +579,12 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
     sceKernelDcacheWritebackRange(header, sizeof(header));
     ret = sceMpegQueryStreamOffset(&mpeg,header,&offset);
     if (ret < 0) goto done;
-    /* Both streams are registered, the video one and the audio one, in the order real PSP players do
-     * (pspdev/libpspav). No ATRAC data is ever sent: FFmpeg decodes the audio, so the audio stream
-     * is only registered, with its own access unit and buffer, to leave the firmware in the state a
-     * player with audio would. */
+    /* Only the video stream exists in this PSMF header. Audio is decoded separately by FFmpeg. */
     stream = sceMpegRegistStream(&mpeg,0,0);
     if (!stream) { ret = -1; goto done; }
-    atrac_stream = sceMpegRegistStream(&mpeg,1,0);
-    if (!atrac_stream) { ret = -1; goto done; }
     es = sceMpegMallocAvcEsBuf(&mpeg);
     if (!es) { ret = AVERROR(ENOMEM); goto done; }
     ret = sceMpegInitAu(&mpeg,es,&au);
-    if (ret < 0) goto done;
-    ret = sceMpegQueryAtracEsSize(&mpeg,&atrac_es_size,&atrac_out_size);
-    if (ret < 0) goto done;
-    atrac_es = memalign(64, atrac_es_size > 0 ? (size_t)atrac_es_size : 64);
-    if (!atrac_es) { ret = AVERROR(ENOMEM); goto done; }
-    ret = sceMpegInitAu(&mpeg,atrac_es,&atrac_au);
     if (ret < 0) goto done;
     SceMpegAvcMode mode = {-1,output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
                                    ? SCE_MPEG_AVC_FORMAT_5650 : SCE_MPEG_AVC_FORMAT_8888};
@@ -329,8 +604,7 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         if (available < 0) { ret = available; break; }
         if (!mux.eof && available) {
             playback_operation_set("sce_ring_put");
-            /* At most EMU_PUT_PACKETS at a time, with the whole free space as the third argument. */
-            ret = sceMpegRingbufferPut(&ring,available < EMU_PUT_PACKETS ? available : EMU_PUT_PACKETS,available);
+            ret = sceMpegRingbufferPut(&ring,available,available);
             if (ret < 0) break;
         }
         if (mux.error) { ret = mux.error; break; }
@@ -369,8 +643,12 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
             continue;
         }
         empty = 0;
+        int64_t decoded_pts = mux.native ? emu_take_stamp(&mux)
+                                         : ((int64_t)au.iPtsMSB << 32 | au.iPts);
+        if (decoded_pts == AV_NOPTS_VALUE)
+            decoded_pts = ((int64_t)au.iPtsMSB << 32 | au.iPts);
         /* PPSSPP updates the AU with the reordered output timestamp. */
-        int64_t pts_us = (((int64_t)au.iPtsMSB << 32 | au.iPts) - 90000) * 1000000 / 90000;
+        int64_t pts_us = (decoded_pts - 90000) * 1000000 / 90000;
         if (stats->total_frames < 3 || stats->total_frames % 60 == 0)
             WLOG_I(WLC_PLAYER, "sce_frame frames=%u got=%d pts_us=%lld audio_us=%lld size=%dx%d stride=%d format=%d",
                    stats->total_frames, (int)got, (long long)pts_us,
@@ -462,13 +740,13 @@ static int sce_mpeg_run_segment(const PspVideoOptions *options, RunStats *stats,
         /* PSPSDK declares the first argument as SceMpeg, but the firmware
          * and PPSSPP ABI take the address of the handle, like Delete. */
         if (stream) sceMpegUnRegistStream((SceMpeg)&mpeg,stream);
-        if (atrac_stream) sceMpegUnRegistStream((SceMpeg)&mpeg,atrac_stream);
         sceMpegDelete(&mpeg);
     }
     if (constructed) sceMpegRingbufferDestruct(&ring);
     if (initialized) sceMpegFinish();
-    free(frame); free(rgb); free(ring_data); free(state); free(atrac_es);
+    free(frame); free(rgb); free(ring_data); free(state);
     av_packet_free(&mux.packet); av_free(mux.parameters); av_free(mux.data);
+    av_free(mux.gop); av_free(mux.aus); av_free(mux.pending);
     source_close(&mux.format,&input);
     if (run_path[0]) {
         char path[224]; snprintf(path,sizeof(path),"%s/summary.json",run_path);
