@@ -362,9 +362,8 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
         if (audio.error) { ret = audio.error; break; }
         playback_operation_set("sce_scale");
         const size_t bpp = rgb_pixel_bytes;
-        /* sceMpeg emits PSP BGR565; the presenter's RGB565 contract has red in the high five
-         * bits. Direct display already expects the firmware's ordering. */
-        const int swap_rb = presenter != NULL;
+        /* sceMpeg emits PSP BGR565, matching both direct display and GU_PSM_5650
+         * presentation, so the 16-bit pixels pass through unchanged. */
         for (int y = 0; y < out_h; ++y) {
             const uint8_t *srow = (const uint8_t *)rgb + (size_t)(direct ? y : ymap[y]) * stride * bpp;
             uint8_t *drow = (uint8_t *)frame + ((size_t)(y + off_y) * 512 + off_x) * bpp;
@@ -374,17 +373,10 @@ static int sce_mpeg_run_decode(const PspVideoOptions *options, RunStats *stats) 
                     const uint32_t *sp = (const uint32_t *)srow; uint32_t *dp = (uint32_t *)drow;
                     for (int x = 0; x < out_w; ++x) dp[x] = sp[xmap[x]];
                 }
-            } else if (direct && swap_rb && !(out_w & 1) && !(off_x & 1)) {
-                const uint32_t *sp = (const uint32_t *)srow; uint32_t *dp = (uint32_t *)drow;
-                for (int x = 0; x < out_w / 2; ++x) {
-                    const uint32_t v = sp[x]; /* two pixels at once */
-                    dp[x] = (v & 0x07e007e0u) | ((v & 0x001f001fu) << 11) | ((v >> 11) & 0x001f001fu);
-                }
             } else {
                 const uint16_t *sp = (const uint16_t *)srow; uint16_t *dp = (uint16_t *)drow;
                 for (int x = 0; x < out_w; ++x) {
-                    const uint16_t px = direct ? sp[x] : sp[xmap[x]];
-                    dp[x] = swap_rb ? (uint16_t)((px & 0x07e0) | ((px & 31) << 11) | (px >> 11)) : px;
+                    dp[x] = direct ? sp[x] : sp[xmap[x]];
                 }
             }
         }
