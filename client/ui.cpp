@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <pspgum.h>
@@ -170,6 +171,7 @@ void jpegFailure(j_common_ptr context) {
 bool geDirty = false;
 #ifdef BILI_UI_FRAME_STATS
 uint64_t statGeSyncUs = 0;
+unsigned statCoverLockMisses = 0;  // lookups that showed a placeholder because the decoder held the lock
 #endif
 
 void geResetState() {
@@ -552,7 +554,12 @@ CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int heigh
     if (coverDecoder < 0 && !coverDecoderStart()) return nullptr;
     // Never wait on the decoder: if it holds the lock, show the placeholder for this frame.
     std::unique_lock<std::mutex> lock(coverMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return nullptr;
+    if (!lock.owns_lock()) {
+#ifdef BILI_UI_FRAME_STATS
+        ++statCoverLockMisses;
+#endif
+        return nullptr;
+    }
     int victim = -1;
     for (int i = 0; i < kMaxCovers; ++i) {
         CoverSlot& slot = covers[i];
@@ -582,6 +589,21 @@ CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int heigh
 void drawCover(const std::string& bvid, int x, int y, int width, int height, bool detailed = false,
                int clipTop = 0, int clipBottom = kHeight, uint32_t placeholder = 0, bool label = true) {
     CoverSlot* slot = showCovers ? coverSlot(bvid, width, height) : nullptr;
+#ifdef BILI_UI_FRAME_STATS
+    // Diagnostic: a cover shown as an image and then, within two frames, as a placeholder flickers.
+    static std::unordered_map<std::string, unsigned> imageFrame;
+    const std::string coverId = bvid + ':' + std::to_string(width) + 'x' + std::to_string(height);
+    if (slot && slot->texture.data) {
+        imageFrame[coverId] = coverFrame;
+    } else if (showCovers) {
+        const auto seen = imageFrame.find(coverId);
+        if (seen != imageFrame.end() && coverFrame - seen->second <= 2 && coverFrame != seen->second) {
+            WLOG_W(WLC_UI, "cover flicker key=%s frame=%u last_image=%u lock_misses=%u", bvid.c_str(),
+                   coverFrame.load(), seen->second, statCoverLockMisses);
+            imageFrame.erase(seen);
+        }
+    }
+#endif
     if (!slot || !slot->texture.data) {
         const int top = std::max(y, clipTop);
         const int bottom = std::min(y + height, clipBottom);
