@@ -2079,29 +2079,14 @@ void drawThemeCard(pspapp::CardStyle style, const TileItem& item, size_t index, 
     }
 }
 
-void drawThemedPage(const pspapp::App& app) {
+void drawThemedLayout(const pspapp::App& app, const std::vector<TileItem>& items, bool mine, size_t selection) {
     using namespace pspapp;
     const Layout& layout = app.contentLayout();
     const auto& auth = app.auth();
-    std::vector<TileItem> items;
-    static const std::string none;
-    const bool mine = app.screen() == Screen::Mine || app.tab() == Tab::Mine;
-    if (mine) {
-        items.push_back({&none, &none, std::string(), 0});
-        for (const auto& entry : app.history()) items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
-        for (const auto& entry : app.later()) items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
-    } else {
-        for (const auto& card : app.cards()) {
-            std::string meta = card.author;
-            if (card.views > 0) meta += "  ·  " + formatCount(card.views);
-            if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
-            items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
-        }
-    }
     const size_t count = std::min(items.size(), layout.size());
-    const size_t selected = std::min(app.selection(), count ? count - 1 : 0);
+    const size_t selected = std::min(selection, count ? count - 1 : 0);
     const bool focus = app.focusArea() == FocusArea::Content && count > 0;
-    const ThemeScrollView view{kGridTop, kGridBottom};
+    const ThemeScrollView view{app.preferences().tileHome() ? 66 : kGridTop, kGridBottom};
     const int scroll = updateScroll(static_cast<float>(layoutScrollTarget(layout, selected, layout.horizontal ? 12 : 100)));
     const FocusFx& fx = layout.focus;
     ThemeReaction reaction;
@@ -2165,6 +2150,32 @@ void drawThemedPage(const pspapp::App& app) {
             drawRing(target);
         }
     }
+}
+
+void drawThemedPage(const pspapp::App& app) {
+    using namespace pspapp;
+    std::vector<TileItem> items;
+    static const std::string none;
+    const bool mine = app.screen() == Screen::Mine || app.tab() == Tab::Mine;
+    if (mine) {
+        items.push_back({&none, &none, std::string(), 0});
+        for (const auto& entry : app.history()) items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
+        for (const auto& entry : app.later()) items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
+    } else {
+        for (const auto& card : app.cards()) {
+            std::string meta = card.author;
+            if (card.views > 0) meta += "  ·  " + formatCount(card.views);
+            if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
+            items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
+        }
+    }
+    drawThemedLayout(app, items, mine, app.selection());
+}
+
+void drawThemedBrowse(const pspapp::App& app) {
+    static const std::string none, more = "加载下一页";
+    const auto items = browseTileItems(app.browsePage(), none, more);
+    drawThemedLayout(app, items, false, app.browseSelection());
 }
 
 // Tiles: the two-column cover grid of the home tab.
@@ -3116,7 +3127,8 @@ void drawBrowse(const pspapp::App& app) {
         if (pspapp::isPgcPosterPage(page.request.kind)) { drawPgcPosters(app); return; }
         if (page.request.kind == pspapp::BrowseKind::Season) { drawPgcEpisodes(app); return; }
         if (pspapp::isVideoListPage(page)) {
-            if (app.preferences().metro()) drawBrowseVideosMetro(app);
+            if (app.contentLayout().themed) drawThemedBrowse(app);
+            else if (app.preferences().metro()) drawBrowseVideosMetro(app);
             else if (app.preferences().tileHome()) drawBrowseVideosTiles(app);
             else drawBrowseVideosClassic(app);
             return;

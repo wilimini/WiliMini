@@ -720,7 +720,13 @@ const Layout& App::hubLayout() const {
     return hubCache_;
 }
 
+bool App::browseVideoList() const {
+    return screen() == Screen::Browse && hasBrowse() && !commentPage() && browseState().page.request.kind != BrowseKind::Text &&
+           !browseState().error && !browseState().page.items.empty() && isVideoListPage(browseState().page);
+}
+
 const char* App::layoutScreen() const {
+    if (browseVideoList()) return "browse";
     if (screen() == Screen::Mine) return "mine";
     if (screen() == Screen::Home && root().tab == Tab::Search) return "search";
     return "feed";
@@ -737,7 +743,7 @@ void App::loadTheme() {
 
 const Layout& App::contentLayout() const {
     const char* name = layoutScreen();
-    const bool themeable = theme_.loaded() && !(screen() == Screen::Home && root().tab == Tab::Search &&
+    const bool themeable = theme_.loaded() && !(!browseVideoList() && screen() == Screen::Home && root().tab == Tab::Search &&
                                                 root().searchView != SearchView::Results);
     LayoutKey key;
     key.generation = theme_.generation();
@@ -746,7 +752,7 @@ const Layout& App::contentLayout() const {
     key.view = static_cast<int>(root().searchView);
     key.style = static_cast<int>(preferences_.homeStyle);
     key.dark = preferences_.darkTheme;
-    key.selected = root().selection;
+    key.selected = browseVideoList() ? browseState().selection : root().selection;
     key.count = layoutCount();
     if (key == layoutKey_) return layoutCache_;
     layoutKey_ = key;
@@ -755,7 +761,10 @@ const Layout& App::contentLayout() const {
         LayoutRequest request;
         request.screen = name;
         request.count = layoutCache_.size();
-        request.selected = root().selection;
+        request.selected = key.selected;
+        // Content starts below the page header: the pivot row in the tile styles, the category bar otherwise.
+        request.viewY = preferences_.tileHome() ? 70 : 53;
+        request.viewH = 251 - request.viewY;
         request.style = static_cast<int>(preferences_.homeStyle);
         request.dark = preferences_.darkTheme;
         Layout themed;
@@ -767,6 +776,7 @@ const Layout& App::contentLayout() const {
 }
 
 size_t App::layoutCount() const {
+    if (browseVideoList()) return browseState().page.items.size() + (browseState().page.hasMore ? 1 : 0);
     if (screen() == Screen::Mine) return 1 + history_.size() + later_.size();
     if (screen() == Screen::Home && root().tab == Tab::Search) {
         if (root().searchView == SearchView::Results) return search_.size();
@@ -776,6 +786,8 @@ size_t App::layoutCount() const {
 }
 
 Layout App::builtinLayout() const {
+    if (browseVideoList())
+        return preferences_.homeStyle == HomeStyle::Tiles ? gridLayout(layoutCount(), 2) : listLayout(layoutCount());
     if (screen() == Screen::Mine)
         return preferences_.homeStyle == HomeStyle::Tiles ? accountGridLayout(history_.size() + later_.size())
                                                           : listLayout(1 + history_.size() + later_.size());

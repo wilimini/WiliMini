@@ -88,15 +88,19 @@ void App::browseMove(int dx, int dy) {
         return;
       }
   }
-  const bool videoGrid =
-      preferences_.homeStyle == HomeStyle::Tiles && isVideoListPage(frame.page);
-  const int movement =
-      isPgcPosterPage(frame.page.request.kind) ? dx + dy * 4 : videoGrid ? dx + dy * 2 : dy;
-  if (!movement)
-    return;
   const size_t count = frame.page.items.size();
   // The final row is an explicit pagination/retry target.
   const size_t total = count + (frame.page.hasMore ? 1 : 0);
+  if (browseVideoList() && !isPgcPosterPage(frame.page.request.kind)) {
+    // Video lists move by item rectangles, so a theme can lay them out any way it likes.
+    if (total)
+      frame.selection = layoutNeighbor(contentLayout(), std::min(frame.selection, total - 1), dx, dy);
+    browseState().confirmingDelete = false;
+    return;
+  }
+  const int movement = isPgcPosterPage(frame.page.request.kind) ? dx + dy * 4 : dy;
+  if (!movement)
+    return;
   if (total)
     frame.selection = static_cast<size_t>(
         std::max(0, std::min(static_cast<int>(total) - 1,

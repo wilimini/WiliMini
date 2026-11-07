@@ -274,6 +274,7 @@ private:
     uint64_t reactionAtUs_ = 0;
     Layout builtinLayout() const;
     size_t layoutCount() const;
+    bool browseVideoList() const;
     struct LayoutKey {
         unsigned generation = ~0u;
         int screen = -1, tab = -1, view = -1, style = 0;
