@@ -68,6 +68,8 @@ jobs:
           ARCHIVE="WiliMini-$VERSION.zip"
           (cd dist/PSP/GAME && python3 -m zipfile -c "$GITHUB_WORKSPACE/artifacts/$ARCHIVE" WiliMini)
           (cd artifacts && sha256sum "$ARCHIVE" > "$ARCHIVE.sha256")
+          # SHA256SUMS is what the in-app updater verifies (see docs/auto-update.md).
+          (cd artifacts && sha256sum "$ARCHIVE" > SHA256SUMS)
 
       - name: Upload PSP package artifact
         uses: actions/upload-artifact@v4
@@ -102,3 +104,4 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.sha256
+            artifacts/SHA256SUMS
