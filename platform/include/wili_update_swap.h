@@ -19,6 +19,10 @@
  * injection. The PSP binding lives in the loader. */
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define WILI_SWAP_TRIAL_BOOTS 3
 
 typedef struct wili_swap_fs {
@@ -43,5 +47,9 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root);
 int wili_swap_commit(const wili_swap_fs *fs, const char *root);
 /* 1 if safe to extract/write a manifest entry. */
 int wili_swap_path_ok(const char *rel);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
