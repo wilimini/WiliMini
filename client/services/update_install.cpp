@@ -109,6 +109,22 @@ UpdateResult checkForUpdate(UpdateTransport& t, const std::string& apiUrl, const
     return UpdateResult::Ok;
 }
 
+const UpdateSource kUpdateSources[2] = {
+    {"GitHub", "https://api.github.com/repos/wilimini/WiliMini/releases/latest"},
+    {"Codeberg", "https://codeberg.org/api/v1/repos/wilimini/WiliMini/releases/latest"},
+};
+
+UpdateResult checkForUpdateAny(UpdateTransport& t, const UpdateSource* sources, size_t count,
+                               const std::string& running, ReleaseInfo& out, const char** usedSource) {
+    UpdateResult last = UpdateResult::Network;
+    for (size_t i = 0; i < count; ++i) {
+        last = checkForUpdate(t, sources[i].apiUrl, running, out);
+        if (usedSource) *usedSource = sources[i].name;
+        if (last != UpdateResult::Network) return last;
+    }
+    return last;
+}
+
 UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const std::string& partPath,
                              const std::string& zipPath, const ProgressFn& progress) {
     std::string expected = info.sha256;
@@ -122,7 +138,7 @@ UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const 
         uint64_t have = 0;
         fileSize(partPath, have);
         if (info.zipSize && have > info.zipSize) { std::remove(partPath.c_str()); have = 0; }
-        bool restart = false, aborted = false;
+        bool restart = false, aborted = false, openFailed = false;
         FILE* f = nullptr;
         UpdateProgress prog{have, info.zipSize};
         if (have == 0 || have != info.zipSize) {
@@ -136,6 +152,7 @@ UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const 
                         if (a == ResumeAction::Restart) { restart = true; return false; }
                     }
                     f = std::fopen(partPath.c_str(), have ? "ab" : "wb");
+                    openFailed = f == nullptr;
                     return f != nullptr;
                 },
                 [&](const void* d, size_t n) {
@@ -148,7 +165,7 @@ UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const 
             if (f) { std::fflush(f); std::fclose(f); }
             if (aborted) return UpdateResult::Cancelled;
             if (restart) { std::remove(partPath.c_str()); continue; }
-            if (!ok) return f ? UpdateResult::Network : UpdateResult::Storage; // .part kept for resume
+            if (!ok) return openFailed ? UpdateResult::Storage : UpdateResult::Network; // .part kept for resume
         }
         uint64_t size = 0;
         if (!fileSize(partPath, size) || (info.zipSize && size != info.zipSize)) {

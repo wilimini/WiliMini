@@ -29,6 +29,14 @@ using ProgressFn = std::function<bool(const UpdateProgress&)>; // false = cancel
 // newest stable release is not newer than `running`.
 UpdateResult checkForUpdate(UpdateTransport& t, const std::string& apiUrl, const std::string& running, ReleaseInfo& out);
 
+// Release endpoints in order of preference. Codeberg mirrors GitHub (see docs/auto-update.md).
+struct UpdateSource { const char* name; const char* apiUrl; };
+extern const UpdateSource kUpdateSources[2];
+// Tries each source until one answers. A source that answers "no update" or
+// "bad release" ends the search; only network failures fall through.
+UpdateResult checkForUpdateAny(UpdateTransport& t, const UpdateSource* sources, size_t count,
+                               const std::string& running, ReleaseInfo& out, const char** usedSource = nullptr);
+
 // Downloads info.zipUrl to `partPath`, resuming from an existing file, then
 // verifies SHA-256 (API digest or SHA256SUMS). On success the file is renamed
 // to `zipPath`. Interrupted downloads keep the .part file for the next try;
