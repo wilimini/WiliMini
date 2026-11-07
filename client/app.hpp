@@ -11,6 +11,7 @@
 #include "layout.hpp"
 #include "navigation.hpp"
 #include "preferences.hpp"
+#include "theme.hpp"
 #include "tile_layout.hpp"
 #include "services/auth_service.hpp"
 #include "services/search_service.hpp"
@@ -138,7 +139,10 @@ public:
     void moveSelection(int dx, int dy);
     // Item rectangles of the scrolling content on the current page; selection, scrolling and the
     // cover queue are all derived from them. Empty for pages without a selectable grid or list.
-    Layout contentLayout() const;
+    const Layout &contentLayout() const;
+    const Theme &theme() const { return theme_; }
+    // Name the theme scripts know the current content page by: "feed", "search" or "mine".
+    const char *layoutScreen() const;
     void activate();
     void back();
     void search(const std::string &keyword);
@@ -254,6 +258,22 @@ private:
     static App *workerApp;
 
     Preferences preferences_;
+    mutable Theme theme_;
+    void loadTheme();
+    Layout builtinLayout() const;
+    size_t layoutCount() const;
+    struct LayoutKey {
+        unsigned generation = ~0u;
+        int screen = -1, tab = -1, view = -1, style = 0;
+        bool dark = false;
+        size_t count = ~size_t(0), selected = ~size_t(0);
+        bool operator==(const LayoutKey &o) const {
+            return generation == o.generation && screen == o.screen && tab == o.tab && view == o.view &&
+                   style == o.style && dark == o.dark && count == o.count && selected == o.selected;
+        }
+    };
+    mutable LayoutKey layoutKey_;
+    mutable Layout layoutCache_;
     bool hubOpen_ = false;
     int hubSelection_ = 0;
     uint64_t hubLaunchAt_ = 0;  // system time (us) when the launch animation began; 0 = idle

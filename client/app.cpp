@@ -344,6 +344,7 @@ void App::init() {
     const bool preferencesLoaded = loadPreferences(CLIENT_PATH("/settings.json"), preferences_);
     applyLogPreferences(preferences_);
     hubOpen_ = preferences_.tileHome();
+    loadTheme();
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
     history_ = loadLocal(CLIENT_PATH("/history.json"));
     later_ = loadLocal(CLIENT_PATH("/later.json"));
@@ -586,7 +587,7 @@ void App::moveSelection(int dx, int dy) {
             }
             return;
         }
-        const Layout layout = contentLayout();
+        const Layout &layout = contentLayout();
         if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || layoutEdge(layout, root().selection, -1, 0))) {
             if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
@@ -647,7 +648,7 @@ void App::moveSelection(int dx, int dy) {
     }
     const auto& list = activeCards();
     if (list.empty()) return;
-    const Layout layout = contentLayout();
+    const Layout &layout = contentLayout();
     size_t value = std::min(root().selection, list.size() - 1);
     value = layoutNeighbor(layout, value, dx, dy);
     root().selection = value;
@@ -655,7 +656,62 @@ void App::moveSelection(int dx, int dy) {
         loadNextPage();
 }
 
-Layout App::contentLayout() const {
+const char* App::layoutScreen() const {
+    if (screen() == Screen::Mine) return "mine";
+    if (screen() == Screen::Home && root().tab == Tab::Search) return "search";
+    return "feed";
+}
+
+void App::loadTheme() {
+    theme_.unload();
+    layoutKey_ = LayoutKey{};
+    if (preferences_.theme.empty()) return;
+    const std::string path = std::string(CLIENT_ROOT) + "/themes/" + preferences_.theme + "/theme.lua";
+    if (theme_.loadFile(path)) WLOG_I(WLC_CLIENT, "theme %s loaded", preferences_.theme.c_str());
+    else WLOG_W(WLC_CLIENT, "theme %s: %s", preferences_.theme.c_str(), theme_.error().c_str());
+}
+
+const Layout& App::contentLayout() const {
+    const char* name = layoutScreen();
+    const bool themeable = theme_.loaded() && !(screen() == Screen::Home && root().tab == Tab::Search &&
+                                                root().searchView != SearchView::Results);
+    LayoutKey key;
+    key.generation = theme_.generation();
+    key.screen = static_cast<int>(screen());
+    key.tab = static_cast<int>(root().tab);
+    key.view = static_cast<int>(root().searchView);
+    key.style = static_cast<int>(preferences_.homeStyle);
+    key.dark = preferences_.darkTheme;
+    key.selected = root().selection;
+    key.count = layoutCount();
+    if (key == layoutKey_) return layoutCache_;
+    layoutKey_ = key;
+    layoutCache_ = builtinLayout();
+    if (themeable && !layoutCache_.empty()) {
+        LayoutRequest request;
+        request.screen = name;
+        request.count = layoutCache_.size();
+        request.selected = root().selection;
+        request.style = static_cast<int>(preferences_.homeStyle);
+        request.dark = preferences_.darkTheme;
+        Layout themed;
+        if (theme_.layout(request, themed)) layoutCache_ = std::move(themed);
+        else if (!theme_.error().empty())
+            WLOG_W(WLC_CLIENT, "theme layout %s: %s", name, theme_.error().c_str());
+    }
+    return layoutCache_;
+}
+
+size_t App::layoutCount() const {
+    if (screen() == Screen::Mine) return 1 + history_.size() + later_.size();
+    if (screen() == Screen::Home && root().tab == Tab::Search) {
+        if (root().searchView == SearchView::Results) return search_.size();
+        return root().searchView == SearchView::History ? searchHistory_.size() : 2 + root().searchTopics.size();
+    }
+    return activeCards().size();
+}
+
+Layout App::builtinLayout() const {
     if (screen() == Screen::Mine)
         return preferences_.homeStyle == HomeStyle::Tiles ? accountGridLayout(history_.size() + later_.size())
                                                           : listLayout(1 + history_.size() + later_.size());
@@ -1222,7 +1278,7 @@ void App::updateCoverQueue() {
     // The cover window starts at the first item visible once the page has scrolled to the selection.
     size_t first = posters ? selected / 4 * 4 : selected > 2 ? selected - 2 : 0;
     if (!hasBrowse() && screen() == Screen::Home && root().tab != Tab::Search) {
-        const Layout layout = contentLayout();
+        const Layout &layout = contentLayout();
         if (!layout.empty()) {
             const int anchor = preferences_.metro() ? kFeedRowScrollAnchor : kFeedGridScrollAnchor;
             first = std::min(layoutFirstVisible(layout, layoutScrollTarget(layout, selected, anchor)), layout.size() - 1);

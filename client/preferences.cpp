@@ -126,6 +126,9 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         }
         loaded.logChannels = root.value("log_channels", std::string());
         if (!validLogChannels(loaded.logChannels)) return false;
+        // A bad theme name only disables the theme; it must not reset the other settings.
+        loaded.theme = root.value("theme", std::string());
+        if (!validThemeName(loaded.theme)) loaded.theme.clear();
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
         if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
             loaded.playbackBufferFrames != 8) return false;
@@ -159,7 +162,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"log_files", preferences.saveLogFiles},
         {"home_style", homeStyleCode(preferences.homeStyle)},
         {"input_method", inputMethodCode(preferences.inputMethod)},
-        {"log_channels", preferences.logChannels}}).dump();
+        {"log_channels", preferences.logChannels}, {"theme", validThemeName(preferences.theme) ? preferences.theme : ""}}).dump();
     const std::string temporary = std::string(path) + ".part";
     FILE* file = std::fopen(temporary.c_str(), "wb");
     if (!file) return false;

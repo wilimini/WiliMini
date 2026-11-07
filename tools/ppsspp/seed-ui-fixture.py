@@ -5,12 +5,13 @@ Writes a cached home feed, generated cover images, local history and watch-later
 entries, and optionally settings.json, so UI screens can be inspected in
 PPSSPP without an account or network access. The data is synthetic.
 
-Usage: seed-ui-fixture.py MEMSTICK_DIR [--tiles | --metro] [--dark] [--many]
+Usage: seed-ui-fixture.py MEMSTICK_DIR [--tiles | --metro] [--dark] [--many] [--theme NAME]
 
 --many writes 30 history entries so long lists and restored scroll positions can be checked.
 """
 import colorsys
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -60,6 +61,10 @@ def main():
     settings = {"version": 1, "dark_theme": "--dark" in sys.argv, "body_size": 14, "show_covers": True,
                 "slow_repeat": False,
                 "home_style": "metro" if "--metro" in sys.argv else "tiles" if "--tiles" in sys.argv else "classic"}
+    if "--theme" in sys.argv:
+        name = sys.argv[sys.argv.index("--theme") + 1]
+        shutil.copytree(Path(__file__).resolve().parents[2] / "themes" / name, root / "themes" / name)
+        settings["theme"] = name
     (root / "settings.json").write_text(json.dumps(settings))
 
 

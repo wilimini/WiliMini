@@ -250,6 +250,7 @@ add_library(wili_client_objects OBJECT
     client/bitmap_font.cpp
     client/pinyin_ime.cpp
     client/title_font.cpp
+    client/theme.cpp
     client/bilibili.c
     client/live_stream.c
     client/json.c
@@ -341,7 +342,7 @@ foreach(client_target wili_mini wili_mini_1000)
         "${PSP_FFMPEG_PREFIX}/lib/libavcodec.a"
         "${PSP_FFMPEG_PREFIX}/lib/libavutil.a"
         "${PSP_CURL_PREFIX}/lib/libcurl.a"
-        mbedtls mbedx509 mbedcrypto jpeg
+        mbedtls mbedx509 mbedcrypto jpeg lua
         pspgu pspdebug m z
         -Wl,--start-group
         stdc++ supc++ pthreadglue pthread cglue c
@@ -415,6 +416,7 @@ add_custom_target(package
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${PACKAGE_DIR}/licenses"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${PACKAGE_DIR}/cache"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT}/LICENSE" "${PACKAGE_DIR}/licenses/wili-mini.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${ROOT}/themes" "${PACKAGE_DIR}/themes"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_BINARY_DIR}/loader/EBOOT.PBP"
         "${CMAKE_BINARY_DIR}/wili_mini.prx"

@@ -17,7 +17,7 @@ namespace pspapp {
 namespace {
 
 constexpr int kHookCount = 1000;
-constexpr int kCoordLimit = 4000;
+constexpr int kCoordLimit = 30000;
 
 // Helpers a theme can call. Plain Lua so scripts do not need to repeat the arithmetic.
 const char kPrelude[] = R"LUA(
@@ -363,6 +363,15 @@ bool Theme::layout(const LayoutRequest& request, Layout& out) {
             }
             value[k] = lua_tonumber(L, -1);
             lua_pop(L, 1);
+        }
+        // Far outside the range is a script bug, not something to clamp: clamping would stack items.
+        if (!(std::fabs(value[0]) <= kCoordLimit && std::fabs(value[1]) <= kCoordLimit &&
+              value[2] <= kCoordLimit && value[3] <= kCoordLimit)) {
+            char message[96];
+            std::snprintf(message, sizeof(message), "item %zu is out of range (limit %d)", i + 1, kCoordLimit);
+            s.error = message;
+            lua_settop(L, top);
+            return false;
         }
         layout.items.push_back({clampInt(value[0], -kCoordLimit, kCoordLimit), clampInt(value[1], -kCoordLimit, kCoordLimit),
                                 clampInt(value[2], 1, kCoordLimit), clampInt(value[3], 1, kCoordLimit)});

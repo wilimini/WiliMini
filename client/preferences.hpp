@@ -48,6 +48,14 @@ const char* homeStyleCode(HomeStyle style);
 enum class InputMethod : int { Pinyin = 0, System = 1 };
 const char* inputMethodCode(InputMethod method);
 
+// A theme is the folder themes/<name>/ next to the settings file; the name is a plain identifier.
+inline bool validThemeName(const std::string& name) {
+    if (name.empty() || name.size() > 32) return false;
+    for (const char c : name)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) return false;
+    return true;
+}
+
 struct Preferences {
     bool darkTheme = false;
     int bodySize = 14;
@@ -69,6 +77,9 @@ struct Preferences {
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
     // settings.json and preserved on save; see wili_log_configure().
     std::string logChannels;
+    // Name of the active theme script (themes/<name>/theme.lua); empty for the built-in look.
+    // Edited by hand in settings.json and preserved on save.
+    std::string theme;
 
     const char* confirmButton() const {
         return buttonGlyph(confirmWithCircle ? ControllerButton::Circle : ControllerButton::Cross);

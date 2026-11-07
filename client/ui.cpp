@@ -1680,7 +1680,7 @@ void drawVideoGrid(const pspapp::App& app) {
         if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
         items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
     }
-    const pspapp::Layout layout = app.contentLayout();
+    const pspapp::Layout& layout = app.contentLayout();
     const size_t selected = std::min(app.selection(), layout.size() ? layout.size() - 1 : 0);
     const int scroll = updateScroll(static_cast<float>(pspapp::layoutScrollTarget(layout, selected, pspapp::kFeedRowScrollAnchor)));
     drawRowList(items, 0, scroll);
@@ -1800,7 +1800,7 @@ void drawVideoGridTiles(const pspapp::App& app) {
         items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
     }
     const bool focus = app.focusArea() == pspapp::FocusArea::Content;
-    const pspapp::Layout layout = app.contentLayout();
+    const pspapp::Layout& layout = app.contentLayout();
     const int scroll = updateScroll(static_cast<float>(
         pspapp::layoutScrollTarget(layout, app.selection(), pspapp::kFeedGridScrollAnchor)));
     drawTileGrid(items, focus ? static_cast<int>(app.selection()) : -1, 0, scroll);
@@ -1960,6 +1960,142 @@ std::vector<TileItem> browseTileItems(const pspapp::BrowsePage& page, const std:
     for (const auto& item : page.items) items.push_back({&item.bvid, &item.title, browseVideoMeta(item), item.duration});
     if (page.hasMore) items.push_back({&empty, &more, "", 0});
     return items;
+}
+
+// ---- Pages laid out by a theme script. The script returns one rectangle per item; the host draws
+// each item with the card template the script named, then the focused item last.
+struct ThemeScrollView { int top, bottom; };
+
+// Draws the cover so that it fills (x, y, w, h), cropping the 224x118 source to the same aspect.
+void drawCoverFill(const std::string& bvid, int x, int y, int w, int h, int clipTop, int clipBottom, uint32_t placeholder) {
+    CoverSlot* slot = showCovers ? coverSlot(bvid, 224, 118) : nullptr;
+    if (!slot || !slot->texture.data) {
+        const int top = std::max(y, clipTop), bottom = std::min(y + h, clipBottom);
+        if (bottom > top) fillRect(x, top, w, bottom - top, placeholder);
+        return;
+    }
+    int sw = slot->width, sh = slot->height;
+    if (sw * h > sh * w) sw = std::max(1, sh * w / h);   // destination is narrower: crop the sides
+    else sh = std::max(1, sw * h / w);                   // destination is wider: crop top and bottom
+    const int su = (slot->width - sw) / 2, sv = (slot->height - sh) / 2;
+    geSprite(TexState{TexKind::Color5650, slot->texture.data, slot->texWidth, slot->texHeight}, x, y, w, h, su, sv, sw, sh,
+             0xffffffffu, 0, clipTop, kWidth, clipBottom);
+}
+
+void drawThemeCard(pspapp::CardStyle style, const TileItem& item, size_t index, int x, int y, int w, int h,
+                   const ThemeScrollView& view) {
+    using pspapp::CardStyle;
+    if (x >= kWidth || x + w <= 0 || y >= view.bottom || y + h <= view.top) return;
+    const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
+    const uint32_t white = color(255, 255, 255);
+    const uint32_t tint = kTilePalette[index % 8];
+    if (style == CardStyle::Default) style = h >= 64 ? CardStyle::Tile : CardStyle::Row;
+    const int textWidth = std::max(0, w - 12);
+    if (style == CardStyle::Row || style == CardStyle::Compact) {
+        fillRect(x, top, w, bottom - top, kPanelRaised);
+        int textX = x + 6;
+        if (style == CardStyle::Row) {
+            const int coverH = std::max(8, h - 4), coverW = coverH * 16 / 9;
+            drawCoverFill(*item.bvid, x + 2, y + 2, coverW, coverH, view.top, view.bottom, tint);
+            textX = x + coverW + 10;
+        }
+        const int room = std::max(0, x + w - textX - 4);
+        const bool twoLines = h >= 30;
+        drawText(textX, y + (twoLines ? 2 : (h - 14) / 2), 0.7f, kText, *item.title, room, false, view.top, view.bottom);
+        if (twoLines) drawText(textX, y + 19, 0.42f, kTextDim, item.meta, room, false, view.top, view.bottom);
+        return;
+    }
+    drawCoverFill(*item.bvid, x, y, w, h, view.top, view.bottom, tint);
+    if (style == CardStyle::Tile && item.duration > 0 && h >= 60 && y + 4 >= view.top) {
+        const std::string duration = formatDuration(item.duration);
+        const int badge = static_cast<int>(duration.size()) * 6 + 8;
+        blendRect(x + w - badge - 4, y + 4, badge, 14, color(0, 0, 0), 170);
+        drawText(x + w - badge, y + 4, 0.42f, white, duration, badge, false, view.top, view.bottom);
+    }
+    const int strip = style == CardStyle::Poster || h < 60 ? 18 : 32;
+    const int stripTop = std::max(y + h - strip, top);
+    if (bottom > stripTop) blendRect(x, stripTop, w, bottom - stripTop, color(0, 0, 0), 175);
+    if (strip >= 32) {
+        drawText(x + 6, y + h - 31, 0.5f, white, *item.title, textWidth, false, view.top, view.bottom);
+        drawText(x + 6, y + h - 16, 0.42f, color(200, 204, 214), item.meta, textWidth, false, view.top, view.bottom);
+    } else {
+        drawText(x + 6, y + h - 16, 0.5f, white, *item.title, textWidth, false, view.top, view.bottom);
+    }
+}
+
+void drawThemedPage(const pspapp::App& app) {
+    using namespace pspapp;
+    const Layout& layout = app.contentLayout();
+    const auto& auth = app.auth();
+    std::vector<TileItem> items;
+    static const std::string none;
+    const bool mine = app.screen() == Screen::Mine || app.tab() == Tab::Mine;
+    if (mine) {
+        items.push_back({&none, &none, std::string(), 0});
+        for (const auto& entry : app.history()) items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
+        for (const auto& entry : app.later()) items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
+    } else {
+        for (const auto& card : app.cards()) {
+            std::string meta = card.author;
+            if (card.views > 0) meta += "  ·  " + formatCount(card.views);
+            if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
+            items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
+        }
+    }
+    const size_t count = std::min(items.size(), layout.size());
+    const size_t selected = std::min(app.selection(), count ? count - 1 : 0);
+    const bool focus = app.focusArea() == FocusArea::Content && count > 0;
+    const ThemeScrollView view{kGridTop, kGridBottom};
+    const int scroll = updateScroll(static_cast<float>(layoutScrollTarget(layout, selected, layout.horizontal ? 12 : 100)));
+    const FocusFx& fx = layout.focus;
+    auto place = [&](size_t i, bool focused, int& x, int& y, int& w, int& h) {
+        const LayoutRect& r = layout.items[i];
+        x = r.x - (layout.horizontal ? scroll : 0);
+        y = r.y - (layout.horizontal ? 0 : scroll);
+        w = r.w;
+        h = r.h;
+        if (focused) {
+            const int sw = w * fx.scalePercent / 100, sh = h * fx.scalePercent / 100;
+            x += (w - sw) / 2 + fx.offsetX;
+            y += (h - sh) / 2 + fx.offsetY;
+            w = sw;
+            h = sh;
+        }
+    };
+    auto drawOne = [&](size_t i, bool focused) {
+        int x, y, w, h;
+        place(i, focused, x, y, w, h);
+        if (mine && i == 0) {
+            if (x >= kWidth || x + w <= 0 || y >= view.bottom || y + h <= view.top) return;
+            const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
+            fillRect(x, top, w, bottom - top, kTilePalette[0]);
+            const bool signedIn = auth.state == AuthState::SignedIn;
+            drawText(x + 10, y + 7, 0.7f, color(255, 255, 255),
+                     signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
+                     std::max(0, w - 24), false, view.top, view.bottom);
+            drawText(x + 10, y + 29, 0.5f, color(220, 228, 250),
+                     authStateMessage(auth.state, app.preferences().confirmWithCircle), std::max(0, w - 24), false,
+                     view.top, view.bottom);
+            return;
+        }
+        drawThemeCard(layout.card, items[i], i, x, y, w, h, view);
+        if (fx.dimOthers && !focused && focus) {
+            const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
+            const int left = std::max(x, 0), right = std::min(x + w, kWidth);
+            if (bottom > top && right > left) blendRect(left, top, right - left, bottom - top, color(0, 0, 0), 120);
+        }
+    };
+    for (size_t i = 0; i < count; ++i)
+        if (!(focus && i == selected)) drawOne(i, false);
+    if (focus) {
+        drawOne(selected, true);
+        if (fx.kind == FocusFx::Ring) {
+            int x, y, w, h;
+            place(selected, true, x, y, w, h);
+            const float target[4] = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), static_cast<float>(h)};
+            drawRing(target);
+        }
+    }
 }
 
 // Tiles: the two-column cover grid of the home tab.
@@ -3145,7 +3281,9 @@ void ui_render(const pspapp::App& app) {
         if (app.preferences().metro()) drawHub(app, nowMs); else drawHubTiles(app, nowMs);
     } else {
         drawHeader(app);
-        if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) {
+        if (app.contentLayout().themed) {
+            drawThemedPage(app);
+        } else if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) {
             if (!tile) drawMine(app);
             else if (app.preferences().metro()) drawMineTiles(app);
             else drawMineGrid(app);

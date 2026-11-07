@@ -53,9 +53,11 @@ int main() {
         assert(!t.layout(request("feed", 1), out));
         assert(t.loadSource("return { layout = function(ctx) return 5 end }", "num"));
         assert(!t.layout(request("feed", 1), out));
-        assert(t.loadSource("return { layout = function(ctx) return { items = { {x=-99999,y=1e9,w=0,h=-5} } } end }", "clamp"));
+        assert(t.loadSource("return { layout = function(ctx) return { items = { {x=-99999,y=1e9,w=10,h=10} } } end }", "range"));
+        assert(!t.layout(request("feed", 1), out) && t.error().find("range") != std::string::npos);
+        assert(t.loadSource("return { layout = function(ctx) return { items = { {x=-5.5,y=7.9,w=0,h=-5} } } end }", "clamp"));
         assert(t.layout(request("feed", 1), out));
-        assert(out.items[0].x == -4000 && out.items[0].y == 4000 && out.items[0].w == 1 && out.items[0].h == 1);
+        assert(out.items[0].x == -6 && out.items[0].y == 7 && out.items[0].w == 1 && out.items[0].h == 1);
         assert(!t.layout(request("feed", Theme::kMaxItems + 1), out));
     }
     // Sandbox: no io/os/load, runaway loops and memory bombs are stopped, errors do not stick.
