@@ -100,6 +100,21 @@ int main(int argc, char** argv) {
     value.theme = "bad/name";
     assert(pspapp::savePreferences(path, value) && pspapp::loadPreferences(path, themeRestored) && themeRestored.theme.empty());
     value.theme.clear();
+    // Built-in theme ids carry a home style and the dark flag, and win over the older fields.
+    {
+        pspapp::HomeStyle style;
+        bool dark;
+        assert(pspapp::parseBuiltinTheme("metro-dark", style, dark) && style == pspapp::HomeStyle::Metro && dark);
+        assert(pspapp::parseBuiltinTheme("classic", style, dark) && style == pspapp::HomeStyle::Classic && !dark);
+        assert(!pspapp::parseBuiltinTheme("xmb", style, dark) && !pspapp::parseBuiltinTheme("", style, dark));
+        for (auto st : {pspapp::HomeStyle::Classic, pspapp::HomeStyle::Tiles, pspapp::HomeStyle::Metro})
+            for (bool d : {false, true}) {
+                assert(pspapp::parseBuiltinTheme(pspapp::builtinThemeId(st, d), style, dark) && style == st && dark == d);
+            }
+        std::ofstream(path) << R"({"version":1,"dark_theme":false,"home_style":"classic","body_size":14,"show_covers":true,"slow_repeat":false,"theme":"tiles-dark"})";
+        pspapp::Preferences builtin;
+        assert(pspapp::loadPreferences(path, builtin) && builtin.homeStyle == pspapp::HomeStyle::Tiles && builtin.darkTheme && builtin.theme == "tiles-dark");
+    }
     // The input method defaults to Auto, round-trips and is validated.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
     assert(pspapp::loadPreferences(path, value) && value.inputMethod == pspapp::InputMethod::Pinyin);

@@ -4,6 +4,7 @@
 -- Settings, Feed and Inbox are categories too: focus them and press confirm to open the page.
 return {
   name = "Cross media bar",
+  shell = "bar", pages = "classic", dark = true,   -- the theme draws its own category bar
   colors = {
     background = 0x14308a, panel = 0x1a3f9e, raised = 0x24509e,
     text = 0xffffff, dim = 0xb4c8ec, line = 0x3a64b8,

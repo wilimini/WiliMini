@@ -6,8 +6,7 @@
 
 namespace pspapp {
 enum class SettingItem : std::size_t {
-    DarkTheme,
-    HomeStyle,
+    Theme,
     BodySize,
     ShowCovers,
     SlowRepeat,
@@ -44,6 +43,22 @@ const char* logVerbosityCode(LogVerbosity level);
 enum class HomeStyle : int { Classic = 0, Tiles = 1, Metro = 2 };
 const char* homeStyleCode(HomeStyle style);
 
+// The built-in themes are named records of a home style and a dark flag: "classic", "tiles",
+// "metro", each also as "<name>-dark". Folder themes must not use these names.
+inline const char* builtinThemeId(HomeStyle style, bool dark) {
+    switch (style) {
+        case HomeStyle::Tiles: return dark ? "tiles-dark" : "tiles";
+        case HomeStyle::Metro: return dark ? "metro-dark" : "metro";
+        default: return dark ? "classic-dark" : "classic";
+    }
+}
+inline bool parseBuiltinTheme(const std::string& id, HomeStyle& style, bool& dark) {
+    for (const HomeStyle candidate : {HomeStyle::Classic, HomeStyle::Tiles, HomeStyle::Metro})
+        for (const bool candidateDark : {false, true})
+            if (id == builtinThemeId(candidate, candidateDark)) { style = candidate; dark = candidateDark; return true; }
+    return false;
+}
+
 // Text entry: the built-in pinyin keyboard (default) or the PSP system keyboard.
 enum class InputMethod : int { Pinyin = 0, System = 1 };
 const char* inputMethodCode(InputMethod method);
@@ -77,8 +92,9 @@ struct Preferences {
     // Optional per-channel overrides such as "net=debug,player=warn". Edited by hand in
     // settings.json and preserved on save; see wili_log_configure().
     std::string logChannels;
-    // Name of the active theme script (themes/<name>/theme.lua); empty for the built-in look.
-    // Edited by hand in settings.json and preserved on save.
+    // The chosen theme: a built-in id (see builtinThemeId) or the folder name of a theme script
+    // (themes/<name>/theme.lua). Empty in files from before themes existed: then homeStyle and
+    // darkTheme above are the choice. With a theme chosen those two hold what the theme resolved to.
     std::string theme;
 
     const char* confirmButton() const {

@@ -14,20 +14,41 @@ Put the theme in a folder next to the settings file:
 ms0:/PSP/GAME/WiliMini/themes/<name>/theme.lua
 ```
 
-Then set `"theme": "<name>"` in `settings.json` (a plain identifier: letters, digits, `-`, `_`; up to
-32 characters). An empty or missing value, or a name that does not load, shows the built-in look.
-The package ships the examples under `themes/` in the repository.
+Choose it in the game: **Settings → Theme** cycles through the built-in themes (Classic, Tiles and
+Metro, each light and dark) and then every folder under `themes/`, and applies at once. The choice is
+saved as `"theme"` in `settings.json` (a built-in id such as `metro-dark`, or the folder name: letters,
+digits, `-`, `_`, up to 32 characters; the built-in names are reserved). If a script does not load, the
+previous theme stays and the status line says why. Old settings files without `"theme"` keep working:
+their home style and dark setting are the choice. The package ships the examples under `themes/`.
+
+The built-in themes and script themes are the same kind of thing: a theme picks a **shell**, a page
+look and (for a script) layouts, colours, motion and events. Home style is no longer a separate setting.
 
 | Theme | Shows |
 |---|---|
 | `grid3` | three columns of tiles (the smallest useful layout theme) |
 | `strip` | one row of big cards scrolling sideways, focus grows, others dim; the tile home as a row |
 | `neon` | dark palette, eased scrolling, a flash on every focus change, wide rows |
-| `xmb` | a "cross media bar" for the classic home style: gradient and waves background, a row of category icons, the focused category's items in a fading column |
+| `xmb` | a "cross media bar" (`shell = "bar"`): gradient and waves background, a row of category icons, the focused category's items in a fading column |
 
 ## File format
 
 The script returns a table. Every field is optional.
+
+### `shell`, `pages`, `dark`
+
+`shell` is the navigation frame the theme lives in, which decides how the user reaches Settings,
+Mine, Feed and Inbox, and what area the layout gets (`ctx.view`):
+
+| shell | Frame | `ctx.view` |
+|---|---|---|
+| `"sidebar"` (default) | the left icon column and the category row | starts right of the column (x 39) |
+| `"hub"` | the tile home, and a pivot header on pages | full width, below the header |
+| `"bar"` | the theme draws the category bar (set `tabs = true` in the layout) | full width |
+
+`pages` (`"classic"` or `"metro"`) is the look of the pages the theme does not lay out (detail,
+comments, Settings); `dark = true` selects the dark base colours. Together they pick the built-in
+look underneath, so a theme never gets a frame it was not made for.
 
 ```lua
 return {

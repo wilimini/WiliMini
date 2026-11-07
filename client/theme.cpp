@@ -116,6 +116,7 @@ struct Theme::Impl {
     ThemeColors colors;
     ThemeMotion motion;
     ThemeBackground background;
+    ThemeMeta meta;
 
     ~Impl() { close(); }
 
@@ -128,6 +129,7 @@ struct Theme::Impl {
         colors = ThemeColors{};
         motion = ThemeMotion{};
         background = ThemeBackground{};
+        meta = ThemeMeta{};
     }
 
     static void hook(lua_State* state, lua_Debug*) {
@@ -185,6 +187,23 @@ struct Theme::Impl {
         lua_rawgeti(L, LUA_REGISTRYINDEX, moduleRef);
         lua_getfield(L, -1, "name");
         if (lua_isstring(L, -1) && name.empty()) name = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "shell");
+        if (lua_isstring(L, -1)) {
+            const std::string shell = lua_tostring(L, -1);
+            if (shell == "sidebar" || shell == "hub" || shell == "bar") meta.shell = shell;
+            else error = "shell must be \"sidebar\", \"hub\" or \"bar\"";
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "pages");
+        if (lua_isstring(L, -1)) {
+            const std::string pages = lua_tostring(L, -1);
+            if (pages == "classic" || pages == "metro") meta.pages = pages;
+            else error = "pages must be \"classic\" or \"metro\"";
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "dark");
+        meta.dark = lua_toboolean(L, -1) != 0;
         lua_pop(L, 1);
         lua_getfield(L, -1, "colors");
         if (lua_istable(L, -1)) {
@@ -311,6 +330,7 @@ unsigned Theme::generation() const { return impl_->generation; }
 const ThemeColors& Theme::colors() const { return impl_->colors; }
 const ThemeMotion& Theme::motion() const { return impl_->motion; }
 const ThemeBackground& Theme::background() const { return impl_->background; }
+const ThemeMeta& Theme::meta() const { return impl_->meta; }
 
 bool Theme::hasLayout(const char*) const {
     if (!loaded()) return false;

@@ -762,10 +762,48 @@ const char* App::layoutScreen() const {
 void App::loadTheme() {
     theme_.unload();
     layoutKey_ = LayoutKey{};
-    if (preferences_.theme.empty()) return;
+    barAction_ = -1;   // a category bar from the previous theme no longer exists
+    HomeStyle style;
+    bool dark;
+    if (preferences_.theme.empty()) return;   // an old settings file: homeStyle and darkTheme are the choice
+    if (parseBuiltinTheme(preferences_.theme, style, dark)) {
+        preferences_.homeStyle = style;
+        preferences_.darkTheme = dark;
+        return;
+    }
     const std::string path = std::string(CLIENT_ROOT) + "/themes/" + preferences_.theme + "/theme.lua";
-    if (theme_.loadFile(path)) WLOG_I(WLC_CLIENT, "theme %s loaded", preferences_.theme.c_str());
-    else WLOG_W(WLC_CLIENT, "theme %s: %s", preferences_.theme.c_str(), theme_.error().c_str());
+    if (!theme_.loadFile(path)) {
+        WLOG_W(WLC_CLIENT, "theme %s: %s", preferences_.theme.c_str(), theme_.error().c_str());
+        return;
+    }
+    WLOG_I(WLC_CLIENT, "theme %s loaded", preferences_.theme.c_str());
+    // The theme names its navigation frame and page look; together they pick the home style.
+    const ThemeMeta& meta = theme_.meta();
+    preferences_.homeStyle = meta.shell == "hub" ? (meta.pages == "metro" ? HomeStyle::Metro : HomeStyle::Tiles)
+                                                  : HomeStyle::Classic;
+    preferences_.darkTheme = meta.dark;
+}
+
+std::vector<std::string> App::themeChoices() const {
+    std::vector<std::string> choices;
+    for (const HomeStyle style : {HomeStyle::Classic, HomeStyle::Tiles, HomeStyle::Metro})
+        for (const bool dark : {false, true}) choices.push_back(builtinThemeId(style, dark));
+    const SceUID directory = sceIoDopen(CLIENT_PATH("/themes"));
+    if (directory < 0) return choices;
+    std::vector<std::string> folders;
+    SceIoDirent entry{};
+    while (sceIoDread(directory, &entry) > 0) {
+        const std::string name = entry.d_name;
+        HomeStyle style;
+        bool dark;
+        if (FIO_S_ISDIR(entry.d_stat.st_mode) && validThemeName(name) && !parseBuiltinTheme(name, style, dark))
+            folders.push_back(name);
+        std::memset(&entry, 0, sizeof(entry));
+    }
+    sceIoDclose(directory);
+    std::sort(folders.begin(), folders.end());
+    choices.insert(choices.end(), folders.begin(), folders.end());
+    return choices;
 }
 
 const Layout& App::contentLayout() const {
@@ -792,6 +830,10 @@ const Layout& App::contentLayout() const {
         // Content starts below the page header: the pivot row in the tile styles, the category bar otherwise.
         request.viewY = preferences_.tileHome() ? 70 : 53;
         request.viewH = 251 - request.viewY;
+        // The sidebar shell keeps the left icon column; the other shells use the full width.
+        const bool sidebar = !preferences_.tileHome() && !(theme_.loaded() && theme_.meta().shell == "bar");
+        request.viewX = sidebar ? 39 : 0;
+        request.viewW = kScreenWidth - request.viewX;
         request.style = static_cast<int>(preferences_.homeStyle);
         request.dark = preferences_.darkTheme;
         Layout themed;

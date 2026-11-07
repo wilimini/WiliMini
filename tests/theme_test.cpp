@@ -105,6 +105,17 @@ int main() {
         t.unload();
         assert(!t.loaded() && !t.event("focus", "feed", 1, r));
     }
+    // shell, pages and dark: defaults, values, and bad values keep the default.
+    {
+        Theme t;
+        assert(t.loadSource("return {}", "plain"));
+        assert(t.meta().shell == "sidebar" && t.meta().pages == "classic" && !t.meta().dark);
+        assert(t.loadSource("return { shell = 'hub', pages = 'metro', dark = true }", "meta"));
+        assert(t.meta().shell == "hub" && t.meta().pages == "metro" && t.meta().dark);
+        assert(t.loadSource("return { shell = 'bar' }", "bar") && t.meta().shell == "bar");
+        assert(t.loadSource("return { shell = 'dock', pages = 'neon' }", "bad"));
+        assert(t.meta().shell == "sidebar" && t.meta().pages == "classic" && !t.error().empty());
+    }
     std::puts("theme test passed");
     return 0;
 }

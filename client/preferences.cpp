@@ -129,6 +129,8 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         // A bad theme name only disables the theme; it must not reset the other settings.
         loaded.theme = root.value("theme", std::string());
         if (!validThemeName(loaded.theme)) loaded.theme.clear();
+        { HomeStyle builtinStyle; bool builtinDark;
+          if (parseBuiltinTheme(loaded.theme, builtinStyle, builtinDark)) { loaded.homeStyle = builtinStyle; loaded.darkTheme = builtinDark; } }
         if (loaded.bodySize != 14 && loaded.bodySize != 16) return false;
         if (loaded.playbackBufferFrames != 2 && loaded.playbackBufferFrames != 4 &&
             loaded.playbackBufferFrames != 8) return false;

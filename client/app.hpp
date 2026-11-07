@@ -270,6 +270,7 @@ private:
     Preferences preferences_;
     mutable Theme theme_;
     void loadTheme();
+    std::vector<std::string> themeChoices() const;
     void barMove(int dx);
     int barAction_ = -1;
     void moveSelectionImpl(int dx, int dy);

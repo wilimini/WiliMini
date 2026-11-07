@@ -2958,7 +2958,7 @@ void drawUtility(const pspapp::App& app) {
                  std::to_string(app.settingSelection() + 1) + " / " +
                      std::to_string(static_cast<size_t>(pspapp::SettingItem::Count)), 85);
         const pspapp::TextId labels[] = {
-            pspapp::TextId::settings_theme, pspapp::TextId::settings_home_style,
+            pspapp::TextId::settings_theme,
             pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
@@ -2975,11 +2975,17 @@ void drawUtility(const pspapp::App& app) {
         // A saved change only takes effect after the loader picks the other bridge PRX.
         const bool meRestart = app.activeMeBackend() >= 0 &&
             app.activeMeBackend() != static_cast<int>(preferences.meBackend);
-        const std::string values[] = {pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark
-                                                                         : pspapp::TextId::value_light, locale),
-            pspapp::text(preferences.metro() ? pspapp::TextId::value_home_metro
-                         : preferences.tileHome() ? pspapp::TextId::value_home_tiles
-                                                  : pspapp::TextId::value_home_classic, locale),
+        // A built-in theme reads "Metro · Dark"; a script theme shows the name it gives itself.
+        pspapp::HomeStyle builtinStyle;
+        bool builtinDark;
+        const bool builtinTheme = preferences.theme.empty() || pspapp::parseBuiltinTheme(preferences.theme, builtinStyle, builtinDark);
+        const std::string themeValue = builtinTheme
+            ? std::string(pspapp::text(preferences.metro() ? pspapp::TextId::value_home_metro
+                                       : preferences.tileHome() ? pspapp::TextId::value_home_tiles
+                                                                : pspapp::TextId::value_home_classic, locale)) + " · " +
+                  pspapp::text(preferences.darkTheme ? pspapp::TextId::value_dark : pspapp::TextId::value_light, locale)
+            : (app.theme().loaded() ? app.theme().name() : preferences.theme);
+        const std::string values[] = {themeValue,
             std::to_string(preferences.bodySize) + " px",
             pspapp::text(preferences.showCovers ? pspapp::TextId::value_on_demand
                                                : pspapp::TextId::value_off, locale),

@@ -1,6 +1,7 @@
 -- One row of large cards scrolling sideways; the focused card grows and the others dim.
 return {
   name = "Strip",
+  shell = "hub",       -- tile home and a pivot header; the cards below sit under the header
   layout = function(ctx)
     local v = ctx.view
     if ctx.screen == "hub" then

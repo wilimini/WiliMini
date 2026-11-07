@@ -67,11 +67,16 @@ void App::changeSetting() {
         navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::PlaybackBufferFrames)) return;
     Preferences next = preferences_;
     switch (static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection)) {
-        case SettingItem::DarkTheme: next.darkTheme = !next.darkTheme; break;
-        case SettingItem::HomeStyle:
-            next.homeStyle = next.homeStyle == HomeStyle::Classic ? HomeStyle::Tiles
-                           : next.homeStyle == HomeStyle::Tiles ? HomeStyle::Metro : HomeStyle::Classic;
+        case SettingItem::Theme: {
+            // Cycle through the built-in themes, then the folders under themes/.
+            const auto choices = themeChoices();
+            const std::string current = preferences_.theme.empty()
+                ? std::string(builtinThemeId(preferences_.homeStyle, preferences_.darkTheme)) : preferences_.theme;
+            size_t at = 0;
+            for (size_t i = 0; i < choices.size(); ++i) if (choices[i] == current) at = i + 1;
+            next.theme = choices[at % choices.size()];
             break;
+        }
         case SettingItem::BodySize: next.bodySize = next.bodySize == 14 ? 16 : 14; break;
         case SettingItem::ShowCovers: next.showCovers = !next.showCovers; break;
         case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
@@ -105,9 +110,21 @@ void App::changeSetting() {
         status_ = text(TextId::settings_save_failed, preferences_.locale);
         return;
     }
+    const Preferences before = preferences_;
     preferences_ = next;
     const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
-    if (changed == SettingItem::HomeStyle) {
+    if (changed == SettingItem::Theme) {
+        loadTheme();
+        HomeStyle builtinStyle;
+        bool builtinDark;
+        if (!theme_.loaded() && !parseBuiltinTheme(preferences_.theme, builtinStyle, builtinDark)) {
+            // The script did not load: keep the previous theme and say why.
+            status_ = std::string(text(TextId::settings_save_failed, preferences_.locale)) + " · " + theme_.error();
+            preferences_ = before;
+            loadTheme();
+            return;
+        }
+        savePreferences(CLIENT_PATH("/settings.json"), preferences_);   // now with the resolved style
         // Settings sits above the root, so the hub shows once this page is popped.
         hubOpen_ = preferences_.tileHome();
         hubSelection_ = 0;

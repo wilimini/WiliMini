@@ -32,6 +32,15 @@ struct ThemeColors {
     Slot background, panel, raised, text, dim, line, accent, ring;
 };
 
+// What a theme needs from the app around it. `shell` is the navigation frame the theme lives in:
+// "sidebar" (left icon column and category row), "hub" (tile home with a pivot header on pages) or
+// "bar" (the theme draws the category bar itself). `pages` is the look of the pages the theme does not
+// lay out (detail, comments, Settings): "classic" or "metro". `dark` selects the dark base colours.
+struct ThemeMeta {
+    std::string shell = "sidebar", pages = "classic";
+    bool dark = false;
+};
+
 // A vertical gradient behind everything, optionally with slow translucent waves.
 struct ThemeBackground {
     bool set = false;
@@ -80,6 +89,7 @@ public:
     const ThemeColors& colors() const;
     const ThemeMotion& motion() const;
     const ThemeBackground& background() const;
+    const ThemeMeta& meta() const;
     // Runs the handler for an event ("focus", "open", "back", "page"); `index` is 0-based.
     bool event(const char* name, const char* screen, size_t index, ThemeReaction& out);
 

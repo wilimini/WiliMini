@@ -1,6 +1,7 @@
 -- A dark palette, eased scrolling and a flash on every focus change, on a list of wide rows.
 return {
   name = "Neon",
+  shell = "hub", pages = "metro", dark = true,
   colors = {
     background = 0x0b0e17, panel = 0x141a2b, raised = 0x1b2340,
     text = 0xe8f1ff, dim = 0x7f8fb8, line = 0x25304f,
