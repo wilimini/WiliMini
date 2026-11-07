@@ -1,0 +1,94 @@
+name: Mirror to Codeberg
+
+# Keeps https://codeberg.org/<CODEBERG_REPO> in sync with GitHub so the source
+# and release downloads stay reachable when GitHub is not.
+#
+# One-time setup (repository settings on GitHub):
+#   variable CODEBERG_REPO   e.g. wilimini/WiliMini
+#   secret   CODEBERG_TOKEN  Codeberg access token with write:repository
+# The job is skipped (not failed) when they are absent, e.g. on forks.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  release:
+    types: [published]
+  # Releases created by build.yml use GITHUB_TOKEN and therefore do not fire
+  # the `release` event; follow the build workflow instead.
+  workflow_run:
+    workflows: ["Build PSP package"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-codeberg
+  cancel-in-progress: false
+
+jobs:
+  config:
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          REPO: ${{ vars.CODEBERG_REPO }}
+          TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          if [ -n "$REPO" ] && [ -n "$TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CODEBERG_REPO / CODEBERG_TOKEN not set; mirror skipped"
+          fi
+
+  git:
+    name: Push branches and tags
+    needs: config
+    if: needs.config.outputs.enabled == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push main and tags
+        env:
+          CODEBERG_REPO: ${{ vars.CODEBERG_REPO }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          git config --global credential.helper \
+            '!f() { echo username=token; echo "password=$CODEBERG_TOKEN"; }; f'
+          url="https://codeberg.org/$CODEBERG_REPO.git"
+          # Fast-forward only: a diverged Codeberg copy fails loudly instead
+          # of being overwritten. Tags are never force-pushed.
+          if [ "$GITHUB_REF" = refs/heads/main ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            git fetch origin main
+            git push "$url" refs/remotes/origin/main:refs/heads/main
+          fi
+          git push "$url" --tags
+
+  release:
+    name: Copy release assets
+    needs: config
+    if: >-
+      needs.config.outputs.enabled == 'true' && (
+        github.event_name == 'release' ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         startsWith(github.event.workflow_run.head_branch, 'v')))
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync release to Codeberg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CODEBERG_REPO: ${{ vars.CODEBERG_REPO }}
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || github.event.workflow_run.head_branch }}
+        run: scripts/codeberg-release-sync.sh "$TAG"
