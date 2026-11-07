@@ -48,24 +48,7 @@ int main(int argc, char** argv) {
              R"(,"browser_download_url":"https://h/z","digest":"sha256:)" + sha + R"("}]})";
     assert(checkForUpdate(f, "api", "v1.0.0", info) == UpdateResult::Ok);
     info.zipUrl = "z";
-    { // GitHub unreachable: fall back to Codeberg; a definite answer from the first source stops the search.
-      struct Two : UpdateTransport {
-          std::string json; int githubCalls = 0, codebergCalls = 0; bool githubDown = true;
-          bool get(const std::string& url, uint64_t, const std::function<bool(int, const std::string&)>& h,
-                   const std::function<bool(const void*, size_t)>& d) override {
-              if (url == "gh") { ++githubCalls; if (githubDown) return false; }
-              else ++codebergCalls;
-              return h(200, "") && d(json.data(), json.size());
-          } } two;
-      two.json = f.json;
-      UpdateSource srcs[2] = {{"GitHub", "gh"}, {"Codeberg", "cb"}};
-      const char* used = nullptr; ReleaseInfo r2;
-      assert(checkForUpdateAny(two, srcs, 2, "v1.0.0", r2, &used) == UpdateResult::Ok && std::string(used) == "Codeberg");
-      two.githubDown = false; two.codebergCalls = 0;
-      assert(checkForUpdateAny(two, srcs, 2, "v2.0.0", r2, &used) == UpdateResult::NoUpdate && two.codebergCalls == 0);
-      assert(std::string(kUpdateSources[0].apiUrl).rfind("https://", 0) == 0 && std::string(kUpdateSources[1].apiUrl).rfind("https://", 0) == 0);
-    }
-
+    assert(std::string(kUpdateSources[0].apiUrl).rfind("https://", 0) == 0 && std::string(kUpdateSources[1].apiUrl).rfind("https://", 0) == 0);
     // Connection drops mid-download: .part kept; next try resumes with a Range request.
     f.cutAfter = 3000; assert(f.zip.size() > 10000);
     { auto r0 = downloadRelease(f, info, part, zip, nullptr); if (r0 != UpdateResult::Network) std::cerr << updateResultName(r0) << "\n"; assert(r0 == UpdateResult::Network); }

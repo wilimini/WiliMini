@@ -151,7 +151,7 @@ void App::openUpdate() {
             return std::unique_ptr<UpdateTransport>(new CurlUpdateTransport(CLIENT_PATH("/cacert.pem"), cancel));
         }, policy));
     }
-    update_->reset();
+    update_->setSource(preferences_.updateChannel == 1 ? 1 : 0);
     navigation_.push<UpdateRoute>();
 }
 
@@ -188,6 +188,18 @@ void App::startUpdateJob(bool install) {
         updateThread_ = -1;
         status_ = "无法启动更新线程";
     }
+}
+
+void App::changeUpdateChannel() {
+    if (!update_ || updateBusy()) return;
+    Preferences next = preferences_;
+    next.updateChannel = next.updateChannel == 1 ? 0 : 1;
+    if (!savePreferences(CLIENT_PATH("/settings.json"), next)) {
+        status_ = text(TextId::settings_save_failed, preferences_.locale);
+        return;
+    }
+    preferences_ = next;
+    update_->setSource(preferences_.updateChannel == 1 ? 1 : 0);
 }
 
 void App::updateStorage() {

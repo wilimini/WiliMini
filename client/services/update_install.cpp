@@ -114,17 +114,6 @@ const UpdateSource kUpdateSources[2] = {
     {"Codeberg", "https://codeberg.org/api/v1/repos/wilimini/WiliMini/releases/latest"},
 };
 
-UpdateResult checkForUpdateAny(UpdateTransport& t, const UpdateSource* sources, size_t count,
-                               const std::string& running, ReleaseInfo& out, const char** usedSource) {
-    UpdateResult last = UpdateResult::Network;
-    for (size_t i = 0; i < count; ++i) {
-        last = checkForUpdate(t, sources[i].apiUrl, running, out);
-        if (usedSource) *usedSource = sources[i].name;
-        if (last != UpdateResult::Network) return last;
-    }
-    return last;
-}
-
 UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const std::string& partPath,
                              const std::string& zipPath, const ProgressFn& progress) {
     std::string expected = info.sha256;

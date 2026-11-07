@@ -77,6 +77,15 @@ int main(int argc, char** argv) {
     value.saveLogFiles = false;
     assert(pspapp::savePreferences(path, value));
     assert(pspapp::loadPreferences(path, filesRestored) && !filesRestored.saveLogFiles);
+    // Update channel: GitHub by default, round-trips, unknown values fall back to GitHub.
+    pspapp::Preferences channelValue;
+    assert(pspapp::loadPreferences(path, channelValue) && channelValue.updateChannel == 0);
+    channelValue.updateChannel = 1;
+    assert(pspapp::savePreferences(path, channelValue));
+    pspapp::Preferences channelRestored;
+    assert(pspapp::loadPreferences(path, channelRestored) && channelRestored.updateChannel == 1);
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"update_channel":"mirror"})";
+    assert(pspapp::loadPreferences(path, channelRestored) && channelRestored.updateChannel == 0);
     // The home style is Classic for files saved before it existed, round-trips, and is validated.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
     assert(pspapp::loadPreferences(path, value) && value.homeStyle == pspapp::HomeStyle::Classic && !value.tileHome());

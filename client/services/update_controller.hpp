@@ -28,6 +28,7 @@ class UpdateController {
     void runCheck();
     void runInstall();       // only from Available
     void cancel();
+    void setSource(size_t index); // index into kUpdateSources; ignored while busy
     bool busy() const;       // Checking, Downloading or Staging
     void reset();            // back to Idle unless busy
     UpdateSnapshot snapshot() const;
@@ -41,5 +42,6 @@ class UpdateController {
     UpdateSnapshot snap_;
     ReleaseInfo info_;
     volatile bool cancel_ = false;
+    size_t source_ = 0;
 };
 }

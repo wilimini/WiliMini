@@ -20,6 +20,12 @@ UpdateSnapshot UpdateController::snapshot() const {
     return snap_;
 }
 void UpdateController::cancel() { cancel_ = true; }
+void UpdateController::setSource(size_t index) {
+    if (busy() || index >= 2) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    source_ = index;
+    snap_ = UpdateSnapshot{};
+}
 void UpdateController::reset() {
     if (busy()) return;
     std::lock_guard<std::mutex> lock(mutex_);
@@ -32,8 +38,9 @@ void UpdateController::runCheck() {
     set(UpdateState::Checking);
     auto transport = factory_(&cancel_);
     ReleaseInfo info;
-    const char* used = "";
-    UpdateResult r = checkForUpdateAny(*transport, kUpdateSources, 2, running_, info, &used);
+    size_t source;
+    { std::lock_guard<std::mutex> lock(mutex_); source = source_; }
+    UpdateResult r = checkForUpdate(*transport, kUpdateSources[source].apiUrl, running_, info);
     if (cancel_) { set(UpdateState::Idle); return; }
     if (r == UpdateResult::NoUpdate) { set(UpdateState::UpToDate); return; }
     if (r != UpdateResult::Ok) { set(UpdateState::Failed, updateResultName(r)); return; }
@@ -41,7 +48,7 @@ void UpdateController::runCheck() {
     info_ = info;
     snap_.tag = info.tag;
     snap_.notes = info.notes;
-    snap_.source = used;
+    snap_.source = kUpdateSources[source].name;
     snap_.total = info.zipSize;
     snap_.done = 0;
     snap_.error.clear();

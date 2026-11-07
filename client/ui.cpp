@@ -2743,6 +2743,7 @@ void drawUtility(const pspapp::App& app) {
         const std::string confirm = app.preferences().confirmButton();
         const std::string back = app.preferences().backButton();
         drawText(39, 36, 0.5f, kTextDim, uiText(app, pspapp::TextId::update_current, {{"version", app.updateVersion()}}), 428);
+        drawText(39, 50, 0.5f, kPink, uiText(app, pspapp::TextId::update_channel, {{"name", app.updateChannelName()}}), 428);
         using pspapp::UpdateState;
         switch (snap.state) {
             case UpdateState::Idle:

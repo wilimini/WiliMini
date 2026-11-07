@@ -94,6 +94,8 @@ public:
     bool updateBusy() const { return update_ && update_->busy(); }
     void cancelUpdate() { if (update_) update_->cancel(); }
     const std::string& updateVersion() const { return updateVersion_; }
+    const char* updateChannelName() const { return kUpdateSources[preferences_.updateChannel == 1 ? 1 : 0].name; }
+    void changeUpdateChannel();
 
     void openBrowse(BrowseRequest request);
     void browseMore();

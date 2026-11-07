@@ -562,6 +562,8 @@ void App::moveSelection(int dx, int dy) {
                     settings.scroll = settings.selection - settingsVisibleRows + 1;
             }
             else if (dx && settings.selection < static_cast<size_t>(SettingItem::Wifi)) changeSetting();
+        } else if (screen() == Screen::Update && dx) {
+            changeUpdateChannel();
         } else if (screen() == Screen::Licenses && dy) {
             auto &selected = navigation_.get<LicensesRoute>().selection;
             selected = static_cast<size_t>(std::max(0, std::min(static_cast<int>(settingsLicenseCount) - 1,

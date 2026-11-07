@@ -58,6 +58,8 @@ struct Preferences {
     PlaybackPixelFormat playbackPixelFormat = PlaybackPixelFormat::Auto;
     MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
+    // Release source for Settings > Check for updates: 0 GitHub, 1 Codeberg (no automatic fallback).
+    int updateChannel = 0;
     Locale locale = Locale::ZhHans;
     LogVerbosity logLevel = LogVerbosity::Info;
     // Off by default: no log text is written to the Memory Stick unless this is on.

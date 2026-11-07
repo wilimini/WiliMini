@@ -170,7 +170,7 @@
   "settings_update": "Check for updates",
   "value_check": "Check ›",
   "page_update_title": "Settings / Update",
-  "hint_update": "{confirm} Continue  {back} Back",
+  "hint_update": "←→ Source  {confirm} Continue  {back} Back",
   "hint_update_busy": "{back} Cancel",
   "update_current": "Current version: {version}",
   "update_idle": "Press {confirm} to check for a newer release.",
@@ -182,5 +182,6 @@
   "update_staging": "Verifying and unpacking…",
   "update_ready": "Update ready. Press {confirm} to exit, then start WiliMini again to finish installing.",
   "update_failed": "Update failed: {reason}",
-  "update_retry": "Press {confirm} to try again."
+  "update_retry": "Press {confirm} to try again, or ←→ to switch source.",
+  "update_channel": "Release source: ‹ {name} ›  (←→ change)"
 }

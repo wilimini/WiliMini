@@ -42,7 +42,23 @@ int main(int, char** argv) {
     assert(c.snapshot().state == UpdateState::Idle && !c.busy());
     net.down = true; c.runCheck();
     assert(c.snapshot().state == UpdateState::Failed && !c.snapshot().error.empty());
-    net.down = false; c.reset(); assert(c.snapshot().state == UpdateState::Idle);
+    net.down = false; c.reset();
+    { // Chosen source only: when it is down the check fails, even though the other one would answer.
+      struct Pick : UpdateTransport {
+          Net* n; std::string lastUrl; bool githubDown = true;
+          explicit Pick(Net* x) : n(x) {}
+          bool get(const std::string& u, uint64_t f, const std::function<bool(int, const std::string&)>& a,
+                   const std::function<bool(const void*, size_t)>& b) override {
+              lastUrl = u; if (githubDown && u.find("api.github.com") != std::string::npos) return false; return n->get(u, f, a, b); }
+      };
+      std::vector<std::string> asked;
+      UpdateController pc(root, "v1.0.0", [&](const volatile bool*) { return std::unique_ptr<UpdateTransport>(new Pick(&net)); }, pol);
+      pc.setSource(0); pc.runCheck();
+      assert(pc.snapshot().state == UpdateState::Failed);
+      pc.setSource(1); assert(pc.snapshot().state == UpdateState::Idle); // changing source clears the old result
+      pc.runCheck();
+      assert(pc.snapshot().state == UpdateState::Available && pc.snapshot().source == "Codeberg");
+    } assert(c.snapshot().state == UpdateState::Idle);
     c.runInstall(); assert(c.snapshot().state == UpdateState::Idle); // install only from Available
     c.runCheck();
     { auto s = c.snapshot(); assert(s.state == UpdateState::Available && s.tag == "v9.0.0" && s.notes == "notes here" && s.total == net.zip.size()); }

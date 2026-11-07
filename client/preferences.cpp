@@ -95,6 +95,12 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         else if (logLevel == "info") loaded.logLevel = LogVerbosity::Info;
         else if (logLevel == "debug") loaded.logLevel = LogVerbosity::Debug;
         else return false;
+        // Unknown or invalid values keep the default instead of rejecting the whole file.
+        const auto channel = root.find("update_channel");
+        if (channel != root.end() && channel->is_string()) {
+            if (channel->get<std::string>() == "codeberg") loaded.updateChannel = 1;
+            else if (channel->get<std::string>() == "github") loaded.updateChannel = 0;
+        }
         const auto files = root.find("log_files");
         if (files != root.end()) {
             if (!files->is_boolean()) return false;
@@ -157,6 +163,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"locale", localeCode(preferences.locale)},
         {"log_level", logVerbosityCode(preferences.logLevel)},
         {"log_files", preferences.saveLogFiles},
+        {"update_channel", preferences.updateChannel == 1 ? "codeberg" : "github"},
         {"home_style", homeStyleCode(preferences.homeStyle)},
         {"input_method", inputMethodCode(preferences.inputMethod)},
         {"log_channels", preferences.logChannels}}).dump();

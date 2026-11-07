@@ -6,7 +6,7 @@
 | --- | --- |
 | 1. Release workflow publishes `WiliMini-<tag>.zip` + `SHA256SUMS` | done (`.github/workflows/build.yml`) |
 | 2. Platform-independent core | done, host-tested: `update_core.*` (versions, release JSON, swap planning), `update_package.*` (SHA-256, streaming zip, Range resume rules) |
-| 3. Network and download | logic done and host-tested with a fake transport (`update_install.*`: check with GitHub→Codeberg fallback, resumable download, SHA-256 verify, staging into `pending/`). The libcurl transport (`update_curl.*`) is written but only syntax-checked against a stub header |
+| 3. Network and download | logic done and host-tested with a fake transport (`update_install.*`: check against the chosen source, resumable download, SHA-256 verify, staging into `pending/`). The libcurl transport (`update_curl.*`) is written but only syntax-checked against a stub header |
 | 4. Loader journaled swap + rollback | done and host-tested with power loss injected at every file operation (`platform/src/wili_update_swap.c`, 144 crash points); wired into `client/bootstrap.c`, committed from `client/main.cpp` after the UI is up. **Never compiled for PSP, never run on a device** |
 | 5. Settings UI | not started. Needs a Settings row, a page (release notes, progress, confirm), localization keys, battery and free-space checks, and a worker thread |
 | 6. Release checklist | below |
@@ -27,8 +27,10 @@ transport test) or `sh tools/test-update-package.sh` for the updater alone.
 
 ## How an update works
 
-1. Check: `GET /releases/latest` on GitHub, then Codeberg if GitHub is unreachable.
-   Prereleases, drafts and downgrades are ignored.
+1. Check: `GET /releases/latest` on the release source chosen on the update page
+   (GitHub or Codeberg, ←→ to switch, saved in `settings.json` as `update_channel`).
+   There is no automatic fallback: if a source is unreachable the page says so and
+   the user can switch. Prereleases, drafts and downgrades are ignored.
 2. Download `WiliMini-<tag>.zip` to `.part` with Range resume; verify SHA-256
    (API digest or `SHA256SUMS`); delete on mismatch.
 3. Stage: verify again, extract to `<root>/pending/`, write `pending/MANIFEST` last.
