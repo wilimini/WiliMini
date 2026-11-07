@@ -11,6 +11,9 @@
 #include <ctime>
 #include <utility>
 
+#include <sys/stat.h>
+#include <wili_log.h>
+
 #include <nlohmann/json.hpp>
 
 #include "api/wiliwili/bilibili.h"
@@ -307,8 +310,21 @@ int App::workerEntry(SceSize, void*) {
         try {
             if (workerApp->coverActive_) {
                 const auto &cover = workerApp->jobCover_;
-                workerApp->coverSucceeded_ = bili_http_download(
-                    cover.url.c_str(), cachePath(cover.key).c_str(), 320 * 1024) == 0;
+                const std::string path = cachePath(cover.key);
+                network_error[0] = '\0';
+                const uint64_t started = sceKernelGetSystemTimeWide();
+                workerApp->coverSucceeded_ = bili_http_download(cover.url.c_str(), path.c_str(), 320 * 1024) == 0;
+                const unsigned ms = static_cast<unsigned>((sceKernelGetSystemTimeWide() - started) / 1000);
+                if (workerApp->coverSucceeded_) {
+                    struct stat info{};
+                    WLOG_D(WLC_NET, "cover ok key=%s bytes=%ld ms=%u", cover.key.c_str(),
+                           stat(path.c_str(), &info) == 0 ? static_cast<long>(info.st_size) : -1L, ms);
+                } else if (transfer_cancel) {
+                    WLOG_D(WLC_NET, "cover cancelled key=%s ms=%u", cover.key.c_str(), ms);
+                } else {
+                    WLOG_W(WLC_NET, "cover failed key=%s ms=%u error=%s", cover.key.c_str(), ms,
+                           network_error[0] ? network_error : "unknown");
+                }
             } else workerApp->runJob();
         } catch (const std::bad_alloc &) {
             workerApp->jobTypedError_ = {ErrorDomain::Api, ErrorKind::OutOfMemory,
@@ -1210,7 +1226,10 @@ void App::updateCoverQueue() {
     coverSearchView_ = root().searchView;
     coverEnabled_ = preferences_.showCovers;
     coverQueue_.clear();
-    if (coverActive_) transfer_cancel = 1;
+    if (coverActive_) {
+        WLOG_D(WLC_NET, "cover cancel key=%s reason=queue_rebuilt first=%zu", jobCover_.key.c_str(), first);
+        transfer_cancel = 1;
+    }
     if (!preferences_.showCovers || playbackReady_ || queuedJob_ != Job::None) return;
     auto enqueue = [&](const std::string &key, std::string url) {
         if (key.empty() || url.empty() || url.size() > 4096 || coverQueue_.size() >= kPageSize) return;

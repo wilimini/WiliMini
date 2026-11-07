@@ -1,7 +1,5 @@
 #include "ui.hpp"
-#ifdef BILI_UI_FRAME_STATS
 #include <wili_log.h>
-#endif
 #include "bitmap_font.hpp"
 #include "title_font.hpp"
 #include "comment_layout.hpp"
@@ -18,8 +16,12 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <malloc.h>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <pspgum.h>
@@ -98,14 +100,59 @@ std::string uiText(const pspapp::App& app, pspapp::TextId id,
 uint32_t commands[65536] __attribute__((aligned(16)));
 void* draw_buffer = nullptr;
 
+// 16-byte aligned pixel buffer for GE textures (the GE needs aligned addresses). Move-only.
+struct TextureBuffer {
+    uint16_t* data = nullptr;
+    size_t bytes = 0;
+    TextureBuffer() = default;
+    TextureBuffer(const TextureBuffer&) = delete;
+    TextureBuffer& operator=(const TextureBuffer&) = delete;
+    TextureBuffer(TextureBuffer&& other) noexcept : data(other.data), bytes(other.bytes) {
+        other.data = nullptr;
+        other.bytes = 0;
+    }
+    TextureBuffer& operator=(TextureBuffer&& other) noexcept {
+        if (this != &other) {
+            std::free(data);
+            data = other.data;
+            bytes = other.bytes;
+            other.data = nullptr;
+            other.bytes = 0;
+        }
+        return *this;
+    }
+    ~TextureBuffer() { std::free(data); }
+    bool allocate(size_t size) {
+        std::free(data);
+        bytes = 0;
+        data = static_cast<uint16_t*>(memalign(16, size));
+        if (data) bytes = size;
+        return data != nullptr;
+    }
+};
+
+// A cover slot is decoded off the UI thread (see coverDecoderMain). The UI thread owns slot
+// allocation and only reads `texture` while the state is Ready; the decoder publishes a result only
+// into a slot whose ticket still matches its request, so an evicted or reset slot drops the result.
+// Everything except reading a Ready texture happens under coverMutex.
+enum class CoverState : uint8_t { Empty, Loading, Ready, Failed };
+
 struct CoverSlot {
     std::string key;
-    std::vector<uint32_t> pixels;
+    TextureBuffer texture;           // 5650, row pitch texWidth; drawn by the GE
+    int texWidth = 0, texHeight = 0; // power-of-two texture size declared to the GE
     int width = kCoverWidth, height = kCoverHeight;
+    CoverState state = CoverState::Empty;
+    unsigned ticket = 0;   // identifies the request that fills this slot; 0 when unused
+    unsigned lastUse = 0;  // coverFrame of the most recent lookup, for LRU eviction
 };
 
 CoverSlot covers[kMaxCovers];
-size_t next_cover = 0;
+std::mutex coverMutex;
+unsigned coverTicket = 0;
+// Incremented once per frame by the UI thread. Atomic so the UI thread never takes coverMutex just
+// to count frames: the decoder runs at a lower priority and the mutex has no priority inheritance.
+std::atomic<unsigned> coverFrame{0};
 
 struct JpegFailure {
     jpeg_error_mgr base;
@@ -117,40 +164,465 @@ void jpegFailure(j_common_ptr context) {
     longjmp(failure->jump, 1);
 }
 
-uint32_t* framebuffer() {
-    return reinterpret_cast<uint32_t*>(0x44000000u + reinterpret_cast<uintptr_t>(draw_buffer));
-}
+// ---------------------------------------------------------------------------------------------
+// GE renderer. Every pixel of the UI is drawn by the GE as solid or textured sprites; the CPU never
+// writes the frame, so there is no CPU/GE ordering to get wrong. Sprites are collected in `pending`
+// and sent as one GU_SPRITES draw whenever the texture changes (batches keep painter's order).
+// Clipping is done on the CPU by trimming the sprite, so scissor state never splits a batch.
+// ---------------------------------------------------------------------------------------------
+struct Vtx {  // GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, padded to 16 bytes
+    uint16_t u, v;
+    uint32_t color;
+    int16_t x, y, z;
+    int16_t pad;
+};
+static_assert(sizeof(Vtx) == 16, "GE vertex layout");
 
-void fillRect(int x, int y, int width, int height, uint32_t shade) {
-    if (width <= 0 || height <= 0) return;
-    const int left = std::max(0, x);
-    const int top = std::max(0, y);
-    const int right = std::min(kWidth, x + width);
-    const int bottom = std::min(kHeight, y + height);
-    if (left >= right || top >= bottom) return;
-    uint32_t* destination = framebuffer();
-    for (int row = top; row < bottom; ++row) {
-        uint32_t* line = destination + row * 512;
-        std::fill(line + left, line + right, shade);
+enum class TexKind : uint8_t { None, Glyph4, Mask8, Color4444, Color5650, Color8888 };
+struct TexState {
+    TexKind kind = TexKind::None;
+    const void* data = nullptr;
+    int width = 0, height = 0;  // power-of-two size declared to the GE; the buffer pitch equals width
+    bool operator==(const TexState& other) const {
+        return kind == other.kind && data == other.data && width == other.width && height == other.height;
     }
-}
+};
 
-// Decoding a cover takes tens of milliseconds, so at most one is decoded per frame; the others
-// show their placeholder and appear on the next frames instead of freezing the first frame of a page.
-unsigned coverDecodesThisFrame = 0;
+constexpr int kMaxSprites = 768;  // sprites per batch (two vertices each)
+// Leave room in the display list for state commands and the final FINISH/END.
+constexpr size_t kListBudget = sizeof(commands) - 24 * 1024;
+Vtx pending[2 * kMaxSprites];
+int pendingCount = 0;
+TexState pendingTex;
+size_t listUsed = 0;
+// Atlas cells and slots are protected from eviction while they were used in the current epoch. The
+// epoch advances every frame and whenever the GE list is restarted (the GE has then finished every
+// sprite queued before), so a cell used before a restart can be evicted after it.
+unsigned renderEpoch = 1;
 
-void beginFrame() {
-    coverDecodesThisFrame = 0;
-    sceGuStart(GU_DIRECT, commands);
+#ifdef BILI_UI_FRAME_STATS
+unsigned statSprites = 0, statBatches = 0, statGlyphMisses = 0, statRestarts = 0;
+uint64_t statGeWaitUs = 0;
+size_t statListBytes = 0;
+unsigned statCoverLockMisses = 0;  // lookups that showed a placeholder because the decoder held the lock
+#endif
+
+void geResetState() {
     sceGuDisable(GU_DEPTH_TEST);
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
     sceGuScissor(0, 0, kWidth, kHeight);
 }
 
-void presentFrame() {
+// Colour lookup tables for the alpha-only textures: white with the index as coverage.
+alignas(16) uint32_t clutGlyph[16];
+alignas(16) uint32_t clutMask[256];
+bool clutReady = false;
+
+void clutInit() {
+    if (clutReady) return;
+    for (unsigned i = 0; i < 16; ++i) clutGlyph[i] = 0x00ffffffu | ((i * 17) << 24);
+    for (unsigned i = 0; i < 256; ++i) clutMask[i] = 0x00ffffffu | (i << 24);
+    sceKernelDcacheWritebackRange(clutGlyph, sizeof(clutGlyph));
+    sceKernelDcacheWritebackRange(clutMask, sizeof(clutMask));
+    clutReady = true;
+}
+
+void geApplyTexture(const TexState& tex) {
+    if (tex.kind == TexKind::None) {
+        sceGuDisable(GU_TEXTURE_2D);
+        return;
+    }
+    sceGuEnable(GU_TEXTURE_2D);
+    switch (tex.kind) {
+    case TexKind::Glyph4:
+        clutInit();
+        sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
+        sceGuClutLoad(2, clutGlyph);
+        sceGuTexMode(GU_PSM_T4, 0, 0, 0);
+        break;
+    case TexKind::Mask8:
+        clutInit();
+        sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
+        sceGuClutLoad(32, clutMask);
+        sceGuTexMode(GU_PSM_T8, 0, 0, 0);
+        break;
+    case TexKind::Color4444: sceGuTexMode(GU_PSM_4444, 0, 0, 0); break;
+    case TexKind::Color5650: sceGuTexMode(GU_PSM_5650, 0, 0, 0); break;
+    default: sceGuTexMode(GU_PSM_8888, 0, 0, 0); break;
+    }
+    sceGuTexImage(0, tex.width, tex.height, tex.width, tex.data);
+    sceGuTexFlush();  // atlas cells and cover buffers are reused with new contents
+    // Opaque bitmaps ignore the texture's alpha: a copy of the frame buffer carries whatever alpha the GE
+    // left there, which is not meaningful. Glyphs, masks and 4444 icons use their alpha channel.
+    const bool opaque = tex.kind == TexKind::Color5650 || tex.kind == TexKind::Color8888;
+    sceGuTexFunc(GU_TFX_MODULATE, opaque ? GU_TCC_RGB : GU_TCC_RGBA);
+    sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+    sceGuTexWrap(GU_CLAMP, GU_CLAMP);
+}
+
+// Ends the current list, waits for the GE and starts a new one. Nothing queued is lost: callers
+// emit pending sprites first (or draw them right after, as geEmit does).
+void geRestartRaw() {
+#ifdef BILI_UI_FRAME_STATS
+    const uint64_t start = sceKernelGetSystemTimeWide();
+    statListBytes = std::max(statListBytes, listUsed);
+    ++statRestarts;
+#endif
     sceGuFinish();
+    sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
+    sceGuStart(GU_DIRECT, commands);
+    geResetState();
+    listUsed = 0;
+    ++renderEpoch;
+#ifdef BILI_UI_FRAME_STATS
+    statGeWaitUs += sceKernelGetSystemTimeWide() - start;
+#endif
+}
+
+void geEmit() {
+    if (pendingCount == 0) return;
+    const size_t bytes = static_cast<size_t>(pendingCount) * sizeof(Vtx);
+    if (listUsed + bytes + 512 > kListBudget) geRestartRaw();
+    geApplyTexture(pendingTex);
+    auto* vertices = static_cast<Vtx*>(sceGuGetMemory(static_cast<int>(bytes)));
+    std::memcpy(vertices, pending, bytes);
+    sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                   pendingCount, nullptr, vertices);
+    listUsed += bytes + 512;
+#ifdef BILI_UI_FRAME_STATS
+    statSprites += static_cast<unsigned>(pendingCount / 2);
+    ++statBatches;
+#endif
+    pendingCount = 0;
+}
+
+// Draws everything queued so far and waits for the GE: afterwards no sprite is pending, so atlas
+// cells and slots may be reused and VRAM written by the GE may be read back.
+void geBarrier() {
+    geEmit();
+    geRestartRaw();
+}
+
+// Finishes the frame's list (the caller waits for the GE).
+void geEndList() {
+    geEmit();
+#ifdef BILI_UI_FRAME_STATS
+    statListBytes = std::max(statListBytes, listUsed);
+#endif
+    sceGuFinish();
+}
+
+// Queues a sprite: destination (dx,dy,dw,dh) on screen, source (su,sv,sw,sh) in the texture, trimmed
+// to the clip rectangle. Untextured sprites (TexKind::None) take their colour from `color`.
+void geSprite(const TexState& tex, int dx, int dy, int dw, int dh, int su, int sv, int sw, int sh, uint32_t color,
+              int clipLeft, int clipTop, int clipRight, int clipBottom) {
+    if (dw <= 0 || dh <= 0) return;
+    const int x0 = std::max(dx, std::max(0, clipLeft)), y0 = std::max(dy, std::max(0, clipTop));
+    const int x1 = std::min(dx + dw, std::min(kWidth, clipRight)), y1 = std::min(dy + dh, std::min(kHeight, clipBottom));
+    if (x0 >= x1 || y0 >= y1) return;
+    if (pendingCount + 2 > 2 * kMaxSprites || !(pendingTex == tex)) {
+        geEmit();
+        pendingTex = tex;
+    }
+    int u0 = 0, v0 = 0, u1 = 0, v1 = 0;
+    if (tex.kind != TexKind::None) {
+        u0 = su + (x0 - dx) * sw / dw;
+        u1 = su + (x1 - dx) * sw / dw;
+        v0 = sv + (y0 - dy) * sh / dh;
+        v1 = sv + (y1 - dy) * sh / dh;
+    }
+    Vtx* v = pending + pendingCount;
+    v[0] = {static_cast<uint16_t>(u0), static_cast<uint16_t>(v0), color, static_cast<int16_t>(x0), static_cast<int16_t>(y0), 0, 0};
+    v[1] = {static_cast<uint16_t>(u1), static_cast<uint16_t>(v1), color, static_cast<int16_t>(x1), static_cast<int16_t>(y1), 0, 0};
+    pendingCount += 2;
+}
+
+void geSprite(const TexState& tex, int dx, int dy, int dw, int dh, int su, int sv, uint32_t color,
+              int clipLeft = 0, int clipTop = 0, int clipRight = kWidth, int clipBottom = kHeight) {
+    geSprite(tex, dx, dy, dw, dh, su, sv, dw, dh, color, clipLeft, clipTop, clipRight, clipBottom);
+}
+
+// ---- Texture memory. Atlas memory is written only through the uncached alias, so the GE always
+// sees it without cache maintenance; any stale dirty lines of the block are flushed once first.
+uint8_t* uncachedAlias(void* memory) {
+    return reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(memory) | 0x40000000u);
+}
+
+uint8_t* allocateAtlasMemory(size_t bytes) {
+    auto* memory = static_cast<uint8_t*>(memalign(64, bytes));
+    if (!memory) return nullptr;
+    std::memset(memory, 0, bytes);
+    sceKernelDcacheWritebackInvalidateRange(memory, static_cast<unsigned>(bytes));
+    return memory;
+}
+
+// A glyph cache in a 512 texel wide 4-bit texture: fixed-size cells, least-recently-used eviction.
+class GlyphAtlas {
+public:
+    struct Cell {
+        uint32_t key = 0;
+        int16_t u = 0, v = 0;
+        uint8_t advance = 0, width = 0, height = 0;
+        unsigned lastUse = 0;
+    };
+    GlyphAtlas() = default;
+    GlyphAtlas(const GlyphAtlas&) = delete;
+    GlyphAtlas& operator=(const GlyphAtlas&) = delete;
+    ~GlyphAtlas() { release(); }
+
+    bool ensure(int cellWidth, int cellHeight, int columns, int rows) {
+        if (memory_) return true;
+        cellWidth_ = cellWidth; cellHeight_ = cellHeight; columns_ = columns;
+        memory_ = allocateAtlasMemory(static_cast<size_t>(kPitch) * (rows * cellHeight + 8));
+        if (!memory_) return false;
+        cells_.assign(static_cast<size_t>(columns) * rows, Cell{});
+        index_.clear();
+        used_ = 0;
+        return true;
+    }
+    void release() {
+        std::free(memory_);
+        memory_ = nullptr;
+        cells_.clear();
+        cells_.shrink_to_fit();
+        index_.clear();
+        used_ = 0;
+    }
+    TexState tex() const { return {TexKind::Glyph4, memory_, 512, 512}; }
+
+    Cell* find(uint32_t key, unsigned epoch) {
+        const auto found = index_.find(key);
+        if (found == index_.end()) return nullptr;
+        Cell& cell = cells_[static_cast<size_t>(found->second)];
+        cell.lastUse = epoch;
+        return &cell;
+    }
+
+    // `alpha` holds width*height 4-bit coverage values, two per byte, low nibble first, rows packed
+    // back to back. Returns null when every cell was used in the current epoch.
+    Cell* insert(uint32_t key, unsigned epoch, uint8_t advance, uint8_t width, uint8_t height, const unsigned char* alpha) {
+        size_t slot;
+        if (used_ < cells_.size()) {
+            slot = used_++;
+        } else {
+            slot = cells_.size();
+            unsigned oldest = ~0u;
+            for (size_t i = 0; i < cells_.size(); ++i)
+                if (cells_[i].lastUse != epoch && cells_[i].lastUse < oldest) { oldest = cells_[i].lastUse; slot = i; }
+            if (slot == cells_.size()) return nullptr;
+            index_.erase(cells_[slot].key);
+        }
+        Cell& cell = cells_[slot];
+        cell.key = key;
+        cell.u = static_cast<int16_t>((static_cast<int>(slot) % columns_) * cellWidth_);
+        cell.v = static_cast<int16_t>((static_cast<int>(slot) / columns_) * cellHeight_);
+        cell.advance = advance;
+        cell.width = static_cast<uint8_t>(std::min<int>(width, cellWidth_));
+        cell.height = static_cast<uint8_t>(std::min<int>(height, cellHeight_));
+        cell.lastUse = epoch;
+        index_[key] = static_cast<int>(slot);
+        write(cell, width, alpha);
+        return &cell;
+    }
+
+private:
+    static constexpr int kPitch = 256;  // bytes per texture row: 512 texels at 4 bits
+    void write(const Cell& cell, int sourceWidth, const unsigned char* alpha) {
+        uint8_t* base = uncachedAlias(memory_) + static_cast<size_t>(cell.v) * kPitch + cell.u / 2;
+        unsigned char row[24];
+        for (int y = 0; y < cellHeight_; ++y) {
+            std::memset(row, 0, sizeof(row));
+            if (alpha && y < cell.height)
+                for (int x = 0; x < cell.width; ++x) {
+                    const int index = y * sourceWidth + x;
+                    row[x >> 1] |= static_cast<unsigned char>(((alpha[index >> 1] >> ((index & 1) * 4)) & 15) << ((x & 1) * 4));
+                }
+            std::memcpy(base + static_cast<size_t>(y) * kPitch, row, static_cast<size_t>(cellWidth_ / 2));
+        }
+    }
+    uint8_t* memory_ = nullptr;
+    std::vector<Cell> cells_;
+    std::unordered_map<uint32_t, int> index_;
+    size_t used_ = 0;
+    int cellWidth_ = 0, cellHeight_ = 0, columns_ = 0;
+};
+
+// Small fixed bitmaps (icons) packed in rows ("shelves") of one texture. Entries are never evicted;
+// when the texture is full everything is dropped at a barrier and rebuilt on demand.
+struct SpriteRef { int u = 0, v = 0, w = 0, h = 0; };
+
+class ShelfAtlas {
+public:
+    ShelfAtlas() = default;
+    ShelfAtlas(const ShelfAtlas&) = delete;
+    ShelfAtlas& operator=(const ShelfAtlas&) = delete;
+    ~ShelfAtlas() { release(); }
+
+    bool ensure(int width, int height, int bytesPerPixel) {
+        if (memory_) return true;
+        width_ = width; height_ = height; bpp_ = bytesPerPixel;
+        memory_ = allocateAtlasMemory(static_cast<size_t>(width) * height * bytesPerPixel);
+        reset();
+        return memory_ != nullptr;
+    }
+    void release() {
+        std::free(memory_);
+        memory_ = nullptr;
+        index_.clear();
+    }
+    void reset() { curX_ = curY_ = rowHeight_ = 0; index_.clear(); }
+    TexState tex(TexKind kind) const { return {kind, memory_, width_, height_}; }
+
+    const SpriteRef* find(uint32_t key) const {
+        const auto found = index_.find(key);
+        return found == index_.end() ? nullptr : &found->second;
+    }
+    // Returns null when the bitmap does not fit even in an empty atlas.
+    const SpriteRef* insert(uint32_t key, int w, int h, const uint8_t* data) {
+        if (!memory_ || w > width_ || h > height_) return nullptr;
+        if (curX_ + w > width_) { curX_ = 0; curY_ += rowHeight_; rowHeight_ = 0; }
+        if (curY_ + h > height_) {
+            geBarrier();  // nothing queued may still refer to the old entries
+            reset();
+        }
+        SpriteRef ref{curX_, curY_, w, h};
+        uint8_t* base = uncachedAlias(memory_);
+        for (int y = 0; y < h; ++y)
+            std::memcpy(base + (static_cast<size_t>(curY_ + y) * width_ + curX_) * bpp_, data + static_cast<size_t>(y) * w * bpp_,
+                        static_cast<size_t>(w) * bpp_);
+        curX_ += w;
+        rowHeight_ = std::max(rowHeight_, h);
+        return &(index_[key] = ref);
+    }
+
+private:
+    uint8_t* memory_ = nullptr;
+    std::unordered_map<uint32_t, SpriteRef> index_;
+    int width_ = 0, height_ = 0, bpp_ = 1, curX_ = 0, curY_ = 0, rowHeight_ = 0;
+};
+
+GlyphAtlas bodyAtlas;   // 12/14/16 px text: 20x20 cells, 625 glyphs
+GlyphAtlas titleAtlas;  // 32 px title font: 36x44 cells, 126 glyphs (the font has 117)
+ShelfAtlas maskAtlas;   // alpha masks (icons): 256x256, 8 bits
+ShelfAtlas colorAtlas;  // coloured icons: 128x64, 4444
+
+// Frees the atlases (the next draw rebuilds them). Called between frames, with the GE idle.
+void releaseRenderResources() {
+    pendingCount = 0;
+    pendingTex = TexState{};
+    bodyAtlas.release();
+    titleAtlas.release();
+    maskAtlas.release();
+    colorAtlas.release();
+}
+
+const GlyphAtlas::Cell* bodyCell(uint32_t codepoint, int size) {
+    if (!bodyAtlas.ensure(20, 20, 25, 25)) return nullptr;
+    const uint32_t key = (codepoint << 8) | static_cast<uint32_t>(size);
+    if (const auto* cell = bodyAtlas.find(key, renderEpoch)) return cell;
+    const BitmapGlyph* glyph = bitmapGlyph(codepoint, size);
+    if (!glyph) return nullptr;
+#ifdef BILI_UI_FRAME_STATS
+    ++statGlyphMisses;
+#endif
+    auto* cell = bodyAtlas.insert(key, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    if (!cell) {
+        geBarrier();  // every cell was drawn this epoch: let the GE finish, then recycle
+        cell = bodyAtlas.insert(key, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    }
+    return cell;
+}
+
+const GlyphAtlas::Cell* titleCell(uint32_t codepoint) {
+    if (!titleAtlas.ensure(36, 44, 14, 9)) return nullptr;
+    if (const auto* cell = titleAtlas.find(codepoint, renderEpoch)) return cell;
+    const TitleGlyph* glyph = titleGlyph(codepoint);
+    if (!glyph) return nullptr;
+    auto* cell = titleAtlas.insert(codepoint, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    if (!cell) {
+        geBarrier();
+        cell = titleAtlas.insert(codepoint, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    }
+    return cell;
+}
+
+void drawGlyphCell(const TexState& tex, const GlyphAtlas::Cell& cell, int x, int y, int scale, uint32_t color,
+                   int clipLeft, int clipTop, int clipRight, int clipBottom) {
+    if (!cell.width || !cell.height) return;
+    geSprite(tex, x, y, cell.width * scale, cell.height * scale, cell.u, cell.v, cell.width, cell.height, color,
+             clipLeft, clipTop, clipRight, clipBottom);
+}
+
+const SpriteRef* maskSprite(uint32_t key) {
+    return maskAtlas.ensure(256, 256, 1) ? maskAtlas.find(key) : nullptr;
+}
+const SpriteRef* addMaskSprite(uint32_t key, int w, int h, const uint8_t* alpha) {
+    return maskAtlas.ensure(256, 256, 1) ? maskAtlas.insert(key, w, h, alpha) : nullptr;
+}
+
+// Draws a cached alpha mask 1:1, tinted with `shade`.
+void drawMask(const SpriteRef& ref, int x, int y, uint32_t shade) {
+    geSprite(maskAtlas.tex(TexKind::Mask8), x, y, ref.w, ref.h, ref.u, ref.v, shade | 0xff000000u);
+}
+
+// The sidebar icons are 22x22 ARGB4444 bitmaps. They are scaled to `size` once, with the same
+// nearest-neighbour mapping the CPU renderer used, and cached either as an alpha mask (tinted when
+// drawn) or as a 4444 colour bitmap.
+void drawSidebarIcon(int icon, int x, int y, int size, bool tinted, uint32_t tint) {
+    if (icon < 0 || icon >= 5) return;
+    const uint32_t key = (1u << 28) | (static_cast<uint32_t>(icon) << 8) | static_cast<uint32_t>(size);
+    if (tinted) {
+        const SpriteRef* ref = maskSprite(key);
+        if (!ref) {
+            std::vector<uint8_t> alpha(static_cast<size_t>(size) * size);
+            for (int yy = 0; yy < size; ++yy)
+                for (int xx = 0; xx < size; ++xx)
+                    alpha[static_cast<size_t>(yy) * size + xx] =
+                        static_cast<uint8_t>(((sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size] >> 12) & 15) * 17);
+            ref = addMaskSprite(key, size, size, alpha.data());
+        }
+        if (ref) drawMask(*ref, x, y, tint);
+        return;
+    }
+    if (!colorAtlas.ensure(128, 64, 2)) return;
+    const SpriteRef* ref = colorAtlas.find(key);
+    if (!ref) {
+        std::vector<uint16_t> pixels(static_cast<size_t>(size) * size);
+        for (int yy = 0; yy < size; ++yy)
+            for (int xx = 0; xx < size; ++xx) {
+                const unsigned p = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];  // A R G B
+                pixels[static_cast<size_t>(yy) * size + xx] =
+                    static_cast<uint16_t>((p & 0xf000) | ((p & 0x000f) << 8) | (p & 0x00f0) | ((p >> 8) & 0x000f));  // A B G R
+            }
+        ref = colorAtlas.insert(key, size, size, reinterpret_cast<const uint8_t*>(pixels.data()));
+    }
+    if (ref) geSprite(colorAtlas.tex(TexKind::Color4444), x, y, ref->w, ref->h, ref->u, ref->v, 0xffffffffu);
+}
+
+void fillRect(int x, int y, int width, int height, uint32_t shade) {
+    geSprite(TexState{}, x, y, width, height, 0, 0, shade | 0xff000000u);
+}
+
+void beginFrame() {
+    ++coverFrame;
+    ++renderEpoch;
+    pendingCount = 0;
+    pendingTex = TexState{};
+    listUsed = 0;
+    sceGuStart(GU_DIRECT, commands);
+    geResetState();
+}
+
+void presentFrame() {
+    geEndList();
+#ifdef BILI_UI_FRAME_STATS
+    const uint64_t start = sceKernelGetSystemTimeWide();
+#endif
     sceGuSync(0, 0);
+#ifdef BILI_UI_FRAME_STATS
+    statGeWaitUs += sceKernelGetSystemTimeWide() - start;
+#endif
     sceDisplayWaitVblankStart();
     draw_buffer = sceGuSwapBuffers();
 }
@@ -164,15 +636,6 @@ uint32_t shadeMix(uint32_t d, uint32_t s, unsigned a) {
     return 0xff000000u | rb | g;
 }
 
-// Source coverage 0..15 of the bitmap font as a 0..256 blend weight.
-constexpr uint16_t kCoverage256[16] = {0, 17, 34, 51, 68, 85, 102, 119, 137, 154, 171, 188, 205, 222, 239, 256};
-
-void blendPixel(int x, int y, uint32_t shade, unsigned alpha) {
-    if (!alpha || x < 0 || x >= kWidth || y < 0 || y >= kHeight) return;
-    uint32_t& destination = framebuffer()[y * 512 + x];
-    destination = alpha >= 255 ? (shade | 0xff000000u) : shadeMix(destination, shade, alpha + (alpha >> 7));
-}
-
 void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
               bool centered = false, int clipTop = 0, int clipBottom = kHeight) {
     const int size = fontSize(scale);
@@ -180,24 +643,12 @@ void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, 
     if (centered) x += std::max(0, (maxWidth - bitmapMeasure(text, size)) / 2);
     const int top = std::max(0, clipTop), bottom = std::min(kHeight, clipBottom);
     const uint32_t solid = shade | 0xff000000u;
-    uint32_t* base = framebuffer();
     for (size_t pos = 0; pos < text.size();) {
-        const auto* glyph = bitmapGlyph(bitmapNext(text, pos), size);
-        if (!glyph) continue;
-        if (x + glyph->advance > right) break;
-        const int width = glyph->width, first = std::max(0, -x), last = std::min(width, right - x);
-        for (int yy = 0; yy < glyph->height; ++yy) {
-            const int py = y + yy;
-            if (py < top || py >= bottom) continue;
-            uint32_t* row = base + py * 512 + x;
-            int index = yy * width + first;
-            for (int xx = first; xx < last; ++xx, ++index) {
-                const unsigned coverage = (glyph->alpha[index >> 1] >> ((index & 1) * 4)) & 15;
-                if (!coverage) continue;
-                row[xx] = coverage == 15 ? solid : shadeMix(row[xx], shade, kCoverage256[coverage]);
-            }
-        }
-        x += glyph->advance;
+        const auto* cell = bodyCell(bitmapNext(text, pos), size);
+        if (!cell) continue;
+        if (x + cell->advance > right) break;
+        drawGlyphCell(bodyAtlas.tex(), *cell, x, y, 1, solid, 0, top, right, bottom);
+        x += cell->advance;
     }
 }
 
@@ -250,8 +701,12 @@ std::string formatCount(uint64_t value) {
     return text;
 }
 
-bool loadJpeg(const std::string& path, std::vector<uint32_t>& pixels, int* fitWidth = nullptr, int* fitHeight = nullptr,
-              int outputWidth = kCoverWidth, int outputHeight = kCoverHeight) {
+// Decodes a JPEG, scaling it (nearest neighbour after libjpeg's DCT scaling) to outputWidth x
+// outputHeight, or to fit the detail image area when fitWidth/fitHeight are given. `prepare(w, h)`
+// is called once with the final size and returns false to abort; `put(x, y, r, g, b)` stores a pixel.
+template <class Prepare, class Put>
+bool decodeJpeg(const std::string& path, int* fitWidth, int* fitHeight, int outputWidth, int outputHeight,
+                Prepare prepare, Put put) {
     FILE* file = std::fopen(path.c_str(), "rb");
     if (!file) return false;
     jpeg_decompress_struct decoder{};
@@ -286,7 +741,12 @@ bool loadJpeg(const std::string& path, std::vector<uint32_t>& pixels, int* fitWi
     jpeg_start_decompress(&decoder);
     JSAMPARRAY row = (*decoder.mem->alloc_sarray)(reinterpret_cast<j_common_ptr>(&decoder), JPOOL_IMAGE,
                                                   decoder.output_width * 3, 1);
-    pixels.resize(static_cast<size_t>(outputWidth) * outputHeight);
+    if (!prepare(outputWidth, outputHeight)) {
+        jpeg_abort_decompress(&decoder);
+        jpeg_destroy_decompress(&decoder);
+        std::fclose(file);
+        return false;
+    }
     int destinationRow = 0;
     while (decoder.output_scanline < decoder.output_height) {
         const unsigned sourceRow = decoder.output_scanline;
@@ -295,8 +755,7 @@ bool loadJpeg(const std::string& path, std::vector<uint32_t>& pixels, int* fitWi
                static_cast<unsigned>(destinationRow * decoder.output_height / outputHeight) == sourceRow) {
             for (int x = 0; x < outputWidth; ++x) {
                 const unsigned sourceX = static_cast<unsigned>(x * decoder.output_width / outputWidth);
-                pixels[static_cast<size_t>(destinationRow) * outputWidth + x] =
-                    color(row[0][sourceX * 3], row[0][sourceX * 3 + 1], row[0][sourceX * 3 + 2]);
+                put(x, destinationRow, row[0][sourceX * 3], row[0][sourceX * 3 + 1], row[0][sourceX * 3 + 2]);
             }
             ++destinationRow;
         }
@@ -307,27 +766,207 @@ bool loadJpeg(const std::string& path, std::vector<uint32_t>& pixels, int* fitWi
     return destinationRow == outputHeight;
 }
 
+// Cover textures: 5650 in the PSP's hardware order (red in the low bits), the layout the GE samples
+// with GU_PSM_5650. The buffer is 16-byte aligned and its row pitch is the power-of-two texture width
+// the GE needs; two spare rows keep the texture cache from reading past the allocation.
+struct CoverTexture {
+    TextureBuffer buffer;
+    int texWidth = 0, texHeight = 0;  // power-of-two sizes declared to the GE
+};
+
+constexpr int texturePow2(int value) {
+    int size = 8;
+    while (size < value) size <<= 1;
+    return size;
+}
+
+constexpr uint16_t pack565(unsigned r, unsigned g, unsigned b) {
+    return static_cast<uint16_t>(((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3));
+}
+
+// The image shown on a feed image page (a 5650 texture, fitted to the content area).
+std::string imageKey;
+CoverTexture imageTexture;
+int imageWidth = 0, imageHeight = 0;
+
+bool decodeCoverTexture(const std::string& path, int width, int height, CoverTexture& out,
+                        int* fitWidth = nullptr, int* fitHeight = nullptr) {
+    return decodeJpeg(
+        path, fitWidth, fitHeight, width, height,
+        [&](int w, int h) {
+            out.texWidth = texturePow2(w);
+            out.texHeight = texturePow2(h);
+            const size_t bytes = static_cast<size_t>(out.texWidth) * (h + 2) * sizeof(uint16_t);
+            if (out.texWidth > 512 || out.texHeight > 512 || !out.buffer.allocate(bytes)) return false;
+            std::memset(out.buffer.data, 0, bytes);
+            return true;
+        },
+        [&](int x, int y, unsigned r, unsigned g, unsigned b) {
+            out.buffer.data[static_cast<size_t>(y) * out.texWidth + x] = pack565(r, g, b);
+        });
+}
+
+// Decoding a cover takes tens of milliseconds, so it runs on a worker below the UI thread's
+// priority: a page of new covers shows placeholders and fills them in as each decode finishes,
+// instead of stalling the frame that first asks for them.
+struct CoverRequest {
+    int slot;
+    unsigned ticket;
+    int width, height;
+    std::string key;
+};
+
+std::vector<CoverRequest> coverPending;  // guarded by coverMutex
+SceUID coverDecoder = -1, coverWake = -1;
+bool coverDecoderQuit = false;           // guarded by coverMutex
+constexpr unsigned kCoverStaleFrames = 30;
+
+int coverDecoderMain(SceSize, void*) {
+    for (;;) {
+        sceKernelWaitSema(coverWake, 1, nullptr);
+        for (;;) {
+            CoverRequest request;
+            {
+                std::lock_guard<std::mutex> lock(coverMutex);
+                if (coverDecoderQuit) return 0;
+                if (coverPending.empty()) break;
+                request = std::move(coverPending.front());
+                coverPending.erase(coverPending.begin());
+                CoverSlot& slot = covers[request.slot];
+                if (slot.ticket != request.ticket) continue;  // evicted or reset while queued
+                if (coverFrame - slot.lastUse > kCoverStaleFrames) {
+                    // Scrolled away before the decode started: drop it, the next lookup requeues it.
+                    slot = CoverSlot{};
+                    continue;
+                }
+            }
+            char path[256]{};
+            std::snprintf(path, sizeof(path), "%s/cache/%s.jpg", CLIENT_ROOT, request.key.c_str());
+            CoverTexture texture;
+            bool ok = false;
+            const uint64_t start = sceKernelGetSystemTimeWide();
+            try {
+                ok = decodeCoverTexture(path, request.width, request.height, texture);
+            } catch (...) {
+                ok = false;
+            }
+            // The decoder wrote through the data cache; the GE reads memory directly.
+            if (ok) sceKernelDcacheWritebackRange(texture.buffer.data, static_cast<unsigned>(texture.buffer.bytes));
+            WLOG_D(WLC_UI, "cover decode key=%s size=%dx%d ok=%d us=%u", request.key.c_str(), request.width,
+                   request.height, ok ? 1 : 0, static_cast<unsigned>(sceKernelGetSystemTimeWide() - start));
+            std::lock_guard<std::mutex> lock(coverMutex);
+            CoverSlot& slot = covers[request.slot];
+            if (slot.ticket == request.ticket && slot.state == CoverState::Loading) {
+                if (ok) {
+                    slot.texture = std::move(texture.buffer);
+                    slot.texWidth = texture.texWidth;
+                    slot.texHeight = texture.texHeight;
+                }
+                slot.state = ok ? CoverState::Ready : CoverState::Failed;
+            }
+        }
+    }
+}
+
+bool coverDecoderStart() {
+    if (coverDecoder >= 0) return true;
+    coverWake = sceKernelCreateSema("cover_decode", 0, 0, 64, nullptr);
+    if (coverWake < 0) { coverWake = -1; return false; }
+    {
+        std::lock_guard<std::mutex> lock(coverMutex);
+        coverDecoderQuit = false;
+    }
+    coverDecoder = sceKernelCreateThread("wilimini_cover_decode", coverDecoderMain, 0x26, 64 * 1024,
+                                         PSP_THREAD_ATTR_USER, nullptr);
+    if (coverDecoder < 0 || sceKernelStartThread(coverDecoder, 0, nullptr) < 0) {
+        if (coverDecoder >= 0) sceKernelDeleteThread(coverDecoder);
+        sceKernelDeleteSema(coverWake);
+        coverDecoder = coverWake = -1;
+        WLOG_W(WLC_UI, "cover decoder thread failed to start");
+        return false;
+    }
+    return true;
+}
+
+// Stops the worker and drops queued work. An in-flight decode takes tens of milliseconds, so the
+// wait is short; its result is discarded because every slot is reset by the callers.
+void coverDecoderStop() {
+    if (coverDecoder < 0) return;
+    {
+        std::lock_guard<std::mutex> lock(coverMutex);
+        coverDecoderQuit = true;
+        coverPending.clear();
+    }
+    sceKernelSignalSema(coverWake, 1);
+    SceUInt timeout = 2 * 1000 * 1000;
+    if (sceKernelWaitThreadEnd(coverDecoder, &timeout) < 0) {
+        WLOG_W(WLC_UI, "cover decoder did not stop in time; terminating it");
+        sceKernelTerminateDeleteThread(coverDecoder);
+    } else {
+        sceKernelDeleteThread(coverDecoder);
+    }
+    sceKernelDeleteSema(coverWake);
+    coverDecoder = coverWake = -1;
+}
+
+// Returns the slot only once its pixels are decoded; otherwise requests the decode and returns null,
+// which the caller draws as a placeholder.
 CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int height = kCoverHeight) {
     if (bvid.empty()) return nullptr;
-    for (auto& slot : covers) {
-        if (slot.key == bvid && slot.width == width && slot.height == height) return &slot;
+    if (coverDecoder < 0 && !coverDecoderStart()) return nullptr;
+    // Never wait on the decoder: if it holds the lock, show the placeholder for this frame.
+    std::unique_lock<std::mutex> lock(coverMutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+#ifdef BILI_UI_FRAME_STATS
+        ++statCoverLockMisses;
+#endif
+        return nullptr;
     }
-    if (coverDecodesThisFrame >= 1) return nullptr;
-    ++coverDecodesThisFrame;
-    CoverSlot& slot = covers[next_cover++ % kMaxCovers];
+    int victim = -1;
+    for (int i = 0; i < kMaxCovers; ++i) {
+        CoverSlot& slot = covers[i];
+        if (slot.state != CoverState::Empty && slot.key == bvid && slot.width == width && slot.height == height) {
+            slot.lastUse = coverFrame;
+            return slot.state == CoverState::Ready && slot.texture.data ? &slot : nullptr;
+        }
+        if (slot.state == CoverState::Loading) continue;
+        if (slot.state == CoverState::Empty) { if (victim < 0 || covers[victim].state != CoverState::Empty) victim = i; continue; }
+        if (slot.lastUse == coverFrame) continue;  // drawn this frame: keep it
+        if (victim < 0 || (covers[victim].state != CoverState::Empty && slot.lastUse < covers[victim].lastUse)) victim = i;
+    }
+    if (victim < 0) return nullptr;  // every slot is busy or on screen; ask again next frame
+    CoverSlot& slot = covers[victim];
+    slot.texture = TextureBuffer{};  // free the old image before the decoder allocates the new one
     slot.key = bvid;
-    slot.width = width; slot.height = height;
-    slot.pixels.clear();
-    char path[256]{};
-    std::snprintf(path, sizeof(path), "%s/cache/%s.jpg", CLIENT_ROOT, bvid.c_str());
-    if (!loadJpeg(path, slot.pixels, nullptr, nullptr, width, height)) slot.pixels.clear();
-    return &slot;
+    slot.width = width;
+    slot.height = height;
+    slot.state = CoverState::Loading;
+    slot.ticket = ++coverTicket;
+    slot.lastUse = coverFrame;
+    coverPending.push_back({victim, slot.ticket, width, height, bvid});
+    sceKernelSignalSema(coverWake, 1);
+    return nullptr;
 }
 
 void drawCover(const std::string& bvid, int x, int y, int width, int height, bool detailed = false,
                int clipTop = 0, int clipBottom = kHeight, uint32_t placeholder = 0, bool label = true) {
     CoverSlot* slot = showCovers ? coverSlot(bvid, width, height) : nullptr;
-    if (!slot || slot->pixels.empty()) {
+#ifdef BILI_UI_FRAME_STATS
+    // Diagnostic: a cover shown as an image and then, within two frames, as a placeholder flickers.
+    static std::unordered_map<std::string, unsigned> imageFrame;
+    const std::string coverId = bvid + ':' + std::to_string(width) + 'x' + std::to_string(height);
+    if (slot && slot->texture.data) {
+        imageFrame[coverId] = coverFrame;
+    } else if (showCovers) {
+        const auto seen = imageFrame.find(coverId);
+        if (seen != imageFrame.end() && coverFrame - seen->second <= 2 && coverFrame != seen->second) {
+            WLOG_W(WLC_UI, "cover flicker key=%s frame=%u last_image=%u lock_misses=%u", bvid.c_str(),
+                   coverFrame.load(), seen->second, statCoverLockMisses);
+            imageFrame.erase(seen);
+        }
+    }
+#endif
+    if (!slot || !slot->texture.data) {
         const int top = std::max(y, clipTop);
         const int bottom = std::min(y + height, clipBottom);
         fillRect(x, top, width, bottom - top, placeholder ? placeholder : kPanelRaised);
@@ -336,17 +975,10 @@ void drawCover(const std::string& bvid, int x, int y, int width, int height, boo
                      false, clipTop, clipBottom);
         return;
     }
-    uint32_t* destination = framebuffer();
-    for (int row = 0; row < height; ++row) {
-        if (y + row < clipTop || y + row >= clipBottom) continue;
-        const int sourceY = std::min(slot->height - 1, row * slot->height / height);
-        const uint32_t* source = slot->pixels.data() + static_cast<size_t>(sourceY) * slot->width;
-        uint32_t* line = destination + (y + row) * 512 + x;
-        for (int column = 0; column < width; ++column) {
-            const int sourceX = std::min(slot->width - 1, column * slot->width / width);
-            line[column] = source[sourceX];
-        }
-    }
+    // Opaque 1:1 sprite from the cover's 5650 texture; the GE expands it to the 8888 draw buffer.
+    // The clip rows come from the list; the screen edges are trimmed by geSprite.
+    geSprite(TexState{TexKind::Color5650, slot->texture.data, slot->texWidth, slot->texHeight}, x, y, width, height, 0, 0,
+             0xffffffffu, 0, clipTop, kWidth, clipBottom);
 }
 
 void drawMetroHeader(const pspapp::App& app);
@@ -357,15 +989,8 @@ void drawHeader(const pspapp::App& app) {
     const bool tile = app.preferences().tileHome();
     const bool navFocus = !tile && app.focusArea() == pspapp::FocusArea::Navigation;
     const int activeNav = app.utilityPage() ? 4 : navFocus ? app.navigationSelection() : app.tab() == pspapp::Tab::Mine ? 2 : 0;
-    for (int icon = 0; !tile && icon < 5; ++icon) {
-        for (int yy = 0; yy < 19; ++yy) for (int xx = 0; xx < 19; ++xx) {
-            const unsigned pixel = sidebarPixels[icon][(yy * 22 / 19) * 22 + xx * 22 / 19];
-            const unsigned alpha = ((pixel >> 12) & 15) * 17;
-            blendPixel(6 + xx, iconY[icon] + yy,
-                       app.preferences().darkTheme ? kTextDim : color(((pixel >> 8) & 15) * 17, ((pixel >> 4) & 15) * 17, (pixel & 15) * 17),
-                       alpha);
-        }
-    }
+    for (int icon = 0; !tile && icon < 5; ++icon)
+        drawSidebarIcon(icon, 6, iconY[icon], 19, app.preferences().darkTheme, kTextDim);
     if (!tile) fillRect(0, iconY[activeNav] - 1, navFocus ? 3 : 2, 22, kPink);
     if (tile && !app.utilityPage()) {
         if (app.preferences().metro()) drawMetroHeader(app); else drawTilesHeader(app);
@@ -551,14 +1176,7 @@ void drawFooter(const pspapp::App& app) {
 void blendRect(int x, int y, int width, int height, uint32_t shade, unsigned alpha) {
     if (alpha >= 250) { fillRect(x, y, width, height, shade); return; }
     if (!alpha || width <= 0 || height <= 0) return;
-    const int left = std::max(0, x), top = std::max(0, y);
-    const int right = std::min(kWidth, x + width), bottom = std::min(kHeight, y + height);
-    const unsigned a = alpha + (alpha >> 7);
-    uint32_t* destination = framebuffer();
-    for (int row = top; row < bottom; ++row) {
-        uint32_t* line = destination + row * 512;
-        for (int column = left; column < right; ++column) line[column] = shadeMix(line[column], shade, a);
-    }
+    geSprite(TexState{}, x, y, width, height, 0, 0, (shade & 0x00ffffffu) | (alpha << 24));
 }
 
 // Large page titles and the big numbers on live tiles, drawn from the 32 px title font. If the
@@ -567,43 +1185,31 @@ void drawTitleText(int x, int y, uint32_t shade, std::string_view text, int maxW
     const int width = titleFontReady() ? titleMeasure(text) : -1;
     if (width < 0) { drawText(x, y + 10, 0.9f, shade, text, maxWidth); return; }
     const int right = std::min(kWidth, x + maxWidth);
+    const uint32_t solid = shade | 0xff000000u;
     for (size_t pos = 0; pos < text.size();) {
-        const TitleGlyph* glyph = titleGlyph(bitmapNext(text, pos));
-        if (!glyph) continue;
-        if (x + glyph->advance > right) break;
-        for (int yy = 0; yy < glyph->height; ++yy)
-            for (int xx = 0; xx < glyph->width && x + xx < right; ++xx) {
-                const int pixel = yy * glyph->width + xx;
-                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
-                blendPixel(x + xx, y + yy, shade, alpha);
-            }
-        x += glyph->advance;
+        const auto* cell = titleCell(bitmapNext(text, pos));
+        if (!cell) continue;
+        if (x + cell->advance > right) break;
+        drawGlyphCell(titleAtlas.tex(), *cell, x, y, 1, solid, 0, 0, right, kHeight);
+        x += cell->advance;
     }
 }
 
 // Tiles style: 16 px text drawn at double size (32 px) for the big numbers on live tiles.
 void drawBigText(int x, int y, uint32_t shade, std::string_view text, int maxWidth) {
     const int right = std::min(kWidth, x + maxWidth);
+    const uint32_t solid = shade | 0xff000000u;
     for (size_t pos = 0; pos < text.size();) {
-        const auto* glyph = bitmapGlyph(bitmapNext(text, pos), 16);
-        if (!glyph) continue;
-        if (x + glyph->advance * 2 > right) break;
-        for (int yy = 0; yy < glyph->height; ++yy)
-            for (int xx = 0; xx < glyph->width; ++xx) {
-                const int pixel = yy * glyph->width + xx;
-                const unsigned alpha = ((glyph->alpha[pixel / 2] >> ((pixel % 2) * 4)) & 15) * 17;
-                for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx)
-                    blendPixel(x + xx * 2 + dx, y + yy * 2 + dy, shade, alpha);
-            }
-        x += glyph->advance * 2;
+        const auto* cell = bodyCell(bitmapNext(text, pos), 16);
+        if (!cell) continue;
+        if (x + cell->advance * 2 > right) break;
+        drawGlyphCell(bodyAtlas.tex(), *cell, x, y, 2, solid, 0, 0, kWidth, kHeight);
+        x += cell->advance * 2;
     }
 }
 
 void drawIconGlyph(int icon, int x, int y, int size) {
-    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx) {
-        const unsigned pixel = sidebarPixels[icon][(yy * 22 / size) * 22 + xx * 22 / size];
-        blendPixel(x + xx, y + yy, color(255, 255, 255), ((pixel >> 12) & 15) * 17);
-    }
+    drawSidebarIcon(icon, x, y, size, true, color(255, 255, 255));
 }
 
 // ---- Line icons: small vector shapes (32x32 grid) rendered with antialiasing and cached.
@@ -711,10 +1317,14 @@ const std::vector<uint8_t>& iconBitmap(int id, int size) {
 
 void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
     if (id < 0 || id >= IconCount) return;
-    const auto& bitmap = iconBitmap(id, size);
-    if (bitmap.empty()) return;
-    for (int yy = 0; yy < size; ++yy) for (int xx = 0; xx < size; ++xx)
-        blendPixel(x + xx, y + yy, shade, bitmap[static_cast<size_t>(yy) * size + xx]);
+    const uint32_t key = (2u << 28) | (static_cast<uint32_t>(id) << 8) | static_cast<uint32_t>(size);
+    const SpriteRef* ref = maskSprite(key);
+    if (!ref) {
+        const auto& bitmap = iconBitmap(id, size);
+        if (bitmap.empty()) return;
+        ref = addMaskSprite(key, size, size, bitmap.data());
+    }
+    if (ref) drawMask(*ref, x, y, shade);
 }
 
 // Top status strip: clock and battery on the right.
@@ -1757,21 +2367,29 @@ void drawMetroHeader(const pspapp::App& app) {
 }
 
 // Flip-in transition for a page that just appeared: squeezes the finished frame toward the
-// centre line and releases it. In place, working outward from the centre, so no copy is needed.
+// centre line and releases it. The frame so far is copied by the GE into spare VRAM (past the
+// two frame buffers and the depth buffer) and drawn back scaled, so the CPU never reads VRAM.
+constexpr unsigned kFrameBytes = 512 * 272 * 4;
+constexpr unsigned kSqueezeOffset = 2 * kFrameBytes + 512 * 272 * 2;
+void* vramPointer(unsigned offset) { return reinterpret_cast<void*>(0x44000000u + offset); }
+
 void squeezePage(int64_t now) {
     const float t = clamp01((now - pageFx.enterMs) / 200.f);
     if (t >= 1.f) return;
     const float f = 0.55f + 0.45f * easeOut(t);  // opens from 55% height, not from a flat line
     constexpr int half = 129;  // rows 0..257 around the centre line
-    uint32_t* destination = framebuffer();
-    for (int d = 0; d < half; ++d) {
-        const int source = static_cast<int>(d / f);
-        const int rows[2][2] = {{half - 1 - d, half - 1 - source}, {half + d, half + source}};
-        for (const auto& row : rows) {
-            uint32_t* line = destination + row[0] * 512;
-            if (source >= half) std::fill(line, line + kWidth, kBackground);
-            else if (row[0] != row[1]) std::copy(destination + row[1] * 512, destination + row[1] * 512 + kWidth, line);
-        }
+    geBarrier();  // the frame is complete up to here
+    sceGuCopyImage(GU_PSM_8888, 0, 0, kWidth, kHeight, 512, vramPointer(static_cast<unsigned>(reinterpret_cast<uintptr_t>(draw_buffer))),
+                   0, 0, 512, vramPointer(kSqueezeOffset));
+    geBarrier();  // the copy has finished before it is sampled
+    int rows = 0;  // rows on each side of the centre line that still show the page
+    while (rows < half && static_cast<int>(rows / f) < half) ++rows;
+    fillRect(0, 0, kWidth, 2 * half, kBackground);
+    if (rows > 0) {
+        const int span = std::min(half, static_cast<int>(rows / f + 0.5f));
+        const TexState copy{TexKind::Color8888, vramPointer(kSqueezeOffset), 512, 512};
+        geSprite(copy, 0, half - rows, kWidth, rows, 0, half - span, kWidth, span, 0xffffffffu, 0, 0, kWidth, kHeight);
+        geSprite(copy, 0, half, kWidth, rows, 0, half, kWidth, span, 0xffffffffu, 0, 0, kWidth, kHeight);
     }
 }
 
@@ -2296,18 +2914,25 @@ void drawBrowse(const pspapp::App& app) {
     drawText(12, 3, 0.9f, kText, page.title, 456);
     fillRect(12, 26, 456, 1, kLine);
     if (page.request.kind == pspapp::BrowseKind::Image) {
-        static std::string imageKey;
-        static std::vector<uint32_t> imagePixels;
-        static int width=0, height=0;
-        if(imageKey!=page.description) {
-            imageKey=page.description;imagePixels.clear();
-            loadJpeg(std::string(CLIENT_ROOT)+"/cache/"+imageKey+".jpg",imagePixels,&width,&height);
+        if (imageKey != page.description) {
+            imageKey = page.description;
+            geBarrier();  // sprites queued with the previous texture must finish before it is freed
+            imageTexture = CoverTexture{};
+            imageWidth = imageHeight = 0;
+            CoverTexture decoded;
+            if (decodeCoverTexture(std::string(CLIENT_ROOT) + "/cache/" + imageKey + ".jpg", 0, 0, decoded, &imageWidth,
+                                   &imageHeight)) {
+                sceKernelDcacheWritebackRange(decoded.buffer.data, static_cast<unsigned>(decoded.buffer.bytes));
+                imageTexture = std::move(decoded);
+            }
         }
-        if(imagePixels.empty())drawText(12,90,0.7f,kTextDim,
-            "图片加载失败 · " + std::string(app.preferences().backButton()) + " 返回动态",456);
+        if (!imageTexture.buffer.data)
+            drawText(12, 90, 0.7f, kTextDim,
+                     "图片加载失败 · " + std::string(app.preferences().backButton()) + " 返回动态", 456);
         else {
-            const int x=(480-width)/2,y=32+(215-height)/2;
-            for(int row=0;row<height;++row)std::copy(imagePixels.begin()+row*width,imagePixels.begin()+(row+1)*width,framebuffer()+(y+row)*512+x);
+            const int x = (480 - imageWidth) / 2, y = 32 + (215 - imageHeight) / 2;
+            geSprite(TexState{TexKind::Color5650, imageTexture.buffer.data, imageTexture.texWidth, imageTexture.texHeight}, x, y,
+                     imageWidth, imageHeight, 0, 0, 0xffffffffu);
         }
         return;
     }
@@ -2415,13 +3040,16 @@ void ui_startup_status(const char *message) {
     fillRect(0, 0, kWidth, kHeight, kBackground);
     drawText(12, 12, 0.8f, kText, "WiliMini", 456);
     drawText(12, 254, 0.46f, kTextDim, message, 456);
-    sceGuFinish();
+    geEndList();
     sceGuSync(0, 0);
     sceDisplayWaitVblankStart();
     draw_buffer = sceGuSwapBuffers();
 }
 
 void ui_shutdown() {
+    coverDecoderStop();
+    imageTexture = CoverTexture{};
+    releaseRenderResources();
     bitmapFontShutdown();
     titleFontShutdown();
     sceGuTerm();
@@ -2429,12 +3057,15 @@ void ui_shutdown() {
 
 void ui_prepare_playback() {
     // Decoded covers are cheap to reload after playback and can otherwise keep
-    // nearly 1.8 MiB alive while FFmpeg needs reference pictures and RGB frames.
-    for (auto& cover : covers) {
-        cover.key.clear();
-        std::vector<uint32_t>().swap(cover.pixels);
-    }
-    next_cover = 0;
+    // nearly 1.8 MiB alive while FFmpeg needs reference pictures and RGB frames. The decoder thread
+    // and its stack are released too; the first cover lookup after playback starts it again.
+    coverDecoderStop();
+    std::lock_guard<std::mutex> lock(coverMutex);
+    for (auto& cover : covers) cover = CoverSlot{};
+    // The UI is idle here (the last frame has been presented), so the GE no longer reads these.
+    imageKey.clear();
+    imageTexture = CoverTexture{};
+    releaseRenderResources();
 }
 
 void ui_resume() {
@@ -2464,10 +3095,15 @@ void ui_dialog_present() {
 void ui_render(const pspapp::App& app) {
 #ifdef BILI_UI_FRAME_STATS
     const uint64_t statsStart = sceKernelGetSystemTimeWide();
+    statSprites = statBatches = statGlyphMisses = statRestarts = 0;
+    statGeWaitUs = 0;
+    statListBytes = 0;
 #endif
     applyPreferences(app.preferences());
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
+        // A reset slot has ticket 0, so a decode still in flight for it is discarded on publish.
+        std::lock_guard<std::mutex> lock(coverMutex);
         for (auto& cover : covers)
             if (app.completedCoverKey().empty() || cover.key == app.completedCoverKey())
                 cover = CoverSlot{};
@@ -2525,6 +3161,9 @@ void ui_render(const pspapp::App& app) {
         const char phase = hub ? (app.tileLaunching() ? 'L' : (nowMs - hubFx.enterMs < 500 ? 'E' : 'H'))
                          : (nowMs - pageFx.enterMs < 200 ? 'P' : 'S');
         WLOG_D(WLC_CLIENT, "UIFRAME %c %u", phase, static_cast<unsigned>(sceKernelGetSystemTimeWide() - statsStart));
+        WLOG_D(WLC_CLIENT, "UIGE sprites=%u batches=%u list_bytes=%u glyph_misses=%u restarts=%u wait_us=%u", statSprites,
+               statBatches, static_cast<unsigned>(statListBytes), statGlyphMisses, statRestarts,
+               static_cast<unsigned>(statGeWaitUs));
     }
 #endif
     presentFrame();
@@ -2779,7 +3418,10 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
         else if (pressed & PSP_CTRL_DOWN) move(0, 1);
 
         // ----- draw -----
-        ui_dialog_frame();
+        // An ordinary frame: unlike ui_dialog_frame() (which closes the list so a system dialog can
+        // draw), the list stays open so the sprites queued below are sent by presentFrame().
+        beginFrame();
+        fillRect(0, 0, kWidth, kHeight, kBackground);
         drawText(20, 4, 0.85f, kText, title, 330);
         const std::string counter = std::to_string(utf8Length(text) + utf8Length(ime.preedit())) + " / " + std::to_string(limit);
         drawText(380, 6, 0.5f, kTextDim, counter, 80);
@@ -2853,7 +3495,7 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
             }
         }
         drawText(8, 250, 0.5f, kTextDim, hint, 464);
-        ui_dialog_present();
+        presentFrame();
         ++frame;
     }
     // Wait for the buttons to be released so the caller does not see this press.
