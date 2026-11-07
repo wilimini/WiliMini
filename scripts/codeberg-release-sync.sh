@@ -13,6 +13,27 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 gh release view "$tag" --repo "$GH_REPO" --json name,body,isPrerelease > "$work/rel.json"
+
+# The workflow_run event can start before GitHub's release assets are visible
+# through the API. Wait for publication instead of treating that race as an
+# empty release. Fail after ten minutes so a genuinely assetless/broken release
+# is reported clearly rather than silently mirrored without files.
+attempt=0
+asset_count=0
+while [ "$attempt" -lt 40 ]; do
+    asset_count=$(gh release view "$tag" --repo "$GH_REPO" --json assets --jq '.assets | length')
+    if [ "$asset_count" -gt 0 ]; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    echo "GitHub release $tag has no visible assets yet ($attempt/40); retrying in 15s"
+    sleep 15
+done
+if [ "$asset_count" -eq 0 ]; then
+    echo "error: GitHub release $tag still has no assets after 10 minutes" >&2
+    exit 1
+fi
+
 gh release download "$tag" --repo "$GH_REPO" --dir "$work/assets"
 
 python3 -I - "$work/rel.json" "$tag" > "$work/payload.json" <<'PY'
