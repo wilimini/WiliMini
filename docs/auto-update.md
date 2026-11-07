@@ -5,15 +5,15 @@
 | Milestone | State |
 | --- | --- |
 | 1. Release workflow publishes `WiliMini-<tag>.zip` + `SHA256SUMS` | done (`.github/workflows/build.yml`) |
-| 2. Platform-independent core | partly done: version compare, release JSON parsing, checksum lookup, archive path check, swap journal (`client/services/update_core.*`, `tests/update_core_test.cpp`). Zip extraction is not written yet. |
-| 3. Network and download | not started |
+| 2. Platform-independent core | done on the host: version compare, release JSON parsing, checksum lookup, swap journal (`client/services/update_core.*`); SHA-256, streaming zip listing/extraction with CRC and size limits, and HTTP Range resume decisions (`client/services/update_package.*`). Tests: `tests/update_core_test.cpp`, `tests/update_package_test.cpp`, `tools/test-update-package.sh`. |
+| 3. Network and download | partly: Range/resume logic exists; the curl download loop, ETag, redirects and CA check are not written |
 | 4. Loader journaled swap + rollback | not started (needs hardware testing) |
 | 5. Settings UI | not started |
 | 6. Release checklist | below |
 | 7. Signed releases | later |
 
 Nothing in the client calls the core yet, so the shipped app behaves as before.
-Only host checks (`sh tools/test-host.sh`) have been run; no PSP, PPSSPP or
+The new sources are not in the PSP build (CMake) yet and have never been compiled with the PSP toolchain or linked against the PSP zlib. Only host checks (`sh tools/test-host.sh`, `sh tools/test-update-package.sh`) have been run; no PSP, PPSSPP or
 hardware test of updating exists.
 
 ## Release assets

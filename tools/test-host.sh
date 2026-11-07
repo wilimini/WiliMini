@@ -26,4 +26,5 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 "$out/http-buffer-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
+sh tools/test-update-package.sh
 echo "All host checks passed"
