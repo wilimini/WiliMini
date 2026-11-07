@@ -7,6 +7,8 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <pspiofilemgr.h>
+#include <psppower.h>
+#include "services/update_curl.hpp"
 #include <wili_log.h>
 
 namespace pspapp {
@@ -120,6 +122,74 @@ void App::changeSetting() {
             : text(TextId::settings_saved, preferences_.locale);
 }
 
+namespace {
+// Free bytes on the storage device that holds the package.
+uint64_t packageFreeBytes() {
+    struct DevInfo { unsigned maxClusters, freeClusters; int maxSectors, sectorSize, sectorCount; } info{};
+    DevInfo* p = &info;
+    const char* dev = std::strncmp(CLIENT_ROOT, "ef0:", 4) == 0 ? "ef0:" : "ms0:";
+    if (sceIoDevctl(dev, 0x02425818, &p, sizeof(p), nullptr, 0) < 0) return 0; // unknown: not enforced
+    return static_cast<uint64_t>(info.freeClusters) * info.sectorCount * info.sectorSize;
+}
+} // namespace
+
+void App::openUpdate() {
+    if (!update_) {
+        updateVersion_ = pspapp::buildVersion;
+        UpdatePolicy policy;
+        policy.preflight = [](std::string& reason) {
+            // A power loss in the middle of the swap is what the journal is for, but do not invite it.
+            if (!scePowerIsPowerOnline() && scePowerGetBatteryLifePercent() >= 0 &&
+                scePowerGetBatteryLifePercent() < 30) {
+                reason = "battery below 30%, connect the charger";
+                return false;
+            }
+            return true;
+        };
+        policy.freeSpace = packageFreeBytes;
+        update_.reset(new UpdateController(CLIENT_ROOT, updateVersion_, [](const volatile bool* cancel) {
+            return std::unique_ptr<UpdateTransport>(new CurlUpdateTransport(CLIENT_PATH("/cacert.pem"), cancel));
+        }, policy));
+    }
+    update_->reset();
+    navigation_.push<UpdateRoute>();
+}
+
+namespace {
+struct UpdateJob { UpdateController* controller; bool install; };
+UpdateJob updateJob;
+} // namespace
+
+int App::updateEntry(SceSize, void*) {
+    try {
+        if (updateJob.install) updateJob.controller->runInstall();
+        else updateJob.controller->runCheck();
+    } catch (...) {
+        WLOG_E(WLC_CLIENT, "update worker threw");
+    }
+    return 0;
+}
+
+void App::joinUpdateThread() {
+    if (updateThread_ < 0) return;
+    sceKernelWaitThreadEnd(updateThread_, nullptr);
+    sceKernelDeleteThread(updateThread_);
+    updateThread_ = -1;
+}
+
+void App::startUpdateJob(bool install) {
+    if (!update_ || updateBusy()) return;
+    joinUpdateThread();
+    updateJob = {update_.get(), install};
+    updateThread_ = sceKernelCreateThread("wili_update", updateEntry, 0x24, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
+    if (updateThread_ < 0) { status_ = "无法启动更新线程"; return; }
+    if (sceKernelStartThread(updateThread_, 0, nullptr) < 0) {
+        sceKernelDeleteThread(updateThread_);
+        updateThread_ = -1;
+        status_ = "无法启动更新线程";
+    }
+}
+
 void App::updateStorage() {
     coverFiles_ = 0;
     coverBytes_ = 0;
@@ -150,7 +220,20 @@ void App::activateUtility() {
             navigation_.push<StorageRoute>();
             updateStorage();
         } else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::Help)) navigation_.push<HelpRoute>();
+        else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::Update)) openUpdate();
         else if (navigation_.get<SettingsRoute>().selection == static_cast<size_t>(SettingItem::About)) navigation_.push<AboutRoute>();
+    } else if (screen() == Screen::Update) {
+        const UpdateSnapshot snap = updateSnapshot();
+        if (updateBusy()) return;
+        switch (snap.state) {
+            case UpdateState::Available: startUpdateJob(true); break;
+            case UpdateState::Ready: sceKernelExitGame(); break; // the loader swaps files on the next launch
+            default:
+                if (!network_ready()) { status_ = "请先连接 Wi-Fi"; return; }
+                if (update_) update_->reset();
+                startUpdateJob(false);
+                break;
+        }
     } else if (screen() == Screen::About) {
         navigation_.push<LicensesRoute>();
     } else if (screen() == Screen::Licenses) {

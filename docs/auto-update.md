@@ -5,16 +5,44 @@
 | Milestone | State |
 | --- | --- |
 | 1. Release workflow publishes `WiliMini-<tag>.zip` + `SHA256SUMS` | done (`.github/workflows/build.yml`) |
-| 2. Platform-independent core | partly done: version compare, release JSON parsing, checksum lookup, archive path check, swap journal (`client/services/update_core.*`, `tests/update_core_test.cpp`). Zip extraction is not written yet. |
-| 3. Network and download | not started |
-| 4. Loader journaled swap + rollback | not started (needs hardware testing) |
-| 5. Settings UI | not started |
+| 2. Platform-independent core | done, host-tested: `update_core.*` (versions, release JSON, swap planning), `update_package.*` (SHA-256, streaming zip, Range resume rules) |
+| 3. Network and download | logic done and host-tested with a fake transport (`update_install.*`: check with GitHub→Codeberg fallback, resumable download, SHA-256 verify, staging into `pending/`). The libcurl transport (`update_curl.*`) is written but only syntax-checked against a stub header |
+| 4. Loader journaled swap + rollback | done and host-tested with power loss injected at every file operation (`platform/src/wili_update_swap.c`, 144 crash points); wired into `client/bootstrap.c`, committed from `client/main.cpp` after the UI is up. **Never compiled for PSP, never run on a device** |
+| 5. Settings UI | not started. Needs a Settings row, a page (release notes, progress, confirm), localization keys, battery and free-space checks, and a worker thread |
 | 6. Release checklist | below |
 | 7. Signed releases | later |
 
-Nothing in the client calls the core yet, so the shipped app behaves as before.
-Only host checks (`sh tools/test-host.sh`) have been run; no PSP, PPSSPP or
-hardware test of updating exists.
+## What is and is not in the PSP build
+
+Only the swap (`wili_update_swap.c`, loader + client commit) is in `CMakeLists.txt`.
+`update_core`, `update_package`, `update_install` and `update_curl` are not
+added yet because nothing calls them and they have never been built with the
+PSP toolchain (zlib linking included). Add them together with the UI.
+No PSP toolchain was available while writing this, so the loader/client edits
+and the CMake change are unverified; build with `make package` before merging
+anything that relies on them.
+
+Host checks: `sh tools/test-host.sh` (needs libcurl headers for the existing
+transport test) or `sh tools/test-update-package.sh` for the updater alone.
+
+## How an update works
+
+1. Check: `GET /releases/latest` on GitHub, then Codeberg if GitHub is unreachable.
+   Prereleases, drafts and downgrades are ignored.
+2. Download `WiliMini-<tag>.zip` to `.part` with Range resume; verify SHA-256
+   (API digest or `SHA256SUMS`); delete on mismatch.
+3. Stage: verify again, extract to `<root>/pending/`, write `pending/MANIFEST` last.
+   Packages without `EBOOT.PBP` and `wili_mini.prx`, or containing `settings.json`,
+   unsafe paths or `.bak` names, are refused.
+4. Next launch, the loader runs the swap: back up old files as `*.bak`, move new
+   files in (`EBOOT.PBP` last), then 3 trial boots. The client calls
+   `wili_swap_commit()` once its UI is up; if it never does, the 4th launch
+   restores the `.bak` files and writes `update.failed`. Files not in the
+   manifest (settings, themes) are never touched.
+
+Decisions taken for the open questions in the issue: manifest-based (not
+whole-folder) replacement; `SHA256SUMS` from the release is enough for a first
+version, signing stays milestone 7.
 
 ## Release assets
 

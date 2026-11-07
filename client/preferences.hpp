@@ -22,6 +22,7 @@ enum class SettingItem : std::size_t {
     Wifi,
     CoverCache,
     Help,
+    Update,
     About,
     Count
 };

@@ -14,6 +14,8 @@
 #include "services/auth_service.hpp"
 #include "services/search_service.hpp"
 #include "services/community_service.hpp"
+#include "services/update_controller.hpp"
+#include <memory>
 
 namespace pspapp {
 
@@ -70,7 +72,7 @@ public:
     std::string tileSubtitle(TileId tile) const;
     void changeSetting();
     void updateStorage();
-    bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::LicenseText; }
+    bool utilityPage() const { return screen() >= Screen::Settings && screen() <= Screen::Update; }
     const Preferences& preferences() const { return preferences_; }
     // ME_BACKEND_* loaded by the bootstrap; -1 when native ME is not in use.
     int activeMeBackend() const { return activeMeBackend_; }
@@ -87,6 +89,11 @@ public:
     unsigned coverGeneration() const { return coverGeneration_; }
     const std::string &completedCoverKey() const { return completedCoverKey_; }
     std::string buildVersion() const;
+    // Settings > Check for updates (issue #26). The controller runs on its own worker thread.
+    UpdateSnapshot updateSnapshot() const { return update_ ? update_->snapshot() : UpdateSnapshot{}; }
+    bool updateBusy() const { return update_ && update_->busy(); }
+    void cancelUpdate() { if (update_) update_->cancel(); }
+    const std::string& updateVersion() const { return updateVersion_; }
 
     void openBrowse(BrowseRequest request);
     void browseMore();
@@ -367,6 +374,13 @@ private:
     std::string jobError_;
     bool jobFinished_ = false;
     SceUID worker_ = -1;
+    std::unique_ptr<UpdateController> update_;
+    SceUID updateThread_ = -1;
+    std::string updateVersion_;
+    void openUpdate();
+    void startUpdateJob(bool install);
+    void joinUpdateThread();
+    static int updateEntry(SceSize, void*);
     bool workerStarted_ = false;
 
     std::vector<VideoCard> stagedCards_;

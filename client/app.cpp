@@ -302,6 +302,8 @@ App* App::workerApp = nullptr;
 App::App() = default;
 
 App::~App() {
+    if (update_) update_->cancel();
+    joinUpdateThread();
     shutdown();
 }
 
@@ -768,6 +770,11 @@ void App::cancelRequest() {
 }
 
 void App::back() {
+    if (screen() == Screen::Update && updateBusy()) {
+        cancelUpdate(); // stay on the page until the worker stops
+        status_ = "正在取消更新…";
+        return;
+    }
     if (busy()) {
         // Cancel on the worker first; release this route only after joinJob().
         pendingBack_ = true;

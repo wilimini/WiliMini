@@ -12,6 +12,7 @@
 #include <psp_runtime.h>
 #include <wili_log.h>
 #include "me_backend_select.h"
+#include <wili_update_swap_posix.h>
 PSP_MODULE_INFO("WiliMini loader",PSP_MODULE_USER,0,1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_HEAP_SIZE_KB(128);
@@ -52,6 +53,14 @@ int main(int argc,char **argv){
     char path[128];
     int r=-1;
     if(!root)goto failed;
+    /* Finish or roll back a staged update before any module of this package loads (issue #26). */
+    switch(wili_swap_run(&wili_swap_posix_fs,root)){
+    case WILI_SWAP_APPLIED:WLOG_I(WLC_LOADER,"update applied; trial boot");break;
+    case WILI_SWAP_ROLLED_BACK:WLOG_W(WLC_LOADER,"update failed; previous version restored");break;
+    case WILI_SWAP_ERROR:WLOG_E(WLC_LOADER,"update swap error; starting existing files");break;
+    default:break;
+    }
+    if(!wili_select_storage(file_exists,!sce_mpeg))goto failed; /* a swap must leave a complete package */
     r=sceUtilityLoadModule(PSP_MODULE_NET_COMMON);
     if(r>=0 || (unsigned)r==SCE_ERROR_MODULE_ALREADY_LOADED)r=sceUtilityLoadModule(PSP_MODULE_NET_INET);
     if(r<0 && (unsigned)r!=SCE_ERROR_MODULE_ALREADY_LOADED)goto failed;

@@ -166,5 +166,21 @@
   "comment_tile_more": "More",
   "hint_comment_list": "↑↓ Select  {confirm} Expand  ← Like  → Replies  △ Menu  □ Comment  {back} Back",
   "hint_reply_list": "↑↓ Select  {confirm} Expand  ← Like  △ Menu  □ Reply  {back} Back",
-  "hint_comment_menu": "← → Select  {confirm} OK  {back} Cancel"
+  "hint_comment_menu": "← → Select  {confirm} OK  {back} Cancel",
+  "settings_update": "Check for updates",
+  "value_check": "Check ›",
+  "page_update_title": "Settings / Update",
+  "hint_update": "{confirm} Continue  {back} Back",
+  "hint_update_busy": "{back} Cancel",
+  "update_current": "Current version: {version}",
+  "update_idle": "Press {confirm} to check for a newer release.",
+  "update_checking": "Checking for updates…",
+  "update_uptodate": "You are up to date.",
+  "update_available": "New version {tag} (from {source})",
+  "update_confirm": "{confirm} Download and install  ·  {back} Not now",
+  "update_downloading": "Downloading… {percent}%  ({done} / {total} KiB)",
+  "update_staging": "Verifying and unpacking…",
+  "update_ready": "Update ready. Press {confirm} to exit, then start WiliMini again to finish installing.",
+  "update_failed": "Update failed: {reason}",
+  "update_retry": "Press {confirm} to try again."
 }
