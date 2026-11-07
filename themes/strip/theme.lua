@@ -7,7 +7,7 @@ return {
       -- The tile home becomes one row of equal tiles, placed by name (ctx.ids) rather than by index.
       local rank = { recommend = 1, hots = 2, search = 3, discover = 4, dynamic = 5, inbox = 6, mine = 7, settings = 8 }
       local items = {}
-      for i = 1, ctx.count do items[i] = { 20 + (rank[ctx.ids[i]] - 1) * 130, 70, 120, 120 } end
+      for i = 1, ctx.count do items[i] = { 20 + ((rank[ctx.ids[i]] or i) - 1) * 130, 70, 120, 120 } end
       return { items = items, axis = "x" }
     end
     return {
