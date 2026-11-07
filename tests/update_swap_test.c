@@ -19,8 +19,13 @@ static void put(const char *p, const char *d) { strcpy(make(p)->data, d); }
 #define MUTATE(body) do { if (ops++ == crash_at && !crash_after) longjmp(boom, 1); body; if (ops - 1 == crash_at && crash_after) longjmp(boom, 1); } while (0)
 
 static int t_exists(void *c, const char *p) { (void)c; return find(p) != NULL; }
+static int same_dir(const char *a, const char *b) {
+    const char *sa = strrchr(a, '/'), *sb = strrchr(b, '/');
+    return sa && sb && (sa - a) == (sb - b) && !strncmp(a, b, (size_t)(sa - a));
+}
 static int t_rename(void *c, const char *a, const char *b) {
-    (void)c; file_t *f = find(a); if (!f) return -1; if (find(b)) return -1; /* FAT: no overwrite */
+    /* PSP firmware and PPSSPP: no rename across directories, none onto an existing file. */
+    (void)c; file_t *f = find(a); if (!f) return -1; if (find(b)) return -1; if (!same_dir(a, b)) return -1;
     MUTATE(strcpy(f->path, b)); return 0;
 }
 static int t_remove(void *c, const char *p) { (void)c; MUTATE({ file_t *f = find(p); if (f) f->used = 0; }); return 0; }
@@ -28,8 +33,15 @@ static int t_read(void *c, const char *p, char *buf, size_t cap) { (void)c; file
 static int t_write(void *c, const char *p, const char *d, size_t n) {
     (void)c; MUTATE({ file_t *f = make(p); memcpy(f->data, d, n); f->data[n] = 0; }); return 0;
 }
+static int t_copy(void *c, const char *a, const char *b) {
+    (void)c; file_t *f = find(a); if (!f) return -1;
+    if (ops == crash_at && !crash_after) { /* power loss mid-copy leaves half a file */
+        file_t *d = make(b); size_t n = strlen(f->data) / 2; memcpy(d->data, f->data, n); d->data[n] = 0; ++ops; longjmp(boom, 1);
+    }
+    MUTATE({ file_t *d = make(b); strcpy(d->data, f->data); }); return 0;
+}
 static int t_mkdirs(void *c, const char *p) { (void)c; (void)p; return 0; }
-static const wili_swap_fs FS = {NULL, t_exists, t_rename, t_remove, t_read, t_write, t_mkdirs};
+static const wili_swap_fs FS = {NULL, t_exists, t_rename, t_remove, t_read, t_write, t_mkdirs, t_copy};
 #define R "ms0:/G"
 
 static void setup(void) {

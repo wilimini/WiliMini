@@ -28,11 +28,16 @@ extern "C" {
 typedef struct wili_swap_fs {
     void *ctx;
     int (*exists)(void *ctx, const char *path);                      /* regular file: 1/0 */
+    /* Only ever called with both paths in the SAME directory and a missing target:
+     * the PSP firmware (and PPSSPP) fail renames across directories and onto
+     * existing files. Moving between directories is copy + remove. */
     int (*rename)(void *ctx, const char *from, const char *to);      /* 0 on success */
     int (*remove)(void *ctx, const char *path);                      /* 0 on success or if missing */
     int (*read)(void *ctx, const char *path, char *buf, size_t cap); /* bytes read, <0 on error */
     int (*write)(void *ctx, const char *path, const char *data, size_t len); /* create/truncate, 0 ok */
     int (*mkdirs)(void *ctx, const char *file_path);                 /* create parent dirs, 0 ok */
+    /* Copy to a new or truncated file, 0 only if every byte was written and closed. */
+    int (*copy)(void *ctx, const char *from, const char *to);
 } wili_swap_fs;
 
 typedef enum {

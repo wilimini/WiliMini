@@ -166,8 +166,14 @@ static int do_install(const swap_ctx *c) {
             return -1;
         }
         if (c->fs->mkdirs(c->fs->ctx, l) < 0) { slog(c, "mkdir failed: %s", c->names[i]); return -1; }
+        /* A partial copy from an earlier power loss may be there: start from nothing. */
         if (c->fs->exists(c->fs->ctx, l) && c->fs->remove(c->fs->ctx, l) < 0) { slog(c, "remove failed: %s", c->names[i]); return -1; }
-        if (c->fs->rename(c->fs->ctx, p, l) < 0) { slog(c, "install rename failed: %s", c->names[i]); return -1; }
+        if (c->fs->copy(c->fs->ctx, p, l) < 0) {
+            slog(c, "install copy failed: %s", c->names[i]);
+            c->fs->remove(c->fs->ctx, l);
+            return -1;
+        }
+        if (c->fs->remove(c->fs->ctx, p) < 0) { slog(c, "remove staged failed: %s", c->names[i]); return -1; }
     }
     return 0;
 }
