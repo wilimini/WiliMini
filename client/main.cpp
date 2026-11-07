@@ -20,6 +20,7 @@
 #include "storage_paths.h"
 #include <psp_runtime.h>
 #include <wili_log.h>
+#include <wili_update_swap_posix.h>
 #ifdef BILI_DEVICE_PLAYBACK_TEST
 #include "../tests/psp_playback_test.hpp"
 #endif
@@ -186,6 +187,11 @@ int main(int argc, char** argv) {
     }
     if (net >= 0) {
         app.refresh();
+    }
+
+    // The UI is up: tell the loader this version started so it is not rolled back (issue #26).
+    if (wili_swap_commit(&wili_swap_posix_fs, root) < 0) {
+        WLOG_W(WLC_CLIENT, "update commit failed");
     }
 
     unsigned previous = 0;

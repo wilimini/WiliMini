@@ -224,6 +224,7 @@ add_library(wili_client_objects OBJECT
     platform/src/psp_device.c
     platform/src/wili_log.c
     platform/src/wili_log_sink.c
+    platform/src/wili_update_swap.c
     client/app.cpp
     client/preferences.cpp
     client/app_settings.cpp
@@ -365,7 +366,7 @@ endforeach()
 
 add_executable(bootstrap client/bootstrap.c)
 # The loader only needs the console sink; no ring buffer or lock is linked in.
-target_sources(bootstrap PRIVATE platform/src/psp_device.c platform/src/wili_log.c)
+target_sources(bootstrap PRIVATE platform/src/psp_device.c platform/src/wili_log.c platform/src/wili_update_swap.c)
 target_compile_definitions(bootstrap PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}> WILI_LOG_RING_LINES=0)
 target_include_directories(bootstrap PRIVATE
     "${ROOT}/decoder/include"

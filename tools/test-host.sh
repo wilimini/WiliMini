@@ -27,4 +27,10 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 sh tools/test-update-package.sh
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
+    tests/update_swap_test.c platform/src/wili_update_swap.c -o "$out/update-swap-test"
+"$out/update-swap-test"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
+    tests/update_swap_posix_test.c platform/src/wili_update_swap.c -o "$out/update-swap-posix-test"
+"$out/update-swap-posix-test"
 echo "All host checks passed"
