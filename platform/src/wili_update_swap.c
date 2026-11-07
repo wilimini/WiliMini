@@ -1,5 +1,6 @@
 #include "wili_update_swap.h"
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #define MAX_ENTRIES 256
@@ -15,6 +16,27 @@ typedef struct {
 } swap_ctx;
 
 static char manifest_buf[MANIFEST_CAP + 1];
+
+/* <root>/update.log: what the loader did, rewritten after every line so the
+ * last line survives a crash. Best effort; never affects the swap. */
+static char log_buf[3072];
+static size_t log_len;
+static void slog(const swap_ctx *c, const char *fmt, ...) {
+    char line[160], p[MAX_PATH];
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n <= 0) return;
+    if ((size_t)n > sizeof line - 2) n = (int)sizeof line - 2;
+    if (log_len + (size_t)n + 1 >= sizeof log_buf) log_len = 0; /* keep the newest lines */
+    memcpy(log_buf + log_len, line, (size_t)n);
+    log_len += (size_t)n;
+    log_buf[log_len++] = '\n';
+    snprintf(p, sizeof p, "%s/update.log", c->root);
+    c->fs->write(c->fs->ctx, p, log_buf, log_len);
+}
 
 int wili_swap_path_ok(const char *rel) {
     size_t n = rel ? strlen(rel) : 0;
@@ -129,7 +151,7 @@ static int do_backup(const swap_ctx *c) {
     for (i = 0; i < c->count; ++i) {
         live(c, l, c->names[i]); bak(c, b, c->names[i]);
         if (c->fs->exists(c->fs->ctx, l) && !c->fs->exists(c->fs->ctx, b))
-            if (c->fs->rename(c->fs->ctx, l, b) < 0) return -1;
+            if (c->fs->rename(c->fs->ctx, l, b) < 0) { slog(c, "backup failed: %s", c->names[i]); return -1; }
     }
     return 0;
 }
@@ -140,11 +162,12 @@ static int do_install(const swap_ctx *c) {
         pend(c, p, c->names[i]); live(c, l, c->names[i]);
         if (!c->fs->exists(c->fs->ctx, p)) {
             if (c->fs->exists(c->fs->ctx, l)) continue; /* already moved */
-            return -1;                                   /* staged file missing */
+            slog(c, "staged file missing: %s", c->names[i]);
+            return -1;
         }
-        if (c->fs->mkdirs(c->fs->ctx, l) < 0) return -1;
-        if (c->fs->exists(c->fs->ctx, l) && c->fs->remove(c->fs->ctx, l) < 0) return -1;
-        if (c->fs->rename(c->fs->ctx, p, l) < 0) return -1;
+        if (c->fs->mkdirs(c->fs->ctx, l) < 0) { slog(c, "mkdir failed: %s", c->names[i]); return -1; }
+        if (c->fs->exists(c->fs->ctx, l) && c->fs->remove(c->fs->ctx, l) < 0) { slog(c, "remove failed: %s", c->names[i]); return -1; }
+        if (c->fs->rename(c->fs->ctx, p, l) < 0) { slog(c, "install rename failed: %s", c->names[i]); return -1; }
     }
     return 0;
 }
@@ -194,6 +217,7 @@ static wili_swap_status fail_rollback(swap_ctx *c, phase_t from) {
     }
     rollback_restore(c);
     snprintf(f, sizeof f, "%s/update.failed", c->root);
+    slog(c, "rolled back");
     c->fs->write(c->fs->ctx, f, "rolled back\n", 12);
     finish_files(c);
     return WILI_SWAP_ROLLED_BACK;
@@ -209,9 +233,11 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
     c->fs = fs; c->root = root; c->count = 0;
     s = read_state(c);
     snprintf(m, sizeof m, "%s/pending/MANIFEST", root);
+    if (s.phase != S_NONE || fs->exists(fs->ctx, m)) slog(c, "swap: state=%d trial=%d manifest=%d", (int)s.phase, s.trial, fs->exists(fs->ctx, m));
     if (s.phase == S_NONE) {
         if (!fs->exists(fs->ctx, m)) { r = WILI_SWAP_NONE; goto out; }
         if (load_manifest(c) < 0) { /* unusable staging: discard it */
+            slog(c, "manifest rejected (bad entry, >%d entries or >%d bytes); discarded", MAX_ENTRIES, MANIFEST_CAP);
             fs->remove(fs->ctx, m);
             r = WILI_SWAP_NONE; goto out;
         }
@@ -238,6 +264,7 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
     if (s.phase == S_INSTALL) {
         if (do_install(c) < 0) { r = fail_rollback(c, S_INSTALL); goto out; }
         if (write_state(c, S_TRIAL, 0) < 0) goto out;
+        slog(c, "installed %d files; trial boot", c->count);
         s.phase = S_TRIAL; s.trial = 0;
     }
     if (s.phase == S_ROLLBACK || s.phase == S_ROLLBACK2 || s.phase == S_ROLLBACK_B) {
@@ -245,7 +272,7 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
         goto out;
     }
     if (s.phase == S_TRIAL) {
-        if (s.trial >= WILI_SWAP_TRIAL_BOOTS) { r = fail_rollback(c, S_TRIAL); goto out; }
+        if (s.trial >= WILI_SWAP_TRIAL_BOOTS) { slog(c, "new version never committed; rolling back"); r = fail_rollback(c, S_TRIAL); goto out; }
         if (write_state(c, S_TRIAL, s.trial + 1) < 0) goto out;
         r = WILI_SWAP_APPLIED;
     }

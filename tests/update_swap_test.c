@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAXF 64
-typedef struct { char path[160]; char data[64]; int used; } file_t;
+#define MAXF 96
+typedef struct { char path[160]; char data[4096]; int used; } file_t;
 static file_t fsx[MAXF];
 static int ops, crash_at, crash_after; /* crash_at<0: never */
 static jmp_buf boom;
