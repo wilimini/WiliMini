@@ -27,7 +27,6 @@ namespace pspapp {
 
 namespace {
 
-constexpr size_t kGridColumns = 2;
 constexpr size_t kPageSize = 6;
 
 void appendUniqueCards(std::vector<VideoCard>& target, std::vector<VideoCard>& source) {
@@ -587,14 +586,15 @@ void App::moveSelection(int dx, int dy) {
             }
             return;
         }
-        if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
+        const Layout layout = contentLayout();
+        if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || layoutEdge(layout, root().selection, -1, 0))) {
             if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
         if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 &&
-            root().selection < (preferences_.metro() ? 1 : kGridColumns)) {
+            layoutEdge(layout, root().selection, 0, -1)) {
             navigation_.current().focus = FocusArea::Categories;
             return;
         }
@@ -605,13 +605,14 @@ void App::moveSelection(int dx, int dy) {
         if (!total) return;
         // Tiles style: search results are a two-column grid like the home tab.
         const bool grid = preferences_.homeStyle == HomeStyle::Tiles && root().searchView == SearchView::Results;
-        int value = static_cast<int>(root().selection) + (grid ? dx + dy * static_cast<int>(kGridColumns) : dy);
-        if (grid && dx > 0 && root().selection % kGridColumns == kGridColumns - 1) value = static_cast<int>(root().selection);
-        if (grid && dx < 0 && root().selection % kGridColumns == 0) value = static_cast<int>(root().selection);
+        int value = static_cast<int>(root().selection);
+        if (grid) value = static_cast<int>(layoutNeighbor(contentLayout(), root().selection, dx, dy));
+        else value += dy;
         value = std::max(0, std::min(value, static_cast<int>(total) - 1));
         root().selection = static_cast<size_t>(value);
         if (root().searchView == SearchView::Results && dy > 0 &&
-            root().selection + (grid ? kGridColumns : 1) >= total && hasMore()) loadNextPage();
+            (grid ? layoutEdge(contentLayout(), root().selection, 0, 1) : root().selection + 1 >= total) &&
+            hasMore()) loadNextPage();
         return;
     }
     if (screen() == Screen::Comments) {
@@ -631,13 +632,10 @@ void App::moveSelection(int dx, int dy) {
         if (!total) return;
         if (preferences_.homeStyle == HomeStyle::Tiles) {
             // Tiles style: the account tile is row 0, local records follow in a two-column grid.
-            const int at = static_cast<int>(root().selection), last = static_cast<int>(total) - 1;
-            int target = at;
-            if (at == 0) { if (dy > 0 || dx > 0) target = 1; }
-            else if (dx < 0 && (at - 1) % 2 == 1) target = at - 1;
-            else if (dx > 0 && (at - 1) % 2 == 0) target = at + 1 <= last ? at + 1 : at;
-            else if (dy < 0) target = at - 1 < 2 ? 0 : at - 2;
-            else if (dy > 0) target = at + 2 <= last ? at + 2 : at;
+            const int last = static_cast<int>(total) - 1;
+            // The account row also steps right into the first record.
+            const int target = root().selection == 0 && dx > 0 ? 1
+                               : static_cast<int>(layoutNeighbor(contentLayout(), root().selection, dx, dy));
             root().selection = static_cast<size_t>(std::max(0, std::min(target, last)));
             return;
         }
@@ -649,16 +647,25 @@ void App::moveSelection(int dx, int dy) {
     }
     const auto& list = activeCards();
     if (list.empty()) return;
-    // The Metro style shows the home tabs as a single-column list.
-    const int columns = preferences_.metro() ? 1 : static_cast<int>(kGridColumns);
-    int value = static_cast<int>(root().selection);
-    if (dx < 0 && value % columns != 0) --value;
-    if (dx > 0 && value % columns != columns - 1 && value + 1 < static_cast<int>(list.size())) ++value;
-    if (dy < 0 && value >= columns) value -= columns;
-    if (dy > 0 && value + columns < static_cast<int>(list.size())) value += columns;
-    root().selection = static_cast<size_t>(value);
-    if (dy > 0 && value + columns >= static_cast<int>(list.size()) && hasMore())
+    const Layout layout = contentLayout();
+    size_t value = std::min(root().selection, list.size() - 1);
+    value = layoutNeighbor(layout, value, dx, dy);
+    root().selection = value;
+    if (dy > 0 && layoutEdge(layout, value, 0, 1) && hasMore())
         loadNextPage();
+}
+
+Layout App::contentLayout() const {
+    if (screen() == Screen::Mine)
+        return preferences_.homeStyle == HomeStyle::Tiles ? accountGridLayout(history_.size() + later_.size())
+                                                          : listLayout(1 + history_.size() + later_.size());
+    if (screen() == Screen::Home && root().tab == Tab::Search) {
+        if (root().searchView == SearchView::Results)
+            return preferences_.homeStyle == HomeStyle::Tiles ? gridLayout(search_.size(), 2) : listLayout(search_.size());
+        return listLayout(root().searchView == SearchView::History ? searchHistory_.size() : 2 + root().searchTopics.size());
+    }
+    const size_t count = activeCards().size();
+    return preferences_.metro() ? listLayout(count) : gridLayout(count, 2);
 }
 
 void App::activate() {
@@ -1212,8 +1219,15 @@ void App::updateCoverQueue() {
                            isVideoListPage(browseState().page);
     const bool grid = (screen() == Screen::Home && root().tab != Tab::Search && !preferences_.metro()) || videoGrid;
     // Include the preceding row while the selected row scrolls into view.
-    const size_t first = posters ? selected / 4 * 4 : grid ? (selected >= 2 ? (selected / 2 - 1) * 2 : 0)
-                                                          : (selected > 2 ? selected - 2 : 0);
+    // The cover window starts at the first item visible once the page has scrolled to the selection.
+    size_t first = posters ? selected / 4 * 4 : selected > 2 ? selected - 2 : 0;
+    if (!hasBrowse() && screen() == Screen::Home && root().tab != Tab::Search) {
+        const Layout layout = contentLayout();
+        if (!layout.empty()) {
+            const int anchor = preferences_.metro() ? kFeedRowScrollAnchor : kFeedGridScrollAnchor;
+            first = std::min(layoutFirstVisible(layout, layoutScrollTarget(layout, selected, anchor)), layout.size() - 1);
+        }
+    }
     if (!coverDirty_ && coverScreen_ == screen() && coverTab_ == root().tab &&
         coverPage_ == first && coverDepth_ == navigation_.size() &&
         coverSearchView_ == root().searchView &&

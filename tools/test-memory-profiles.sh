@@ -17,6 +17,8 @@ for frames in 2 8; do
 done
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/tile_layout_test.cpp -o "$out/tile-layout-test"
 "$out/tile-layout-test"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/layout_test.cpp -o "$out/layout-test"
+"$out/layout-test"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient tests/comment_layout_test.cpp -o "$out/comment-layout-test"
 "$out/comment-layout-test"
 ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror -pthread \

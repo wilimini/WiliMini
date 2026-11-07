@@ -8,6 +8,7 @@
 #include <pspkernel.h>
 
 #include "bilibili.h"
+#include "layout.hpp"
 #include "navigation.hpp"
 #include "preferences.hpp"
 #include "tile_layout.hpp"
@@ -135,6 +136,9 @@ public:
     void refresh();
     void cancelRequest();
     void moveSelection(int dx, int dy);
+    // Item rectangles of the scrolling content on the current page; selection, scrolling and the
+    // cover queue are all derived from them. Empty for pages without a selectable grid or list.
+    Layout contentLayout() const;
     void activate();
     void back();
     void search(const std::string &keyword);

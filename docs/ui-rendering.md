@@ -159,3 +159,19 @@ are counted in emulated instructions; they are a lower bound and say nothing abo
 PPSSPP does not model the PSP's data cache. Anything the CPU writes for the GE to read (cover
 textures, the CLUTs) must be written back or written uncached; a mistake there looks correct
 in the emulator and wrong on a device.
+
+## Layout
+
+Where items sit on a scrolling page (`client/layout.hpp`) is a list of rectangles in content
+coordinates, a `Layout`. D-pad movement (`layoutNeighbor`: the nearest item beyond the current
+one's edge that overlaps it across the movement axis), the scroll target (`layoutScrollTarget`:
+keep the selection a fixed distance below the view top) and the start of the cover window
+(`layoutFirstVisible`) are all computed from those rectangles, not from row and column maths.
+`App::contentLayout()` returns the layout of the current page; the home grid and list, search
+results and the tile Mine page use it, and `ui.cpp` draws from the same rectangles.
+
+The built-in providers (`gridLayout`, `listLayout`, `accountGridLayout`) reproduce the original
+screens. `tests/layout_test.cpp` checks that movement, scroll targets and the cover window equal
+the old arithmetic for every item count, and exercises irregular layouts. This is the base for
+theme-supplied layouts (issue #25). One behaviour changed: in the Metro list, Left from any row
+now opens the sidebar (it used to work only from even rows, an artefact of the two-column maths).

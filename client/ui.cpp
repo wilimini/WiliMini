@@ -1662,8 +1662,9 @@ void drawRow(int y, const TileItem& item, size_t index) {
 
 // Draws `items` as list rows starting `topInset` pixels below the list origin.
 void drawRowList(const std::vector<TileItem>& items, int topInset, int scroll) {
+    const pspapp::Layout layout = pspapp::listLayout(items.size(), topInset);
     for (size_t i = 0; i < items.size(); ++i) {
-        const int y = listBounds.y0 + topInset + static_cast<int>(i) * kRowPitch - scroll;
+        const int y = listBounds.y0 + layout.items[i].y - scroll;
         if (y >= kListBottom || y + kRowHeight <= listBounds.top) continue;
         drawRow(y, items[i], i);
     }
@@ -1679,12 +1680,14 @@ void drawVideoGrid(const pspapp::App& app) {
         if (card.duration > 0) meta += "  ·  " + formatDuration(card.duration);
         items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
     }
-    const int selected = static_cast<int>(app.selection());
-    const int scroll = updateScroll(std::max(0.f, static_cast<float>((selected - 2) * kRowPitch)));
+    const pspapp::Layout layout = app.contentLayout();
+    const size_t selected = std::min(app.selection(), layout.size() ? layout.size() - 1 : 0);
+    const int scroll = updateScroll(static_cast<float>(pspapp::layoutScrollTarget(layout, selected, pspapp::kFeedRowScrollAnchor)));
     drawRowList(items, 0, scroll);
-    if (app.focusArea() == pspapp::FocusArea::Content) {
-        const float target[4] = {12.f, static_cast<float>(listBounds.y0 + selected * kRowPitch - scroll), 456.f,
-                                 static_cast<float>(kRowHeight)};
+    if (app.focusArea() == pspapp::FocusArea::Content && selected < layout.size()) {
+        const pspapp::LayoutRect& r = layout.items[selected];
+        const float target[4] = {static_cast<float>(r.x), static_cast<float>(listBounds.y0 + r.y - scroll),
+                                 static_cast<float>(r.w), static_cast<float>(r.h)};
         drawGlidingSelection(target);
     }
 }
@@ -1772,16 +1775,17 @@ void drawVideoTile(int x, int y, const TileItem& item, size_t index) {
 
 // Draws `items` as a two-column tile grid starting `topInset` pixels below the grid origin.
 void drawTileGrid(const std::vector<TileItem>& items, int selected, int topInset, int scroll) {
+    const pspapp::Layout layout = pspapp::gridLayout(items.size(), 2, topInset);
     for (size_t i = 0; i < items.size(); ++i) {
-        const int x = kTileX + static_cast<int>(i % 2) * kPitchX;
-        const int y = kGridY0 + topInset + static_cast<int>(i / 2) * kPitchY - scroll;
+        const int x = layout.items[i].x;
+        const int y = kGridY0 + layout.items[i].y - scroll;
         if (y >= kGridBottom || y + kTileH <= kGridTop) continue;
         drawVideoTile(x, y, items[i], i);
     }
     if (selected >= 0 && static_cast<size_t>(selected) < items.size()) {
-        const float target[4] = {static_cast<float>(kTileX + (selected % 2) * kPitchX),
-                                 static_cast<float>(kGridY0 + topInset + (selected / 2) * kPitchY - scroll),
-                                 static_cast<float>(kTileW), static_cast<float>(kTileH)};
+        const pspapp::LayoutRect& r = layout.items[selected];
+        const float target[4] = {static_cast<float>(r.x), static_cast<float>(kGridY0 + r.y - scroll),
+                                 static_cast<float>(r.w), static_cast<float>(r.h)};
         drawRing(target);
     }
 }
@@ -1796,8 +1800,9 @@ void drawVideoGridTiles(const pspapp::App& app) {
         items.push_back({&card.bvid, &card.title, std::move(meta), card.duration});
     }
     const bool focus = app.focusArea() == pspapp::FocusArea::Content;
-    const int row = static_cast<int>(app.selection() / 2);
-    const int scroll = updateScroll(std::max(0.f, static_cast<float>(row * kPitchY - 100)));
+    const pspapp::Layout layout = app.contentLayout();
+    const int scroll = updateScroll(static_cast<float>(
+        pspapp::layoutScrollTarget(layout, app.selection(), pspapp::kFeedGridScrollAnchor)));
     drawTileGrid(items, focus ? static_cast<int>(app.selection()) : -1, 0, scroll);
 }
 
@@ -1808,8 +1813,8 @@ void drawMineGrid(const pspapp::App& app) {
     const size_t selection = app.selection();
     const bool focus = app.focusArea() == FocusArea::Content;
     constexpr int inset = kAccountH + 4;
-    const int entryRow = selection ? static_cast<int>((selection - 1) / 2) : 0;
-    const int scroll = updateScroll(selection ? std::max(0.f, static_cast<float>(inset + entryRow * kPitchY - 100)) : 0.f);
+    const int scroll = updateScroll(static_cast<float>(
+        pspapp::layoutScrollTarget(app.contentLayout(), selection, pspapp::kFeedGridScrollAnchor)));
 
     // Account tile.
     const int ay = kGridY0 - scroll;
@@ -1965,7 +1970,8 @@ void drawBrowseVideosTiles(const pspapp::App& app) {
     static const std::string none, more = "加载下一页";
     const auto items = browseTileItems(page, none, more);
     const int selected = static_cast<int>(app.browseSelection());
-    const int scroll = updateScroll(std::max(0.f, static_cast<float>(selected / 2 * kPitchY - 100)));
+    const int scroll = updateScroll(static_cast<float>(pspapp::layoutScrollTarget(
+        pspapp::gridLayout(items.size(), 2), app.browseSelection(), pspapp::kFeedGridScrollAnchor)));
     drawTileGrid(items, selected, 0, scroll);
 }
 
