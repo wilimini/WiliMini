@@ -78,8 +78,9 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 是该帧的 CPU 绘制时间（不含 vblank 等待），阶段 E/H/L 为磁贴主页（进入/空闲/启动磁贴），P/S 为页面（进入/稳定）。
 模拟器里的时间按指令数计，不含真机上读取 VRAM 等的额外开销，只能作为下限和前后对比。
 
-封面：同一标志还会在有封面的帧输出 `UICOVER submit_us=… n=… sync_us=…`：提交封面绘制命令的 CPU 时间、封面数，
-以及该帧等待 GE 完成的时间（CPU 随后写帧缓冲前才会等待）。封面解码在独立线程完成，每次解码记录为 `cover decode … us=…`
+GE 绘制：界面全部由 GE 绘制（见 `docs/ui-rendering.md`），同一标志还会每帧输出
+`UIGE sprites=… batches=… list_bytes=… glyph_misses=… restarts=… wait_us=…`：精灵数、批次数、显示列表用量、
+字形图集未命中数、列表重启次数和等待 GE 的时间。封面解码在独立线程完成，每次解码记录为 `cover decode … us=…`
 （`UI` 通道，需要 `log_level` 为 `debug`）。
 
 ### 输出和诊断

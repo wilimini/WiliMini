@@ -164,8 +164,8 @@ low bits), written back from the data cache before the UI may use it. Slots are
 evicted least-recently-used and never while drawn in the current frame; a decode
 for a cover that scrolled away before it started is dropped. The decoder thread and
 its slots are released before playback and at shutdown. The GE draws each ready
-cover as an opaque textured sprite; because other UI primitives still write VRAM
-with the CPU, the GE work is flushed lazily the next time the CPU touches the frame.
+cover as an opaque textured sprite like every other part of the UI (see
+`docs/ui-rendering.md`).
 Completion invalidates the matching cover cache key, without replacing cards or
 clearing other decoded covers.
 
