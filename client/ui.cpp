@@ -2023,11 +2023,15 @@ std::vector<TileItem> browseTileItems(const pspapp::BrowsePage& page, const std:
 struct ThemeScrollView { int top, bottom; };
 
 // Draws the cover so that it fills (x, y, w, h), cropping the 224x118 source to the same aspect.
-void drawCoverFill(const std::string& bvid, int x, int y, int w, int h, int clipTop, int clipBottom, uint32_t placeholder) {
+void drawCoverFill(const std::string& bvid, int x, int y, int w, int h, int clipTop, int clipBottom, uint32_t placeholder,
+                   unsigned alpha = 255) {
     CoverSlot* slot = showCovers ? coverSlot(bvid, 224, 118) : nullptr;
     if (!slot || !slot->texture.data) {
         const int top = std::max(y, clipTop), bottom = std::min(y + h, clipBottom);
-        if (bottom > top) fillRect(x, top, w, bottom - top, placeholder);
+        if (bottom > top) {
+            if (alpha >= 255) fillRect(x, top, w, bottom - top, placeholder);
+            else blendRect(x, top, w, bottom - top, placeholder, alpha);
+        }
         return;
     }
     int sw = slot->width, sh = slot->height;
@@ -2035,16 +2039,28 @@ void drawCoverFill(const std::string& bvid, int x, int y, int w, int h, int clip
     else sh = std::max(1, sw * h / w);                   // destination is wider: crop top and bottom
     const int su = (slot->width - sw) / 2, sv = (slot->height - sh) / 2;
     geSprite(TexState{TexKind::Color5650, slot->texture.data, slot->texWidth, slot->texHeight}, x, y, w, h, su, sv, sw, sh,
-             0xffffffffu, 0, clipTop, kWidth, clipBottom);
+             (alpha << 24) | 0x00ffffffu, 0, clipTop, kWidth, clipBottom);
 }
 
 void drawThemeCard(pspapp::CardStyle style, const TileItem& item, size_t index, int x, int y, int w, int h,
-                   const ThemeScrollView& view) {
+                   const ThemeScrollView& view, bool focused = false, unsigned fade = 255) {
     using pspapp::CardStyle;
     if (x >= kWidth || x + w <= 0 || y >= view.bottom || y + h <= view.top) return;
     const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
     const uint32_t white = color(255, 255, 255);
     const uint32_t tint = kTilePalette[index % 8];
+    if (style == CardStyle::Xmb) {
+        // No panel: a small cover and text straight on the background, fading with distance.
+        const int coverH = std::min(h - 4, focused ? 40 : 32), coverW = coverH * 16 / 9;
+        const int cy = y + (h - coverH) / 2;
+        drawCoverFill(*item.bvid, x, cy, coverW, coverH, view.top, view.bottom, tint, fade);
+        const uint32_t ink = shadeMix(kBackground, kText, fade + 1);
+        const uint32_t inkDim = shadeMix(kBackground, kTextDim, fade + 1);
+        const int tx = x + coverW + 10, room = std::max(0, kWidth - 10 - tx);
+        drawText(tx, y + (focused ? 4 : 2), focused ? 0.9f : 0.7f, ink, *item.title, room, false, view.top, view.bottom);
+        drawText(tx, y + (focused ? 26 : 20), focused ? 0.5f : 0.42f, inkDim, item.meta, room, false, view.top, view.bottom);
+        return;
+    }
     if (style == CardStyle::Default) style = h >= 64 ? CardStyle::Tile : CardStyle::Row;
     const int textWidth = std::max(0, w - 12);
     if (style == CardStyle::Row || style == CardStyle::Compact) {
@@ -2086,7 +2102,7 @@ void drawThemedLayout(const pspapp::App& app, const std::vector<TileItem>& items
     const size_t count = std::min(items.size(), layout.size());
     const size_t selected = std::min(selection, count ? count - 1 : 0);
     const bool focus = app.focusArea() == FocusArea::Content && count > 0;
-    const ThemeScrollView view{app.preferences().tileHome() ? 66 : kGridTop, kGridBottom};
+    const ThemeScrollView view{layout.clipTop >= 0 ? layout.clipTop : app.preferences().tileHome() ? 66 : kGridTop, kGridBottom};
     const int scroll = updateScroll(static_cast<float>(layoutScrollTarget(layout, selected, layout.horizontal ? 12 : 100)));
     const FocusFx& fx = layout.focus;
     ThemeReaction reaction;
@@ -2111,6 +2127,16 @@ void drawThemedLayout(const pspapp::App& app, const std::vector<TileItem>& items
     auto drawOne = [&](size_t i, bool focused) {
         int x, y, w, h;
         place(i, focused, x, y, w, h);
+        if (mine && i == 0 && layout.card == CardStyle::Xmb) {
+            const bool signedIn = auth.state == AuthState::SignedIn;
+            const unsigned fade = layout.dimStep > 0 && focus ? static_cast<unsigned>(std::max(70, 255 - layout.dimStep * static_cast<int>(selected))) : 255u;
+            drawText(x, y + (focused ? 4 : 2), focused ? 0.9f : 0.7f, shadeMix(kBackground, kText, fade + 1),
+                     signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录", kWidth - 10 - x, false,
+                     view.top, view.bottom);
+            drawText(x, y + (focused ? 26 : 20), 0.5f, shadeMix(kBackground, kTextDim, fade + 1),
+                     authStateMessage(auth.state, app.preferences().confirmWithCircle), kWidth - 10 - x, false, view.top, view.bottom);
+            return;
+        }
         if (mine && i == 0) {
             if (x >= kWidth || x + w <= 0 || y >= view.bottom || y + h <= view.top) return;
             const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
@@ -2124,13 +2150,18 @@ void drawThemedLayout(const pspapp::App& app, const std::vector<TileItem>& items
                      view.top, view.bottom);
             return;
         }
-        drawThemeCard(layout.card, items[i], i, x, y, w, h, view);
-        if (fx.dimOthers && !focused && focus) {
+        const unsigned fade = layout.dimStep > 0 && focus
+                                  ? static_cast<unsigned>(std::max(70, 255 - layout.dimStep * std::abs(static_cast<int>(i) - static_cast<int>(selected))))
+                                  : 255u;
+        drawThemeCard(layout.card, items[i], i, x, y, w, h, view, focused, fade);
+        if (fx.dimOthers && !focused && focus && layout.dimStep == 0) {
             const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
             const int left = std::max(x, 0), right = std::min(x + w, kWidth);
             if (bottom > top && right > left) blendRect(left, top, right - left, bottom - top, color(0, 0, 0), 120);
         }
     };
+    if (count == 0 && !app.barAction() && layout.tabs)
+        drawText(100, 130, 0.7f, kTextDim, app.status(), 360);
     for (size_t i = 0; i < count; ++i)
         if (!(focus && i == selected)) drawOne(i, false);
     if (focus) {
@@ -2148,6 +2179,54 @@ void drawThemedLayout(const pspapp::App& app, const std::vector<TileItem>& items
         if (fx.kind == FocusFx::Ring) {
             const float target[4] = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), static_cast<float>(h)};
             drawRing(target);
+        }
+    }
+}
+
+// The category bar of a cross-media-bar theme: icons in a row, the focused one larger and labelled,
+// the row sliding so the focused icon stays at a fixed place.
+void drawXmbBar(const pspapp::App& app) {
+    using namespace pspapp;
+    struct Entry { int icon; TextId label; };
+    static const Entry entries[App::kBarEntries] = {
+        {IconGear, TextId::tile_settings}, {IconHome, TextId::tile_recommend}, {IconFire, TextId::tile_hots},
+        {IconClock, TextId::tile_mine},    {IconUser, TextId::tile_dynamic},   {IconMail, TextId::tile_inbox}};
+    static float position = -1.f;
+    const float target = static_cast<float>(app.barIndex());
+    if (position < 0.f) position = target;
+    position += (target - position) * 0.3f;
+    if (std::fabs(target - position) < 0.01f) position = target;
+    drawStatusBar();
+    const int originX = 96, pitch = 78;
+    for (int i = 0; i < App::kBarEntries; ++i) {
+        const float offset = static_cast<float>(i) - position;
+        const float near = 1.f - clamp01(std::fabs(offset));   // 1 on the focused entry
+        const int size = near > 0.5f ? 40 : 26;   // the icon cache only holds these sizes
+        const int cx = originX + static_cast<int>(offset * pitch + (offset > 0 ? 18.f * (1.f - near) : 0.f));
+        const unsigned alpha = 120u + static_cast<unsigned>(135.f * near);
+        const int cy = 54;
+        drawLineIcon(entries[i].icon, cx - size / 2, cy - size / 2, size, shadeMix(kBackground, kText, alpha + 1));
+        if (near > 0.5f)
+            drawText(cx - 40, cy + size / 2 + 4, 0.6f, shadeMix(kBackground, kText, static_cast<unsigned>(near * 256.f)),
+                     text(entries[i].label, app.preferences().locale), 80, true);
+    }
+}
+
+// Vertical gradient with slow translucent waves behind the whole UI.
+void drawThemeBackground(const pspapp::Theme& theme, int64_t nowMs) {
+    const pspapp::ThemeBackground& bg = theme.background();
+    if (!bg.set) return;
+    auto rgb = [](uint32_t v) { return color(static_cast<int>(v >> 16 & 255), static_cast<int>(v >> 8 & 255), static_cast<int>(v & 255)); };
+    const uint32_t top = rgb(bg.top), bottom = rgb(bg.bottom);
+    for (int y = 0; y < kHeight; y += 16)
+        fillRect(0, y, kWidth, std::min(16, kHeight - y), shadeMix(top, bottom, static_cast<unsigned>(y * 256 / kHeight)));
+    if (!bg.waves) return;
+    const float t = static_cast<float>(nowMs % 60000) / 1000.f;
+    for (int band = 0; band < 3; ++band) {
+        for (int x = 0; x < kWidth; x += 8) {
+            const float phase = static_cast<float>(x) * (0.011f + 0.004f * band) + t * (0.5f + 0.25f * band) + band * 2.1f;
+            const int y = 150 + band * 34 + static_cast<int>(18.f * std::sin(phase));
+            blendRect(x, y, 8, 20 + band * 6, color(255, 255, 255), 10 + band * 3);
         }
     }
 }
@@ -3336,6 +3415,7 @@ void ui_render(const pspapp::App& app) {
     beginFrame();
     fillRect(0, 0, kWidth, kHeight, kBackground);
     const int64_t nowMs = static_cast<int64_t>(sceKernelGetSystemTimeWide() / 1000);
+    drawThemeBackground(app.theme(), nowMs);
     const bool hub = app.tileHubVisible();
     if (hub && !hubFx.wasVisible) hubFx.enterMs = nowMs;      // tiles flip in again
     hubFx.wasVisible = hub;
@@ -3362,8 +3442,10 @@ void ui_render(const pspapp::App& app) {
     } else if (hub) {
         if (app.preferences().metro()) drawHub(app, nowMs); else drawHubTiles(app, nowMs);
     } else {
-        drawHeader(app);
-        if (app.contentLayout().themed) {
+        const bool themedPage = app.contentLayout().themed;
+        if (themedPage && app.contentLayout().tabs) drawXmbBar(app);
+        else drawHeader(app);
+        if (themedPage) {
             drawThemedPage(app);
         } else if (app.screen() == pspapp::Screen::Mine || app.tab() == pspapp::Tab::Mine) {
             if (!tile) drawMine(app);

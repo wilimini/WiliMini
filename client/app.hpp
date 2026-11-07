@@ -149,6 +149,12 @@ public:
     void back();
     // The most recent theme reaction (pulse/flash) while it is still playing.
     bool themeReaction(ThemeReaction &out, int &elapsedMs) const;
+    // Category bar of a theme whose layout sets `tabs`. Entries, left to right: Settings, Recommend,
+    // Hots, Mine, Feed, Inbox. Settings, Feed and Inbox are actions: the list below them is empty and
+    // confirm opens the page.
+    static constexpr int kBarEntries = 6;
+    int barIndex() const;
+    bool barAction() const { return barAction_ >= 0; }
     void search(const std::string &keyword);
     bool searchInputSelected() const;
     void removeSearchHistory();
@@ -264,6 +270,8 @@ private:
     Preferences preferences_;
     mutable Theme theme_;
     void loadTheme();
+    void barMove(int dx);
+    int barAction_ = -1;
     void moveSelectionImpl(int dx, int dy);
     void activateImpl();
     void backImpl();

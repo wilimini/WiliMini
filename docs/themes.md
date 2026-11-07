@@ -23,7 +23,7 @@ The package ships the examples under `themes/` in the repository.
 | `grid3` | three columns of tiles (the smallest useful layout theme) |
 | `strip` | one row of big cards scrolling sideways, focus grows, others dim; the tile home as a row |
 | `neon` | dark palette, eased scrolling, a flash on every focus change, wide rows |
-| `xmb` | a "cross media bar": a bar of tiles for the home, stepped-out focus rows on every list |
+| `xmb` | a "cross media bar" for the classic home style: gradient and waves background, a row of category icons, the focused category's items in a fading column |
 
 ## File format
 
@@ -64,7 +64,7 @@ The result:
 | `items` | array of `{x, y, w, h}` (or `{x=,y=,w=,h=}`), one per item, in **screen** coordinates as seen at scroll 0. Fractions round down; `w`, `h` below 1 become 1; coordinates beyond ±30000 are an error |
 | `axis` | `"y"` (default, scrolls down) or `"x"` (scrolls sideways) |
 | `anchor` | how far from the view's top (or left) edge the focused item rests while scrolling; default 100 (y) or 12 (x) |
-| `card` | `"tile"` (cover with title strip), `"row"` (small cover with two text lines), `"poster"` (cover with title only), `"compact"` (text only); default picks tile or row by height |
+| `card` | `"tile"` (cover with title strip), `"row"` (small cover with two text lines), `"poster"` (cover with title only), `"compact"` (text only), `"xmb"` (small cover and text with no panel, fading with `dim_step`); default picks tile or row by height |
 | `focus` | `{kind="ring"\|"scale"\|"none", scale=1.2, dx=, dy=, dim=true}` |
 
 On `"hub"` the tiles keep their built-in faces; the layout moves and sizes them. A tile at most
@@ -84,6 +84,10 @@ examples with 1 to 60 items.
 `background`, `panel`, `raised`, `text`, `dim`, `line`, `accent`, `ring`. Each is `0xRRGGBB` or
 `{r, g, b}`. Unnamed colours keep the built-in value for the user's light/dark and style setting.
 `ring` is the focus outline (the text colour by default).
+
+### `background`
+
+`background = { top = 0x0b1445, bottom = 0x2b74c8, waves = true }` paints a vertical gradient behind the whole UI, with slow translucent waves if `waves` is set. Cards of style `"xmb"` have no panel of their own and sit directly on it.
 
 ### `motion`
 

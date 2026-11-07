@@ -32,6 +32,13 @@ struct ThemeColors {
     Slot background, panel, raised, text, dim, line, accent, ring;
 };
 
+// A vertical gradient behind everything, optionally with slow translucent waves.
+struct ThemeBackground {
+    bool set = false;
+    uint32_t top = 0, bottom = 0;  // 0xRRGGBB
+    bool waves = false;
+};
+
 // How the scrolling content follows the focus.
 struct ThemeMotion {
     enum Kind { Spring, Ease, Snap } kind = Spring;
@@ -72,6 +79,7 @@ public:
 
     const ThemeColors& colors() const;
     const ThemeMotion& motion() const;
+    const ThemeBackground& background() const;
     // Runs the handler for an event ("focus", "open", "back", "page"); `index` is 0-based.
     bool event(const char* name, const char* screen, size_t index, ThemeReaction& out);
 

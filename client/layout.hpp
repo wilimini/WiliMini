@@ -20,7 +20,7 @@ struct LayoutRect {
 };
 
 // How an item is drawn. Default lets the page pick its own look (the built-in screens).
-enum class CardStyle { Default, Tile, Row, Poster, Compact };
+enum class CardStyle { Default, Tile, Row, Poster, Compact, Xmb };
 
 // What the focused item looks like. The ring is the original look.
 struct FocusFx {
@@ -39,6 +39,11 @@ struct Layout {
     CardStyle card = CardStyle::Default;
     FocusFx focus;
     bool themed = false;  // produced by a theme script
+    // Left/Right switch the home category instead of moving inside the layout, and the host draws
+    // the category bar in place of the page header (the cross media bar).
+    bool tabs = false;
+    int dimStep = 0;      // items fade by this much (alpha, of 255) per step of distance from the focus
+    int clipTop = -1;     // first screen row content may use; -1 keeps the built-in value
     size_t size() const { return items.size(); }
     bool empty() const { return items.empty(); }
 };

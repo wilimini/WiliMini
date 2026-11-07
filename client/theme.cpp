@@ -100,6 +100,7 @@ CardStyle cardFromName(const char* name) {
     if (!std::strcmp(name, "row")) return CardStyle::Row;
     if (!std::strcmp(name, "poster")) return CardStyle::Poster;
     if (!std::strcmp(name, "compact")) return CardStyle::Compact;
+    if (!std::strcmp(name, "xmb")) return CardStyle::Xmb;
     return CardStyle::Default;
 }
 
@@ -114,6 +115,7 @@ struct Theme::Impl {
     unsigned generation = 0;
     ThemeColors colors;
     ThemeMotion motion;
+    ThemeBackground background;
 
     ~Impl() { close(); }
 
@@ -125,6 +127,7 @@ struct Theme::Impl {
         name.clear();
         colors = ThemeColors{};
         motion = ThemeMotion{};
+        background = ThemeBackground{};
     }
 
     static void hook(lua_State* state, lua_Debug*) {
@@ -195,6 +198,25 @@ struct Theme::Impl {
                 }
                 lua_pop(L, 1);
             }
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, -1, "background");
+        if (lua_istable(L, -1)) {
+            ThemeColors::Slot top, bottom;
+            lua_getfield(L, -1, "top");
+            const bool haveTop = readColor(L, lua_gettop(L), top);
+            lua_pop(L, 1);
+            lua_getfield(L, -1, "bottom");
+            const bool haveBottom = readColor(L, lua_gettop(L), bottom);
+            lua_pop(L, 1);
+            if (haveTop || haveBottom) {
+                background.set = true;
+                background.top = haveTop ? top.rgb : bottom.rgb;
+                background.bottom = haveBottom ? bottom.rgb : top.rgb;
+            }
+            lua_getfield(L, -1, "waves");
+            background.waves = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);
         lua_getfield(L, -1, "motion");
@@ -288,6 +310,7 @@ const std::string& Theme::error() const { return impl_->error; }
 unsigned Theme::generation() const { return impl_->generation; }
 const ThemeColors& Theme::colors() const { return impl_->colors; }
 const ThemeMotion& Theme::motion() const { return impl_->motion; }
+const ThemeBackground& Theme::background() const { return impl_->background; }
 
 bool Theme::hasLayout(const char*) const {
     if (!loaded()) return false;
@@ -383,6 +406,15 @@ bool Theme::layout(const LayoutRequest& request, Layout& out) {
     lua_pop(L, 1);
     lua_getfield(L, result, "axis");
     if (lua_isstring(L, -1)) layout.horizontal = !std::strcmp(lua_tostring(L, -1), "x");
+    lua_pop(L, 1);
+    lua_getfield(L, result, "tabs");
+    layout.tabs = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    lua_getfield(L, result, "dim_step");
+    if (lua_isnumber(L, -1)) layout.dimStep = clampInt(lua_tonumber(L, -1), 0, 255);
+    lua_pop(L, 1);
+    lua_getfield(L, result, "clip_top");
+    if (lua_isnumber(L, -1)) layout.clipTop = clampInt(lua_tonumber(L, -1), 0, 271);
     lua_pop(L, 1);
     lua_getfield(L, result, "anchor");
     if (lua_isnumber(L, -1)) layout.anchor = clampInt(lua_tonumber(L, -1), 0, kCoordLimit);

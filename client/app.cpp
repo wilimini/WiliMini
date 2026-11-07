@@ -450,6 +450,7 @@ void App::retry() {
 
 void App::setTab(Tab nextTab) {
     if (busy() || !atTabRoot()) return;
+    barAction_ = -1;
     if (root().tab == Tab::Discover) {
         root().tabSelections[static_cast<int>(Tab::Discover)] = browseState().selection;
         navigation_.pop();
@@ -588,13 +589,17 @@ void App::moveSelectionImpl(int dx, int dy) {
             return;
         }
         const Layout &layout = contentLayout();
+        if (layout.tabs && screen() != Screen::Browse && atTabRoot()) {
+            if (dx) { barMove(dx); return; }
+            if (barAction_ >= 0) return;
+        }
         if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || layoutEdge(layout, root().selection, -1, 0))) {
             if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
             return;
         }
-        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 &&
+        if (screen() == Screen::Home && root().tab != Tab::Search && dy < 0 && !layout.tabs &&
             layoutEdge(layout, root().selection, 0, -1)) {
             navigation_.current().focus = FocusArea::Categories;
             return;
@@ -654,6 +659,28 @@ void App::moveSelectionImpl(int dx, int dy) {
     root().selection = value;
     if (dy > 0 && layoutEdge(layout, value, 0, 1) && hasMore())
         loadNextPage();
+}
+
+int App::barIndex() const {
+    if (barAction_ >= 0) return barAction_;
+    switch (root().tab) {
+        case Tab::Hots: return 2;
+        case Tab::Mine: return 3;
+        default: return 1;
+    }
+}
+
+void App::barMove(int dx) {
+    const int from = barIndex(), to = std::max(0, std::min(kBarEntries - 1, from + dx));
+    if (to == from) return;
+    if (to >= 1 && to <= 3) {
+        barAction_ = -1;
+        setTab(to == 1 ? Tab::Recommend : to == 2 ? Tab::Hots : Tab::Mine);
+    } else {
+        barAction_ = to;
+        navigation_.current().focus = FocusArea::Content;
+    }
+    emitThemeEvent("focus", static_cast<size_t>(to));
 }
 
 size_t App::focusIndex() const {
@@ -756,8 +783,8 @@ const Layout& App::contentLayout() const {
     key.count = layoutCount();
     if (key == layoutKey_) return layoutCache_;
     layoutKey_ = key;
-    layoutCache_ = builtinLayout();
-    if (themeable && !layoutCache_.empty()) {
+    layoutCache_ = barAction_ >= 0 ? Layout{} : builtinLayout();   // an action category has no items
+    if (themeable && (!layoutCache_.empty() || barAction_ >= 0 || screen() != Screen::Browse)) {
         LayoutRequest request;
         request.screen = name;
         request.count = layoutCache_.size();
@@ -776,6 +803,7 @@ const Layout& App::contentLayout() const {
 }
 
 size_t App::layoutCount() const {
+    if (barAction_ >= 0) return 0;
     if (browseVideoList()) return browseState().page.items.size() + (browseState().page.hasMore ? 1 : 0);
     if (screen() == Screen::Mine) return 1 + history_.size() + later_.size();
     if (screen() == Screen::Home && root().tab == Tab::Search) {
@@ -802,6 +830,12 @@ Layout App::builtinLayout() const {
 
 void App::activateImpl() {
     if (busy() || playbackReady_) return;
+    if (barAction_ >= 0 && atTabRoot() && screen() != Screen::Browse) {
+        if (barAction_ == 0) openSettings();
+        else if (barAction_ == 4) openBrowse({BrowseKind::DynamicFeed});
+        else if (barAction_ == 5) openBrowse({BrowseKind::Inbox});
+        return;
+    }
     if (screen() == Screen::Browse) { browseActivate(); return; }
     if (navigation_.current().focus == FocusArea::Navigation) {
         if (root().navigationSelection == 1) openBrowse({BrowseKind::DynamicFeed});
