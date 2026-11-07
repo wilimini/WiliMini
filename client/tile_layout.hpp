@@ -5,6 +5,8 @@
 
 #include <cstddef>
 
+#include "layout.hpp"
+
 namespace pspapp {
 
 enum class TileId { Recommend, Hots, Search, Discover, Dynamic, Inbox, Mine, Settings };
@@ -40,6 +42,15 @@ constexpr int tileX(const TileSpec& t) { return kTileOriginX + t.col * (kTileUni
 constexpr int tileY(const TileSpec& t) { return kTileOriginY + t.row * (kTileUnit + kTileGap); }
 constexpr int tileWidth(const TileSpec& t) { return t.cols * kTileUnit + (t.cols - 1) * kTileGap; }
 constexpr int tileHeight(const TileSpec& t) { return t.rows * kTileUnit + (t.rows - 1) * kTileGap; }
+
+// The tile home as a layout: one rectangle per kTiles entry, panning sideways.
+inline Layout builtinHubLayout() {
+    Layout layout;
+    layout.horizontal = true;
+    for (int i = 0; i < kTileCount; ++i)
+        layout.items.push_back({tileX(kTiles[i]), tileY(kTiles[i]), tileWidth(kTiles[i]), tileHeight(kTiles[i])});
+    return layout;
+}
 
 // Moves the focus ring in a direction (dx or dy is +/-1). Returns the new index, or `from`
 // when nothing lies that way. A candidate must start beyond the far edge of the current tile;

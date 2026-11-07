@@ -1420,7 +1420,10 @@ void drawHub(const pspapp::App& app, int64_t now) {
     drawStatusBar();
 
     // Smooth scrolling toward the pan that keeps the selection on screen.
-    hubFx.panTarget = static_cast<float>(tilePan(app.tileSelection(), static_cast<int>(hubFx.panTarget)));
+    const Layout& hubL = app.hubLayout();
+    hubFx.panTarget = static_cast<float>(layoutReveal(hubL, static_cast<size_t>(app.tileSelection()),
+                                                      static_cast<int>(hubFx.panTarget),
+                                                      hubL.horizontal ? kScreenWidth : 258, kTileMargin));
     hubFx.pan += (hubFx.panTarget - hubFx.pan) * 0.22f;
     if (std::fabs(hubFx.panTarget - hubFx.pan) < 0.4f) hubFx.pan = hubFx.panTarget;
     const float pan = hubFx.pan;
@@ -1436,8 +1439,12 @@ void drawHub(const pspapp::App& app, int64_t now) {
         const Look* look = nullptr;
         for (const Look& candidate : looks) if (candidate.id == tile.id) look = &candidate;
         if (!look) continue;
-        const int x = tileX(tile) - static_cast<int>(pan + 0.5f), y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
-        if (x + w + 4 < 0 || x - 4 >= kWidth) continue;
+        const LayoutRect& rect = hubL.items[static_cast<size_t>(i)];
+        const int shift = static_cast<int>(pan + 0.5f);
+        const int x = rect.x - (hubL.horizontal ? shift : 0), y = rect.y - (hubL.horizontal ? 0 : shift);
+        const int w = rect.w, h = rect.h;
+        const bool smallTile = w <= kTileUnit + 4;
+        if (x + w + 4 < 0 || x - 4 >= kWidth || y + h + 4 < 0 || y >= kHeight) continue;
 
         std::string big, small;
         const bool live = app.tileLive(tile.id, big, small);
@@ -1454,9 +1461,9 @@ void drawHub(const pspapp::App& app, int64_t now) {
         const char* label = text(look->label, locale);
         if (motion.back) {
             drawTitleText(x + 8, y + 2, white, big, w - 16);
-            if (tile.cols == 1) continue;
+            if (smallTile) continue;
             drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
-        } else if (tile.cols == 1) {
+        } else if (smallTile) {
             drawLineIcon(look->icon, x + (w - 26) / 2, y + (h - 26) / 2, 26, white);
         } else {
             drawLineIcon(look->icon, x + 8, y + 8, 40, white);
@@ -1467,9 +1474,9 @@ void drawHub(const pspapp::App& app, int64_t now) {
     }
 
     // Focus ring glides between tiles instead of jumping.
-    const TileSpec& selected = kTiles[app.tileSelection()];
-    const float target[4] = {static_cast<float>(tileX(selected)), static_cast<float>(tileY(selected)),
-                             static_cast<float>(tileWidth(selected)), static_cast<float>(tileHeight(selected))};
+    const LayoutRect& selected = hubL.items[static_cast<size_t>(app.tileSelection())];
+    const float target[4] = {static_cast<float>(selected.x), static_cast<float>(selected.y),
+                             static_cast<float>(selected.w), static_cast<float>(selected.h)};
     if (!hubFx.ringReady) { for (int k = 0; k < 4; ++k) hubFx.ring[k] = target[k]; hubFx.ringReady = true; }
     for (int k = 0; k < 4; ++k) {
         hubFx.ring[k] += (target[k] - hubFx.ring[k]) * 0.38f;
@@ -1478,7 +1485,8 @@ void drawHub(const pspapp::App& app, int64_t now) {
     const int launch = app.tileLaunchMs();
     const bool entered = now - hubFx.enterMs > 700;
     if (entered && (launch < 0 || launch < 90)) {
-        const int rx = static_cast<int>(hubFx.ring[0] - pan + 0.5f), ry = static_cast<int>(hubFx.ring[1] + 0.5f);
+        const int rx = static_cast<int>(hubFx.ring[0] - (hubL.horizontal ? pan : 0.f) + 0.5f);
+        const int ry = static_cast<int>(hubFx.ring[1] - (hubL.horizontal ? 0.f : pan) + 0.5f);
         const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
         fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
         fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);
@@ -1504,7 +1512,10 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
     const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
 
     // Smooth scrolling toward the pan that keeps the selection on screen.
-    hubFx.panTarget = static_cast<float>(tilePan(app.tileSelection(), static_cast<int>(hubFx.panTarget)));
+    const Layout& hubL = app.hubLayout();
+    hubFx.panTarget = static_cast<float>(layoutReveal(hubL, static_cast<size_t>(app.tileSelection()),
+                                                      static_cast<int>(hubFx.panTarget),
+                                                      hubL.horizontal ? kScreenWidth : 258, kTileMargin));
     hubFx.pan += (hubFx.panTarget - hubFx.pan) * 0.22f;
     if (std::fabs(hubFx.panTarget - hubFx.pan) < 0.4f) hubFx.pan = hubFx.panTarget;
     const float pan = hubFx.pan;
@@ -1520,8 +1531,12 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
         const Look* look = nullptr;
         for (const Look& candidate : looks) if (candidate.id == tile.id) look = &candidate;
         if (!look) continue;
-        const int x = tileX(tile) - static_cast<int>(pan + 0.5f), y = tileY(tile), w = tileWidth(tile), h = tileHeight(tile);
-        if (x + w + 4 < 0 || x - 4 >= kWidth) continue;
+        const LayoutRect& rect = hubL.items[static_cast<size_t>(i)];
+        const int shift = static_cast<int>(pan + 0.5f);
+        const int x = rect.x - (hubL.horizontal ? shift : 0), y = rect.y - (hubL.horizontal ? 0 : shift);
+        const int w = rect.w, h = rect.h;
+        const bool smallTile = w <= kTileUnit + 4;
+        if (x + w + 4 < 0 || x - 4 >= kWidth || y + h + 4 < 0 || y >= kHeight) continue;
 
         std::string big, small;
         const bool live = app.tileLive(tile.id, big, small);
@@ -1538,9 +1553,9 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
         const char* label = text(look->label, locale);
         if (motion.back) {
             drawBigText(x + 8, y + 6, white, big, w - 16);
-            if (tile.cols == 1) continue;
+            if (smallTile) continue;
             drawWrapped(x + 8, y + h - 32, 0.5f, softWhite, small, w - 16, 2, 16);
-        } else if (tile.cols == 1) {
+        } else if (smallTile) {
             if (look->icon >= 0) {
                 drawIconGlyph(look->icon, x + (w - 22) / 2, y + 10, 22);
                 drawText(x + 2, y + h - 18, 0.5f, white, label, w - 4, true);
@@ -1557,9 +1572,9 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
     }
 
     // Focus ring glides between tiles instead of jumping.
-    const TileSpec& selected = kTiles[app.tileSelection()];
-    const float target[4] = {static_cast<float>(tileX(selected)), static_cast<float>(tileY(selected)),
-                             static_cast<float>(tileWidth(selected)), static_cast<float>(tileHeight(selected))};
+    const LayoutRect& selected = hubL.items[static_cast<size_t>(app.tileSelection())];
+    const float target[4] = {static_cast<float>(selected.x), static_cast<float>(selected.y),
+                             static_cast<float>(selected.w), static_cast<float>(selected.h)};
     if (!hubFx.ringReady) { for (int k = 0; k < 4; ++k) hubFx.ring[k] = target[k]; hubFx.ringReady = true; }
     for (int k = 0; k < 4; ++k) {
         hubFx.ring[k] += (target[k] - hubFx.ring[k]) * 0.38f;
@@ -1568,7 +1583,8 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
     const int launch = app.tileLaunchMs();
     const bool entered = now - hubFx.enterMs > 700;
     if (entered && (launch < 0 || launch < 90)) {
-        const int rx = static_cast<int>(hubFx.ring[0] - pan + 0.5f), ry = static_cast<int>(hubFx.ring[1] + 0.5f);
+        const int rx = static_cast<int>(hubFx.ring[0] - (hubL.horizontal ? pan : 0.f) + 0.5f);
+        const int ry = static_cast<int>(hubFx.ring[1] - (hubL.horizontal ? 0.f : pan) + 0.5f);
         const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
         fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
         fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);

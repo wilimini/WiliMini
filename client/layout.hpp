@@ -125,4 +125,15 @@ inline size_t layoutFirstVisible(const Layout& layout, int scroll) {
     return layout.size();
 }
 
+// Scroll offset that brings item `index` fully into a view of `extent` pixels along the scroll axis,
+// moving no further than needed and keeping `margin` pixels clear. `current` is the present offset.
+inline int layoutReveal(const Layout& layout, size_t index, int current, int extent, int margin) {
+    if (index >= layout.size()) return 0;
+    const LayoutRect& r = layout.items[index];
+    const int near = layout.horizontal ? r.x : r.y, far = layout.horizontal ? r.right() : r.bottom();
+    if (far - current > extent - margin) current = far - (extent - margin);
+    if (near - current < margin) current = near - margin;
+    return current < 0 ? 0 : current;
+}
+
 } // namespace pspapp

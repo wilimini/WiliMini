@@ -1,4 +1,5 @@
 #include "layout.hpp"
+#include "tile_layout.hpp"
 #include <algorithm>
 #include <cassert>
 
@@ -88,5 +89,25 @@ int main() {
     assert(layoutNeighbor(stair, 0, 1, 0, true) == 1);
 
     assert(layoutNeighbor(Layout{}, 0, 1, 0) == 0);
+
+    // The tile home as a layout: movement (with the in-line preference) and panning equal the
+    // original tile functions.
+    {
+        const Layout hub = builtinHubLayout();
+        assert(hub.size() == static_cast<size_t>(kTileCount) && hub.horizontal);
+        for (int from = 0; from < kTileCount; ++from)
+            for (const auto& m : moves)
+                assert(static_cast<int>(layoutNeighbor(hub, from, m[0], m[1], true)) == tileNeighbor(from, m[0], m[1]));
+        for (int sel = 0; sel < kTileCount; ++sel)
+            for (int current : {0, 37, 150, 400})
+                assert(layoutReveal(hub, sel, current, kScreenWidth, kTileMargin) == tilePan(sel, current));
+    }
+    // A vertical strip pans along y.
+    {
+        Layout column;
+        column.items = {{0, 0, 100, 100}, {0, 110, 100, 100}, {0, 220, 100, 100}};
+        assert(layoutReveal(column, 2, 0, 258, 10) == 320 - (258 - 10));
+        assert(layoutReveal(column, 0, 100, 258, 10) == 0);
+    }
     return 0;
 }

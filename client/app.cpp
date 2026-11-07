@@ -656,6 +656,27 @@ void App::moveSelection(int dx, int dy) {
         loadNextPage();
 }
 
+const Layout& App::hubLayout() const {
+    if (hubGeneration_ == theme_.generation() && hubStyle_ == static_cast<int>(preferences_.homeStyle)) return hubCache_;
+    hubGeneration_ = theme_.generation();
+    hubStyle_ = static_cast<int>(preferences_.homeStyle);
+    hubCache_ = builtinHubLayout();
+    if (theme_.loaded()) {
+        static const char* const ids[] = {"recommend", "hots", "search", "discover", "dynamic", "inbox", "mine", "settings"};
+        static_assert(sizeof(ids) / sizeof(ids[0]) == static_cast<size_t>(kTileCount), "one id per tile");
+        LayoutRequest request;
+        request.screen = "hub";
+        request.count = static_cast<size_t>(kTileCount);
+        request.style = hubStyle_;
+        request.dark = preferences_.darkTheme;
+        for (int i = 0; i < kTileCount; ++i) request.ids.push_back(ids[static_cast<int>(kTiles[i].id)]);
+        Layout themed;
+        if (theme_.layout(request, themed)) hubCache_ = std::move(themed);
+        else if (!theme_.error().empty()) WLOG_W(WLC_CLIENT, "theme layout hub: %s", theme_.error().c_str());
+    }
+    return hubCache_;
+}
+
 const char* App::layoutScreen() const {
     if (screen() == Screen::Mine) return "mine";
     if (screen() == Screen::Home && root().tab == Tab::Search) return "search";
@@ -914,7 +935,7 @@ void App::openHub() {
 }
 
 void App::tileMove(int dx, int dy) {
-    hubSelection_ = tileNeighbor(hubSelection_, dx, dy);
+    hubSelection_ = static_cast<int>(layoutNeighbor(hubLayout(), static_cast<size_t>(hubSelection_), dx, dy, true));
 }
 
 void App::tileActivate() {

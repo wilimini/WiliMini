@@ -140,6 +140,8 @@ public:
     // Item rectangles of the scrolling content on the current page; selection, scrolling and the
     // cover queue are all derived from them. Empty for pages without a selectable grid or list.
     const Layout &contentLayout() const;
+    // Rectangles of the tile home, one per kTiles entry (a theme may rearrange them).
+    const Layout &hubLayout() const;
     const Theme &theme() const { return theme_; }
     // Name the theme scripts know the current content page by: "feed", "search" or "mine".
     const char *layoutScreen() const;
@@ -274,6 +276,9 @@ private:
     };
     mutable LayoutKey layoutKey_;
     mutable Layout layoutCache_;
+    mutable unsigned hubGeneration_ = ~0u;
+    mutable int hubStyle_ = -1;
+    mutable Layout hubCache_;
     bool hubOpen_ = false;
     int hubSelection_ = 0;
     uint64_t hubLaunchAt_ = 0;  // system time (us) when the launch animation began; 0 = idle
