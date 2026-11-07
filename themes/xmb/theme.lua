@@ -16,7 +16,7 @@ return {
     if ctx.screen == "hub" then
       local items = {}
       for i = 1, ctx.count do
-        items[i] = { 18 + ((ORDER[ctx.ids[i]] or i) - 1) * 112, 82, 100, 100 }
+        items[i] = { 24 + ((ORDER[ctx.ids[i]] or i) - 1) * 108, 86, 88, 88 }
       end
       return { items = items, axis = "x", focus = { kind = "ring" } }
     end
