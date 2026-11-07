@@ -34,6 +34,7 @@ class UpdateController {
     UpdateSnapshot snapshot() const;
 
   private:
+    static std::string describe(UpdateResult r, const UpdateTransport* t);
     void set(UpdateState s, const std::string& error = {});
     std::string root_, running_;
     TransportFactory factory_;

@@ -109,10 +109,19 @@ UpdateResult checkForUpdate(UpdateTransport& t, const std::string& apiUrl, const
     return UpdateResult::Ok;
 }
 
+#ifdef BILI_UPDATE_TEST_ENDPOINT
+// Test builds only (-DBILI_UPDATE_TEST_ENDPOINT=https://127.0.0.1:PORT): tools/ppsspp/test-update-flow.py
+// serves both sources locally. Never set for release builds.
+const UpdateSource kUpdateSources[2] = {
+    {"GitHub", BILI_UPDATE_TEST_ENDPOINT "/github/releases/latest"},
+    {"Codeberg", BILI_UPDATE_TEST_ENDPOINT "/codeberg/releases/latest"},
+};
+#else
 const UpdateSource kUpdateSources[2] = {
     {"GitHub", "https://api.github.com/repos/wilimini/WiliMini/releases/latest"},
     {"Codeberg", "https://codeberg.org/api/v1/repos/wilimini/WiliMini/releases/latest"},
 };
+#endif
 
 UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const std::string& partPath,
                              const std::string& zipPath, const ProgressFn& progress) {

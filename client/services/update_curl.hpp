@@ -11,7 +11,9 @@ class CurlUpdateTransport : public UpdateTransport {
     bool get(const std::string& url, uint64_t rangeFrom,
              const std::function<bool(int, const std::string&)>& onHeaders,
              const std::function<bool(const void*, size_t)>& onData) override;
+    std::string lastError() const override { return error_; }
   private:
+    std::string error_;
     const char* ca_;
     const volatile bool* cancel_;
 };

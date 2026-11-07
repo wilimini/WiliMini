@@ -19,6 +19,11 @@ UpdateSnapshot UpdateController::snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return snap_;
 }
+std::string UpdateController::describe(UpdateResult r, const UpdateTransport* t) {
+    std::string text = updateResultName(r);
+    if (r == UpdateResult::Network && t && !t->lastError().empty()) text += ": " + t->lastError();
+    return text;
+}
 void UpdateController::cancel() { cancel_ = true; }
 void UpdateController::setSource(size_t index) {
     if (busy() || index >= 2) return;
@@ -43,7 +48,7 @@ void UpdateController::runCheck() {
     UpdateResult r = checkForUpdate(*transport, kUpdateSources[source].apiUrl, running_, info);
     if (cancel_) { set(UpdateState::Idle); return; }
     if (r == UpdateResult::NoUpdate) { set(UpdateState::UpToDate); return; }
-    if (r != UpdateResult::Ok) { set(UpdateState::Failed, updateResultName(r)); return; }
+    if (r != UpdateResult::Ok) { set(UpdateState::Failed, describe(r, transport.get())); return; }
     std::lock_guard<std::mutex> lock(mutex_);
     info_ = info;
     snap_.tag = info.tag;
@@ -79,7 +84,7 @@ void UpdateController::runInstall() {
         return !cancel_;
     });
     if (r == UpdateResult::Cancelled || cancel_) { set(UpdateState::Available); return; } // .part kept for resume
-    if (r != UpdateResult::Ok) { set(UpdateState::Failed, updateResultName(r)); return; }
+    if (r != UpdateResult::Ok) { set(UpdateState::Failed, describe(r, transport.get())); return; }
     set(UpdateState::Staging);
     // The zip was just verified by downloadRelease; stageRelease verifies once more from disk.
     std::string sha = info.sha256;

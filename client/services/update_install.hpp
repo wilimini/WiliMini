@@ -17,6 +17,8 @@ class UpdateTransport {
     virtual bool get(const std::string& url, uint64_t rangeFrom,
                      const std::function<bool(int status, const std::string& contentRange)>& onHeaders,
                      const std::function<bool(const void*, size_t)>& onData) = 0;
+    // Short reason for the last failed get() ("Couldn't connect to server"), for the UI and logs.
+    virtual std::string lastError() const { return {}; }
 };
 
 enum class UpdateResult { Ok, NoUpdate, Network, BadRelease, Cancelled, ChecksumMismatch, Package, Storage };

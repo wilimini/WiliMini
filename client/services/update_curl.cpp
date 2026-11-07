@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <curl/curl.h>
+#include <wili_log.h>
 namespace pspapp {
 namespace {
 struct Ctx {
@@ -91,12 +92,20 @@ bool CurlUpdateTransport::get(const std::string& url, uint64_t rangeFrom,
         std::string r = std::to_string(rangeFrom) + "-";
         curl_easy_setopt(h, CURLOPT_RANGE, r.c_str()); // curl copies the string
     }
+    error_.clear();
     CURLcode rc = curl_easy_perform(h);
     curl_slist_free_all(hdr);
     curl_easy_cleanup(h);
     // An empty body (e.g. 416) never reaches the write callback.
     if (rc == CURLE_OK && !c.headersSent) sendHeaders(&c);
     if (c.abortedByCallback) return false;
+    if (rc != CURLE_OK) {
+        error_ = err[0] ? err : curl_easy_strerror(rc);
+        WLOG_W(WLC_NET, "update: curl %d (%s) status=%d url=%s", (int)rc, error_.c_str(), c.status, url.c_str());
+    } else if (c.status < 200 || c.status >= 300) {
+        error_ = "HTTP " + std::to_string(c.status);
+        WLOG_W(WLC_NET, "update: %s url=%s", error_.c_str(), url.c_str());
+    }
     // 416 for a stale .part is a protocol answer, not a transport failure.
     if (rc == CURLE_HTTP_RETURNED_ERROR) return false;
     return rc == CURLE_OK && c.status >= 200 && c.status < 300;
