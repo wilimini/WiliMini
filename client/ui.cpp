@@ -131,14 +131,10 @@ struct TextureBuffer {
     }
 };
 
-// A cover slot is decoded off the UI thread (see coverDecoderMain). Looking a cover up never takes
-// a lock: only the UI thread writes a slot's key, size and texture (when allocating or resetting
-// it), so the UI thread reads them freely, and the decoder makes a result visible by storing
-// `state = Ready` last, with release ordering. The decoder publishes only into a slot whose ticket
-// still matches its request, so an evicted or reset slot drops the result, and it never writes
-// key, size or lastUse. coverMutex guards the request queue, tickets and the slow paths
-// (allocating, resetting, publishing); the UI thread only ever try-locks it, so a busy decoder
-// delays a new request by a frame but can never turn a ready cover into a placeholder.
+// A cover slot is decoded off the UI thread (see coverDecoderMain). The UI thread owns slot
+// allocation and only reads `texture` while the state is Ready; the decoder publishes a result only
+// into a slot whose ticket still matches its request, so an evicted or reset slot drops the result.
+// Everything except reading a Ready texture happens under coverMutex.
 enum class CoverState : uint8_t { Empty, Loading, Ready, Failed };
 
 struct CoverSlot {
@@ -146,21 +142,9 @@ struct CoverSlot {
     TextureBuffer texture;           // 5650, row pitch texWidth; drawn by the GE
     int texWidth = 0, texHeight = 0; // power-of-two texture size declared to the GE
     int width = kCoverWidth, height = kCoverHeight;
-    std::atomic<CoverState> state{CoverState::Empty};
-    unsigned ticket = 0;                // identifies the request that fills this slot; 0 when unused
-    std::atomic<unsigned> lastUse{0};   // coverFrame of the most recent lookup, for LRU eviction
-
-    // Caller holds coverMutex (or the decoder is stopped).
-    void reset() {
-        state.store(CoverState::Empty, std::memory_order_release);
-        key.clear();
-        texture = TextureBuffer{};
-        texWidth = texHeight = 0;
-        width = kCoverWidth;
-        height = kCoverHeight;
-        ticket = 0;
-        lastUse.store(0, std::memory_order_relaxed);
-    }
+    CoverState state = CoverState::Empty;
+    unsigned ticket = 0;   // identifies the request that fills this slot; 0 when unused
+    unsigned lastUse = 0;  // coverFrame of the most recent lookup, for LRU eviction
 };
 
 CoverSlot covers[kMaxCovers];
@@ -488,11 +472,9 @@ int coverDecoderMain(SceSize, void*) {
                 coverPending.erase(coverPending.begin());
                 CoverSlot& slot = covers[request.slot];
                 if (slot.ticket != request.ticket) continue;  // evicted or reset while queued
-                if (coverFrame - slot.lastUse.load(std::memory_order_relaxed) > kCoverStaleFrames) {
+                if (coverFrame - slot.lastUse > kCoverStaleFrames) {
                     // Scrolled away before the decode started: drop it, the next lookup requeues it.
-                    // Only the state changes (the UI thread reads the key lock-free).
-                    slot.ticket = 0;
-                    slot.state.store(CoverState::Empty, std::memory_order_release);
+                    slot = CoverSlot{};
                     continue;
                 }
             }
@@ -512,14 +494,13 @@ int coverDecoderMain(SceSize, void*) {
                    request.height, ok ? 1 : 0, static_cast<unsigned>(sceKernelGetSystemTimeWide() - start));
             std::lock_guard<std::mutex> lock(coverMutex);
             CoverSlot& slot = covers[request.slot];
-            if (slot.ticket == request.ticket && slot.state.load(std::memory_order_relaxed) == CoverState::Loading) {
+            if (slot.ticket == request.ticket && slot.state == CoverState::Loading) {
                 if (ok) {
                     slot.texture = std::move(texture.buffer);
                     slot.texWidth = texture.texWidth;
                     slot.texHeight = texture.texHeight;
                 }
-                // Release: the texture above is visible to a reader that sees Ready.
-                slot.state.store(ok ? CoverState::Ready : CoverState::Failed, std::memory_order_release);
+                slot.state = ok ? CoverState::Ready : CoverState::Failed;
             }
         }
     }
@@ -566,35 +547,12 @@ void coverDecoderStop() {
     coverDecoder = coverWake = -1;
 }
 
-// Returns the slot only once its texture is decoded; otherwise requests the decode and returns null,
-// which the caller draws as a placeholder. Finding a cover is lock-free (see CoverSlot); only
-// allocating a slot for a new cover try-locks coverMutex, and if that is busy the request simply
-// waits for the next frame.
+// Returns the slot only once its pixels are decoded; otherwise requests the decode and returns null,
+// which the caller draws as a placeholder.
 CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int height = kCoverHeight) {
     if (bvid.empty()) return nullptr;
     if (coverDecoder < 0 && !coverDecoderStart()) return nullptr;
-    const unsigned frame = coverFrame.load(std::memory_order_relaxed);
-    int victim = -1;
-    for (int i = 0; i < kMaxCovers; ++i) {
-        CoverSlot& slot = covers[i];
-        const CoverState state = slot.state.load(std::memory_order_acquire);
-        if (state != CoverState::Empty && slot.key == bvid && slot.width == width && slot.height == height) {
-            slot.lastUse.store(frame, std::memory_order_relaxed);
-            return state == CoverState::Ready && slot.texture.data ? &slot : nullptr;
-        }
-        if (state == CoverState::Loading) continue;
-        if (state == CoverState::Empty) {
-            if (victim < 0 || covers[victim].state.load(std::memory_order_relaxed) != CoverState::Empty) victim = i;
-            continue;
-        }
-        const unsigned used = slot.lastUse.load(std::memory_order_relaxed);
-        if (used == frame) continue;  // drawn this frame: keep it
-        if (victim < 0 ||
-            (covers[victim].state.load(std::memory_order_relaxed) != CoverState::Empty &&
-             used < covers[victim].lastUse.load(std::memory_order_relaxed)))
-            victim = i;
-    }
-    if (victim < 0) return nullptr;  // every slot is busy or on screen; ask again next frame
+    // Never wait on the decoder: if it holds the lock, show the placeholder for this frame.
     std::unique_lock<std::mutex> lock(coverMutex, std::try_to_lock);
     if (!lock.owns_lock()) {
 #ifdef BILI_UI_FRAME_STATS
@@ -602,16 +560,27 @@ CoverSlot* coverSlot(const std::string& bvid, int width = kCoverWidth, int heigh
 #endif
         return nullptr;
     }
-    // The decoder only touches Loading slots, and the victim is not Loading, so it is still ours.
+    int victim = -1;
+    for (int i = 0; i < kMaxCovers; ++i) {
+        CoverSlot& slot = covers[i];
+        if (slot.state != CoverState::Empty && slot.key == bvid && slot.width == width && slot.height == height) {
+            slot.lastUse = coverFrame;
+            return slot.state == CoverState::Ready && slot.texture.data ? &slot : nullptr;
+        }
+        if (slot.state == CoverState::Loading) continue;
+        if (slot.state == CoverState::Empty) { if (victim < 0 || covers[victim].state != CoverState::Empty) victim = i; continue; }
+        if (slot.lastUse == coverFrame) continue;  // drawn this frame: keep it
+        if (victim < 0 || (covers[victim].state != CoverState::Empty && slot.lastUse < covers[victim].lastUse)) victim = i;
+    }
+    if (victim < 0) return nullptr;  // every slot is busy or on screen; ask again next frame
     CoverSlot& slot = covers[victim];
     slot.texture = TextureBuffer{};  // free the old image before the decoder allocates the new one
     slot.key = bvid;
     slot.width = width;
     slot.height = height;
-    slot.texWidth = slot.texHeight = 0;
+    slot.state = CoverState::Loading;
     slot.ticket = ++coverTicket;
-    slot.lastUse.store(frame, std::memory_order_relaxed);
-    slot.state.store(CoverState::Loading, std::memory_order_release);
+    slot.lastUse = coverFrame;
     coverPending.push_back({victim, slot.ticket, width, height, bvid});
     sceKernelSignalSema(coverWake, 1);
     return nullptr;
@@ -2766,7 +2735,7 @@ void ui_prepare_playback() {
     // and its stack are released too; the first cover lookup after playback starts it again.
     coverDecoderStop();
     std::lock_guard<std::mutex> lock(coverMutex);
-    for (auto& cover : covers) cover.reset();
+    for (auto& cover : covers) cover = CoverSlot{};
 }
 
 void ui_resume() {
@@ -2806,22 +2775,11 @@ void ui_render(const pspapp::App& app) {
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
         // A reset slot has ticket 0, so a decode still in flight for it is discarded on publish.
-        // If the decoder holds the lock, try again next frame instead of waiting for it.
-        std::unique_lock<std::mutex> lock(coverMutex, std::try_to_lock);
-        if (lock.owns_lock()) {
-            // The app reports only the latest finished download. If several finished since the last
-            // frame, the earlier keys are unknown, so refresh every cover that is not ready; ready
-            // covers keep their texture (their files did not change). An empty key means the cache
-            // was cleared, which resets everything.
-            const bool everything = app.completedCoverKey().empty();
-            const bool missed = app.coverGeneration() - coverGeneration > 1;
-            for (auto& cover : covers) {
-                const bool match = cover.key == app.completedCoverKey();
-                const bool stale = missed && cover.state.load(std::memory_order_relaxed) != CoverState::Ready;
-                if (everything || match || stale) cover.reset();
-            }
-            coverGeneration = app.coverGeneration();
-        }
+        std::lock_guard<std::mutex> lock(coverMutex);
+        for (auto& cover : covers)
+            if (app.completedCoverKey().empty() || cover.key == app.completedCoverKey())
+                cover = CoverSlot{};
+        coverGeneration = app.coverGeneration();
     }
     beginFrame();
     fillRect(0, 0, kWidth, kHeight, kBackground);
