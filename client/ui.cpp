@@ -1001,6 +1001,8 @@ void drawHeader(const pspapp::App& app) {
         switch (app.screen()) {
             case pspapp::Screen::Storage:
                 title = pspapp::text(pspapp::TextId::page_storage_title, app.preferences().locale); break;
+            case pspapp::Screen::Update:
+                title = pspapp::text(pspapp::TextId::page_update_title, app.preferences().locale); break;
             case pspapp::Screen::Help:
                 title = pspapp::text(pspapp::TextId::page_help_title, app.preferences().locale); break;
             case pspapp::Screen::About:
@@ -1064,6 +1066,9 @@ void drawFooter(const pspapp::App& app) {
             hint = uiText(app, pspapp::TextId::hint_licenses, {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::LicenseText)
             hint = uiText(app, pspapp::TextId::hint_license_text, {{"back", back}});
+        else if (app.screen() == pspapp::Screen::Update)
+            hint = uiText(app, app.updateBusy() ? pspapp::TextId::hint_update_busy : pspapp::TextId::hint_update,
+                          {{"confirm", confirm}, {"back", back}});
         else if (app.screen() == pspapp::Screen::About)
             hint = uiText(app, pspapp::TextId::hint_about, {{"confirm", confirm}, {"back", back}});
         else hint = uiText(app, pspapp::TextId::hint_back_settings, {{"back", back}});
@@ -2666,7 +2671,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_log_level,
             pspapp::TextId::settings_log_files, pspapp::TextId::settings_wifi,
             pspapp::TextId::settings_cover_cache, pspapp::TextId::settings_help,
-            pspapp::TextId::settings_about};
+            pspapp::TextId::settings_update, pspapp::TextId::settings_about};
         const auto& preferences = app.preferences();
         const std::string meBackend = pspapp::text(
             preferences.meBackend == pspapp::MeBackend::CustomCore ? pspapp::TextId::value_me_custom_core
@@ -2708,6 +2713,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::text(pspapp::TextId::value_system_connect, locale),
             pspapp::text(pspapp::TextId::value_manage, locale),
             pspapp::text(pspapp::TextId::value_view, locale),
+            pspapp::text(pspapp::TextId::value_check, locale),
             pspapp::text(pspapp::TextId::value_view, locale)};
         const size_t end = std::min(static_cast<size_t>(pspapp::SettingItem::Count),
                                     app.settingsScroll() + pspapp::settingsVisibleRows);
@@ -2731,6 +2737,49 @@ void drawUtility(const pspapp::App& app) {
             if (selected) fillRect(33, y + 2, 2, 13, kPink);
             drawText(39, y, 0.7f, kText, pspapp::text(labels[i], locale), 250);
             drawText(300, y, 0.7f, selected ? kPink : kTextDim, values[i], 168);
+        }
+    } else if (app.screen() == Screen::Update) {
+        const auto snap = app.updateSnapshot();
+        const std::string confirm = app.preferences().confirmButton();
+        const std::string back = app.preferences().backButton();
+        drawText(39, 36, 0.5f, kTextDim, uiText(app, pspapp::TextId::update_current, {{"version", app.updateVersion()}}), 428);
+        using pspapp::UpdateState;
+        switch (snap.state) {
+            case UpdateState::Idle:
+                drawText(39, 70, 0.7f, kText, uiText(app, pspapp::TextId::update_idle, {{"confirm", confirm}}), 428);
+                break;
+            case UpdateState::Checking:
+                drawText(39, 70, 0.7f, kText, pspapp::text(pspapp::TextId::update_checking, locale), 428);
+                break;
+            case UpdateState::UpToDate:
+                drawText(39, 70, 0.7f, kText, pspapp::text(pspapp::TextId::update_uptodate, locale), 428);
+                break;
+            case UpdateState::Available:
+                drawText(39, 66, 0.7f, kPink, uiText(app, pspapp::TextId::update_available,
+                         {{"tag", snap.tag}, {"source", snap.source}}), 428);
+                drawWrapped(39, 92, 0.5f, kTextDim, snap.notes, 428, 8, 14);
+                drawText(39, 226, 0.7f, kText, uiText(app, pspapp::TextId::update_confirm,
+                         {{"confirm", confirm}, {"back", back}}), 428);
+                break;
+            case UpdateState::Downloading: {
+                const unsigned percent = snap.total ? static_cast<unsigned>(snap.done * 100 / snap.total) : 0;
+                drawText(39, 70, 0.7f, kText, uiText(app, pspapp::TextId::update_downloading,
+                         {{"percent", std::to_string(percent)}, {"done", std::to_string(snap.done / 1024)},
+                          {"total", std::to_string(snap.total / 1024)}}), 428);
+                fillRect(39, 104, 428, 8, kLine);
+                fillRect(39, 104, static_cast<int>(snap.total ? snap.done * 428 / snap.total : 0), 8, kPink);
+                break;
+            }
+            case UpdateState::Staging:
+                drawText(39, 70, 0.7f, kText, pspapp::text(pspapp::TextId::update_staging, locale), 428);
+                break;
+            case UpdateState::Ready:
+                drawText(39, 70, 0.7f, kPink, uiText(app, pspapp::TextId::update_ready, {{"confirm", confirm}}), 428);
+                break;
+            case UpdateState::Failed:
+                drawText(39, 70, 0.7f, kPink, uiText(app, pspapp::TextId::update_failed, {{"reason", snap.error}}), 428);
+                drawText(39, 96, 0.7f, kText, uiText(app, pspapp::TextId::update_retry, {{"confirm", confirm}}), 428);
+                break;
         }
     } else if (app.screen() == Screen::Storage) {
         drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::storage_title, locale), 428);

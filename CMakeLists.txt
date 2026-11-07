@@ -225,6 +225,11 @@ add_library(wili_client_objects OBJECT
     platform/src/wili_log.c
     platform/src/wili_log_sink.c
     platform/src/wili_update_swap.c
+    client/services/update_core.cpp
+    client/services/update_package.cpp
+    client/services/update_install.cpp
+    client/services/update_curl.cpp
+    client/services/update_controller.cpp
     client/app.cpp
     client/preferences.cpp
     client/app_settings.cpp

@@ -31,3 +31,8 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithir
     tests/update_install_test.cpp client/services/update_install.cpp client/services/update_package.cpp \
     client/services/update_core.cpp "$out/wili_update_swap.o" -lz -o "$out/update-install-test"
 "$out/update-install-test" "$out/update-fixture.zip.pkg"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithird_party/nlohmann -Iplatform/include \
+    tests/update_controller_test.cpp client/services/update_controller.cpp client/services/update_install.cpp \
+    client/services/update_package.cpp client/services/update_core.cpp "$out/wili_update_swap.o" -lz -lpthread \
+    -o "$out/update-controller-test"
+"$out/update-controller-test" "$out/update-fixture.zip.pkg"

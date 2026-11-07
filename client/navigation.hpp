@@ -15,7 +15,7 @@
 namespace pspapp {
 
 enum class Tab { Recommend, Hots, Search, Mine, Discover };
-enum class Screen { Home, Detail, Comments, Mine, Login, Settings, Storage, Help, About, Licenses, LicenseText, Browse };
+enum class Screen { Home, Detail, Comments, Mine, Login, Settings, Storage, Help, About, Licenses, LicenseText, Update, Browse };
 enum class FocusArea { Content, Navigation, Categories };
 enum class SearchView { Landing, History, Results };
 
@@ -118,6 +118,7 @@ struct StorageRoute {
     static constexpr Screen kind = Screen::Storage;
     bool clearing = false;
 };
+struct UpdateRoute { static constexpr Screen kind = Screen::Update; };
 struct HelpRoute { static constexpr Screen kind = Screen::Help; };
 struct AboutRoute { static constexpr Screen kind = Screen::About; };
 struct LicensesRoute {
@@ -131,7 +132,7 @@ struct LicenseTextRoute {
 };
 using RouteState = std::variant<RootRoute, DetailRoute, CommentsRoute, BrowseRoute,
                                 LoginRoute, SettingsRoute, StorageRoute, HelpRoute,
-                                AboutRoute, LicensesRoute, LicenseTextRoute>;
+                                AboutRoute, LicensesRoute, LicenseTextRoute, UpdateRoute>;
 struct RouteEntry {
     uint64_t id;
     RouteState state;

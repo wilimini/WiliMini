@@ -166,5 +166,21 @@
   "comment_tile_more": "更多",
   "hint_comment_list": "↑↓ 选择  {confirm} 展开  ← 点赞  → 回复列表  △ 菜单  □ 评论  {back} 返回",
   "hint_reply_list": "↑↓ 选择  {confirm} 展开  ← 点赞  △ 菜单  □ 回复  {back} 返回",
-  "hint_comment_menu": "← → 选择  {confirm} 确定  {back} 取消"
+  "hint_comment_menu": "← → 选择  {confirm} 确定  {back} 取消",
+  "settings_update": "检查更新",
+  "value_check": "检查 ›",
+  "page_update_title": "设置 / 检查更新",
+  "hint_update": "{confirm} 继续  {back} 返回",
+  "hint_update_busy": "{back} 取消",
+  "update_current": "当前版本：{version}",
+  "update_idle": "按 {confirm} 检查是否有新版本。",
+  "update_checking": "正在检查更新…",
+  "update_uptodate": "已是最新版本。",
+  "update_available": "发现新版本 {tag}（来源：{source}）",
+  "update_confirm": "{confirm} 下载并安装  ·  {back} 暂不更新",
+  "update_downloading": "正在下载… {percent}%（{done} / {total} KiB）",
+  "update_staging": "正在校验并解包…",
+  "update_ready": "更新已就绪。按 {confirm} 退出，然后重新启动 WiliMini 完成安装。",
+  "update_failed": "更新失败：{reason}",
+  "update_retry": "按 {confirm} 重试。"
 }
