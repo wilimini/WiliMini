@@ -6,6 +6,73 @@ versions drew rectangles, text and icons by writing VRAM from the CPU and only u
 covers, which required the GE to be flushed before every CPU write; that mix caused
 cover flicker on hardware.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph UI["UI thread (client/ui.cpp)"]
+        R["ui_render(): layout and draw calls"]
+        P["fillRect / blendRect / drawText / drawTitleText<br/>drawCover / icons / squeezePage"]
+        B["geSprite(): trim to clip,<br/>append 2 vertices (16 B each)"]
+        Q[("pending batch<br/>up to 768 sprites")]
+        E["geEmit(): one GU_SPRITES draw<br/>per texture change"]
+    end
+    subgraph TEX["Texture memory (RAM)"]
+        G["body glyph atlas<br/>T4 512x512"]
+        T["title glyph atlas<br/>T4 512x512"]
+        M["icon mask atlas<br/>T8 256x256"]
+        C4["colour icon atlas<br/>4444 128x64"]
+        CV["cover / image textures<br/>5650"]
+    end
+    subgraph DEC["Cover decoder thread (low priority)"]
+        J["JPEG decode, scale,<br/>pack to 5650"] --> WB["data cache writeback"]
+    end
+    R --> P --> B --> Q --> E --> L[("GE display list<br/>256 KB")]
+    L --> GE[["Graphics Engine"]]
+    TEX --> GE
+    WB --> CV
+    GE --> FB[("draw buffer in VRAM")]
+    FB -- "vblank swap" --> LCD["display"]
+```
+
+## One frame
+
+```mermaid
+sequenceDiagram
+    participant UI as UI thread
+    participant L as GE display list
+    participant GE as GE hardware
+    UI->>L: beginFrame (sceGuStart)
+    loop every widget
+        UI->>UI: geSprite (append vertices, trim clip)
+        Note over UI: glyph or icon not cached yet: write its<br/>cell through the uncached alias
+        UI->>L: texture changed: geEmit (GetMemory + DrawArray)
+        L-->>GE: sprites start drawing, in parallel with the CPU
+    end
+    UI->>L: presentFrame: geEmit, sceGuFinish
+    UI->>GE: sceGuSync (wait for the last sprites)
+    UI->>UI: wait for vblank, sceGuSwapBuffers
+```
+
+## Why the GE is cheaper than CPU drawing
+
+The old renderer wrote every pixel from the CPU into uncached VRAM. Per frame that was:
+
+| Operation | CPU renderer | GE renderer |
+|---|---|---|
+| Clear the screen | 130,560 32-bit stores (522 KB) | 1 sprite |
+| Text, per glyph | loop over up to 18x20 pixels: unpack a nibble, branch, and for partial coverage **read the pixel back from VRAM**, blend, write it | 1 sprite (32 B of vertices); the GE samples the atlas and blends |
+| Cover, per cover | about 25,000 pixels, with integer divisions per pixel for scaling | 1 sprite from a texture half the size (5650) |
+| Icons, per pixel | bounds check, VRAM read, blend, write | 1 sprite |
+| Translucent rectangles | read-modify-write of every pixel in the area | 1 sprite with alpha |
+| Page transition | CPU copies rows within VRAM | GE copy plus 2 scaled sprites |
+
+Reading VRAM from the CPU is uncached and slow on real hardware; the emulator does not
+charge for it, so the emulator figures in the pull request understate the gain. After the
+change the CPU writes a few kilobytes of vertices per frame instead of several hundred
+thousand pixels, the GE draws in parallel with the CPU, and the CPU time freed goes to
+decoding and networking.
+
 ## Frame flow
 
 `beginFrame()` starts a direct GE list, `ui_render()` draws, and `presentFrame()` ends the
