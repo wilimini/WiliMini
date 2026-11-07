@@ -70,6 +70,8 @@ BILI_HEADLESS_PLAYER=ppsspp-sceMpeg \
 数据为合成数据，用于在没有账号和网络时检查 UI。按键回放的 MASK 是十六进制 sceCtrl 掩码，
 例如 `0x4000`（×）、`0x2000`（○）、`0x10`/`0x40`/`0x80`/`0x20`（上/下/左/右）。
 
+`seed-ui-fixture.py` 还接受 `--theme NAME`：把仓库的 `themes/NAME/` 复制到 memstick 并写入 `settings.json`，用于在模拟器里查看主题。`tools/test-theme.sh` 在主机上构建 Lua 5.4，运行主题引擎测试（沙箱、校验、限额）并检查 `themes/` 下每个主题；`tools/theme-preview.py` 把主题的布局画成 PNG。详见 [docs/themes.md](../docs/themes.md)。
+
 评论页需要账号和网络数据，离线时可用诊断构建：`cmake -S . -B build/client -DBILI_UI_FIXTURE=ON`（默认关闭）。
 在 memstick 的客户端目录写入 `ui-fixture.txt`，内容为 `comments` 或 `replies`，客户端启动后直接进入带示例评论的评论页或回复页。
 该选项只用于模拟器截图，不要用于发布包。

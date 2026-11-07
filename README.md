@@ -154,6 +154,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 - [播放控制与弹幕](docs/playback-controls.md)：快捷键、画质菜单、跳转和叠加绘制
 - [客户端服务说明](docs/client-services.md)：网络服务和客户端模块
 - [界面渲染](docs/ui-rendering.md)：全部由 GE 绘制的精灵批处理、字形图集和页面转场
+- [主题脚本](docs/themes.md)：用 Lua 自定义布局、配色、滚动动画和事件反应
 - [界面文案目录](docs/localization.md)：静态语言表和生成方式
 - [PPSSPP 播放后端](docs/ppsspp-player.md)：模拟器构建、固件和播放测试
 - [Media Engine 兼容性分析](docs/me-compatibility.md)：ME bridge 与固件差异

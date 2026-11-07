@@ -173,5 +173,5 @@ results and the tile Mine page use it, and `ui.cpp` draws from the same rectangl
 The built-in providers (`gridLayout`, `listLayout`, `accountGridLayout`) reproduce the original
 screens. `tests/layout_test.cpp` checks that movement, scroll targets and the cover window equal
 the old arithmetic for every item count, and exercises irregular layouts. This is the base for
-theme-supplied layouts (issue #25). One behaviour changed: in the Metro list, Left from any row
+theme-supplied layouts: a Lua script returns the rectangles (see [themes.md](themes.md)) and everything above works on them unchanged. One behaviour changed: in the Metro list, Left from any row
 now opens the sidebar (it used to work only from even rows, an artefact of the two-column maths).

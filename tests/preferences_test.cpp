@@ -88,6 +88,18 @@ int main(int argc, char** argv) {
         assert(styleRestored.tileHome() == (style != pspapp::HomeStyle::Classic));
         assert(styleRestored.metro() == (style == pspapp::HomeStyle::Metro));
     }
+    // The theme name is empty by default, round-trips, and a bad name only disables the theme.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && value.theme.empty());
+    value.theme = "my-theme_2";
+    assert(pspapp::savePreferences(path, value));
+    pspapp::Preferences themeRestored;
+    assert(pspapp::loadPreferences(path, themeRestored) && themeRestored.theme == "my-theme_2");
+    std::ofstream(path) << R"({"version":1,"dark_theme":true,"body_size":16,"show_covers":true,"slow_repeat":false,"theme":"../evil"})";
+    assert(pspapp::loadPreferences(path, themeRestored) && themeRestored.theme.empty() && themeRestored.darkTheme);
+    value.theme = "bad/name";
+    assert(pspapp::savePreferences(path, value) && pspapp::loadPreferences(path, themeRestored) && themeRestored.theme.empty());
+    value.theme.clear();
     // The input method defaults to Auto, round-trips and is validated.
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
     assert(pspapp::loadPreferences(path, value) && value.inputMethod == pspapp::InputMethod::Pinyin);
