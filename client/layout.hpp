@@ -19,8 +19,26 @@ struct LayoutRect {
     int bottom() const { return y + h; }
 };
 
+// How an item is drawn. Default lets the page pick its own look (the built-in screens).
+enum class CardStyle { Default, Tile, Row, Poster, Compact };
+
+// What the focused item looks like. The ring is the original look.
+struct FocusFx {
+    enum Kind { Ring, None, Scale } kind = Ring;
+    int scalePercent = 100;  // Scale: the focused item is drawn this much larger, around its centre
+    int offsetX = 0, offsetY = 0;  // the focused item is nudged by this much
+    bool dimOthers = false;  // draw the unfocused items darker
+};
+
 struct Layout {
     std::vector<LayoutRect> items;
+    // Content scrolls along y (vertical lists) or x (horizontal strips).
+    bool horizontal = false;
+    // Distance between the view origin and the focused item; -1 keeps the built-in value.
+    int anchor = -1;
+    CardStyle card = CardStyle::Default;
+    FocusFx focus;
+    bool themed = false;  // produced by a theme script
     size_t size() const { return items.size(); }
     bool empty() const { return items.empty(); }
 };
@@ -95,14 +113,15 @@ inline bool layoutEdge(const Layout& layout, size_t from, int dx, int dy) {
 // Scroll offset that keeps item `index` `anchor` pixels below the top of the view (never negative).
 inline int layoutScrollTarget(const Layout& layout, size_t index, int anchor) {
     if (index >= layout.size()) return 0;
-    const int target = layout.items[index].y - anchor;
+    if (layout.anchor >= 0) anchor = layout.anchor;
+    const int target = (layout.horizontal ? layout.items[index].x : layout.items[index].y) - anchor;
     return target > 0 ? target : 0;
 }
 
 // First item that is at least partly below the top of a view scrolled to `scroll`.
 inline size_t layoutFirstVisible(const Layout& layout, int scroll) {
     for (size_t i = 0; i < layout.size(); ++i)
-        if (layout.items[i].bottom() > scroll) return i;
+        if ((layout.horizontal ? layout.items[i].right() : layout.items[i].bottom()) > scroll) return i;
     return layout.size();
 }
 
