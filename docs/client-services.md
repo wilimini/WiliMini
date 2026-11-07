@@ -162,7 +162,11 @@ the decode finishes. The decoder scales each JPEG to the size it is drawn at and
 stores it as a 16-byte aligned RGB565 texture (the PSP's hardware order, red in the
 low bits), written back from the data cache before the UI may use it. Slots are
 evicted least-recently-used and never while drawn in the current frame; a decode
-for a cover that scrolled away before it started is dropped. The decoder thread and
+for a cover that scrolled away before it started is dropped. Finding a ready cover
+is lock-free: the decoder stores an atomic ready state last, with release ordering,
+and only the UI thread writes a slot's key, size and texture, so a busy decoder can
+never turn a ready cover into a placeholder. The UI thread only try-locks the cover
+mutex (to queue a new decode or reset slots) and retries next frame if it is busy. The decoder thread and
 its slots are released before playback and at shutdown. The GE draws each ready
 cover as an opaque textured sprite; because other UI primitives still write VRAM
 with the CPU, the GE work is flushed lazily the next time the CPU touches the frame.
