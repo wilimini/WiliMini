@@ -58,6 +58,7 @@ uint32_t kLine = color(221, 224, 229);
 uint32_t kText = color(43, 46, 53);
 uint32_t kTextDim = color(117, 123, 134);
 uint32_t kPink = color(204, 65, 113);
+uint32_t kRing = color(43, 46, 53);  // focus ring; follows the text colour unless a theme sets it
 constexpr uint32_t kBlue = color(0, 174, 236);
 constexpr uint32_t kBlack = color(0, 0, 0);
 int bodySize = 14;
@@ -90,6 +91,27 @@ void applyPreferences(const pspapp::Preferences& settings) {
         kTextDim = settings.darkTheme ? color(150, 152, 158) : color(112, 114, 120);
         kPink = settings.darkTheme ? color(92, 150, 255) : color(0, 80, 239);
     }
+    kRing = kText;
+}
+
+// Applies the colours a theme names on top of the built-in palette (call after applyPreferences).
+pspapp::ThemeMotion themeMotion;
+void applyTheme(const pspapp::Theme& theme) {
+    const pspapp::ThemeColors& c = theme.colors();
+    auto set = [](uint32_t& target, const pspapp::ThemeColors::Slot& slot) {
+        if (slot.set) target = color(static_cast<int>(slot.rgb >> 16 & 255), static_cast<int>(slot.rgb >> 8 & 255),
+                                     static_cast<int>(slot.rgb & 255));
+    };
+    set(kBackground, c.background);
+    set(kPanel, c.panel);
+    set(kPanelRaised, c.raised);
+    set(kText, c.text);
+    set(kTextDim, c.dim);
+    set(kLine, c.line);
+    set(kPink, c.accent);
+    kRing = kText;
+    set(kRing, c.ring);
+    themeMotion = theme.motion();
 }
 
 std::string uiText(const pspapp::App& app, pspapp::TextId id,
@@ -1488,10 +1510,10 @@ void drawHub(const pspapp::App& app, int64_t now) {
         const int rx = static_cast<int>(hubFx.ring[0] - (hubL.horizontal ? pan : 0.f) + 0.5f);
         const int ry = static_cast<int>(hubFx.ring[1] - (hubL.horizontal ? 0.f : pan) + 0.5f);
         const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
-        fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
-        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);
-        fillRect(rx - 3, ry - 3, 2, rh + 6, kText);
-        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kText);
+        fillRect(rx - 3, ry - 3, rw + 6, 2, kRing);
+        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kRing);
+        fillRect(rx - 3, ry - 3, 2, rh + 6, kRing);
+        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kRing);
     }
 }
 
@@ -1586,10 +1608,10 @@ void drawHubTiles(const pspapp::App& app, int64_t now) {
         const int rx = static_cast<int>(hubFx.ring[0] - (hubL.horizontal ? pan : 0.f) + 0.5f);
         const int ry = static_cast<int>(hubFx.ring[1] - (hubL.horizontal ? 0.f : pan) + 0.5f);
         const int rw = static_cast<int>(hubFx.ring[2] + 0.5f), rh = static_cast<int>(hubFx.ring[3] + 0.5f);
-        fillRect(rx - 3, ry - 3, rw + 6, 2, kText);
-        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kText);
-        fillRect(rx - 3, ry - 3, 2, rh + 6, kText);
-        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kText);
+        fillRect(rx - 3, ry - 3, rw + 6, 2, kRing);
+        fillRect(rx - 3, ry + rh + 1, rw + 6, 2, kRing);
+        fillRect(rx - 3, ry - 3, 2, rh + 6, kRing);
+        fillRect(rx + rw + 1, ry - 3, 2, rh + 6, kRing);
     }
 }
 
@@ -1610,6 +1632,8 @@ struct PageFx {
     int64_t enterMs = 0;
     float scroll = 0.f, velocity = 0.f;
     uint64_t lastUs = 0;
+    float easeFrom = 0.f, easeTarget = 0.f;  // theme motion "ease": where the current glide started and ends
+    uint64_t easeStartUs = 0;
     bool positioned = false;  // the scroll has been placed once for this page (no slide-in from the top)
     bool glideReady = false;
     float glide[4]{};
@@ -1639,7 +1663,23 @@ int updateScroll(float target) {
     }
     const float dt = pageFx.lastUs ? std::min(0.033f, static_cast<float>(now - pageFx.lastUs) / 1000000.0f) : 0.016f;
     pageFx.lastUs = now;
-    pageFx.velocity += (190.0f * (target - pageFx.scroll) - 24.0f * pageFx.velocity) * dt;
+    if (themeMotion.kind == pspapp::ThemeMotion::Snap) {
+        pageFx.scroll = target;
+        pageFx.velocity = 0.f;
+        return static_cast<int>(target + 0.5f);
+    }
+    if (themeMotion.kind == pspapp::ThemeMotion::Ease) {
+        if (target != pageFx.easeTarget) {
+            pageFx.easeFrom = pageFx.scroll;
+            pageFx.easeTarget = target;
+            pageFx.easeStartUs = now;
+        }
+        const float t = static_cast<float>(now - pageFx.easeStartUs) / (1000.f * static_cast<float>(themeMotion.durationMs));
+        pageFx.scroll = t >= 1.f ? target : pageFx.easeFrom + (target - pageFx.easeFrom) * easeOut(t);
+        pageFx.velocity = 0.f;
+        return static_cast<int>(pageFx.scroll + 0.5f);
+    }
+    pageFx.velocity += (themeMotion.stiffness * (target - pageFx.scroll) - themeMotion.damping * pageFx.velocity) * dt;
     pageFx.scroll += pageFx.velocity * dt;
     if (std::fabs(target - pageFx.scroll) < 0.4f && std::fabs(pageFx.velocity) < 1.0f) {
         pageFx.scroll = target;
@@ -1765,10 +1805,10 @@ void drawRing(const float target[4]) {
     }
     const int x = static_cast<int>(pageFx.ring[0] + 0.5f), y = static_cast<int>(pageFx.ring[1] + 0.5f);
     const int w = static_cast<int>(pageFx.ring[2] + 0.5f), h = static_cast<int>(pageFx.ring[3] + 0.5f);
-    fillClipped(x - 3, y - 3, w + 6, 2, kText);
-    fillClipped(x - 3, y + h + 1, w + 6, 2, kText);
-    fillClipped(x - 3, y - 3, 2, h + 6, kText);
-    fillClipped(x + w + 1, y - 3, 2, h + 6, kText);
+    fillClipped(x - 3, y - 3, w + 6, 2, kRing);
+    fillClipped(x - 3, y + h + 1, w + 6, 2, kRing);
+    fillClipped(x - 3, y - 3, 2, h + 6, kRing);
+    fillClipped(x + w + 1, y - 3, 2, h + 6, kRing);
 }
 
 void drawVideoTile(int x, int y, const TileItem& item, size_t index) {
@@ -2064,6 +2104,11 @@ void drawThemedPage(const pspapp::App& app) {
     const ThemeScrollView view{kGridTop, kGridBottom};
     const int scroll = updateScroll(static_cast<float>(layoutScrollTarget(layout, selected, layout.horizontal ? 12 : 100)));
     const FocusFx& fx = layout.focus;
+    ThemeReaction reaction;
+    int reactionMs = 0;
+    const bool reacting = app.themeReaction(reaction, reactionMs);
+    // A "pulse" briefly enlarges the focus and settles; a "flash" tints it and fades.
+    const int pulsePercent = reacting && reaction.pulse ? static_cast<int>(8.f * (1.f - clamp01(reactionMs / 160.f))) : 0;
     auto place = [&](size_t i, bool focused, int& x, int& y, int& w, int& h) {
         const LayoutRect& r = layout.items[i];
         x = r.x - (layout.horizontal ? scroll : 0);
@@ -2071,7 +2116,7 @@ void drawThemedPage(const pspapp::App& app) {
         w = r.w;
         h = r.h;
         if (focused) {
-            const int sw = w * fx.scalePercent / 100, sh = h * fx.scalePercent / 100;
+            const int sw = w * (fx.scalePercent + pulsePercent) / 100, sh = h * (fx.scalePercent + pulsePercent) / 100;
             x += (w - sw) / 2 + fx.offsetX;
             y += (h - sh) / 2 + fx.offsetY;
             w = sw;
@@ -2105,9 +2150,17 @@ void drawThemedPage(const pspapp::App& app) {
         if (!(focus && i == selected)) drawOne(i, false);
     if (focus) {
         drawOne(selected, true);
+        int x, y, w, h;
+        place(selected, true, x, y, w, h);
+        if (reacting && reaction.flashRgb >= 0) {
+            const int top = std::max(y, view.top), bottom = std::min(y + h, view.bottom);
+            const int left = std::max(x, 0), right = std::min(x + w, kWidth);
+            const unsigned alpha = static_cast<unsigned>(200.f * (1.f - clamp01(reactionMs / static_cast<float>(std::max(1, reaction.flashMs)))));
+            if (bottom > top && right > left && alpha)
+                blendRect(left, top, right - left, bottom - top,
+                          color(reaction.flashRgb >> 16 & 255, reaction.flashRgb >> 8 & 255, reaction.flashRgb & 255), alpha);
+        }
         if (fx.kind == FocusFx::Ring) {
-            int x, y, w, h;
-            place(selected, true, x, y, w, h);
             const float target[4] = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), static_cast<float>(h)};
             drawRing(target);
         }
@@ -3258,6 +3311,7 @@ void ui_render(const pspapp::App& app) {
     statListBytes = 0;
 #endif
     applyPreferences(app.preferences());
+    applyTheme(app.theme());
     static unsigned coverGeneration = 0;
     if (coverGeneration != app.coverGeneration()) {
         // A reset slot has ticket 0, so a decode still in flight for it is discarded on publish.

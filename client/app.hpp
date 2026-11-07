@@ -147,6 +147,8 @@ public:
     const char *layoutScreen() const;
     void activate();
     void back();
+    // The most recent theme reaction (pulse/flash) while it is still playing.
+    bool themeReaction(ThemeReaction &out, int &elapsedMs) const;
     void search(const std::string &keyword);
     bool searchInputSelected() const;
     void removeSearchHistory();
@@ -262,6 +264,14 @@ private:
     Preferences preferences_;
     mutable Theme theme_;
     void loadTheme();
+    void moveSelectionImpl(int dx, int dy);
+    void activateImpl();
+    void backImpl();
+    void moveHubSelection(int dx, int dy);
+    size_t focusIndex() const;
+    void emitThemeEvent(const char *name, size_t index);
+    ThemeReaction reaction_;
+    uint64_t reactionAtUs_ = 0;
     Layout builtinLayout() const;
     size_t layoutCount() const;
     struct LayoutKey {

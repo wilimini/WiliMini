@@ -546,7 +546,7 @@ bool App::hasMore() const {
     return recommendHasMore_;
 }
 
-void App::moveSelection(int dx, int dy) {
+void App::moveSelectionImpl(int dx, int dy) {
     if (screen() == Screen::Browse) { browseMove(dx, dy); return; }
     if (utilityPage()) {
         if (screen() == Screen::Settings) {
@@ -656,6 +656,49 @@ void App::moveSelection(int dx, int dy) {
         loadNextPage();
 }
 
+size_t App::focusIndex() const {
+    if (tileHubVisible()) return static_cast<size_t>(hubSelection_);
+    if (hasBrowse()) return browseState().selection;
+    if (screen() == Screen::Settings) return navigation_.get<SettingsRoute>().selection;
+    return root().selection;
+}
+
+void App::moveSelection(int dx, int dy) {
+    const size_t before = focusIndex();
+    const Screen was = screen();
+    moveSelectionImpl(dx, dy);
+    if (screen() == was && focusIndex() != before) emitThemeEvent("focus", focusIndex());
+}
+
+void App::activate() {
+    if (!busy() && !playbackReady_) emitThemeEvent("open", focusIndex());
+    activateImpl();
+}
+
+void App::back() {
+    emitThemeEvent("back", focusIndex());
+    backImpl();
+}
+
+void App::emitThemeEvent(const char* name, size_t index) {
+    if (!theme_.loaded()) return;
+    ThemeReaction reaction;
+    if (!theme_.event(name, tileHubVisible() ? "hub" : screen() == Screen::Browse ? "browse" : layoutScreen(), index, reaction)) {
+        if (!theme_.error().empty()) WLOG_W(WLC_CLIENT, "theme event %s: %s", name, theme_.error().c_str());
+        return;
+    }
+    reaction_ = reaction;
+    reactionAtUs_ = sceKernelGetSystemTimeWide();
+}
+
+bool App::themeReaction(ThemeReaction& out, int& elapsedMs) const {
+    if (!reactionAtUs_) return false;
+    elapsedMs = static_cast<int>((sceKernelGetSystemTimeWide() - reactionAtUs_) / 1000);
+    if (elapsedMs >= std::max(reaction_.flashMs, 160)) return false;
+    out = reaction_;
+    return true;
+}
+
 const Layout& App::hubLayout() const {
     if (hubGeneration_ == theme_.generation() && hubStyle_ == static_cast<int>(preferences_.homeStyle)) return hubCache_;
     hubGeneration_ = theme_.generation();
@@ -745,7 +788,7 @@ Layout App::builtinLayout() const {
     return preferences_.metro() ? listLayout(count) : gridLayout(count, 2);
 }
 
-void App::activate() {
+void App::activateImpl() {
     if (busy() || playbackReady_) return;
     if (screen() == Screen::Browse) { browseActivate(); return; }
     if (navigation_.current().focus == FocusArea::Navigation) {
@@ -851,7 +894,7 @@ void App::cancelRequest() {
     }
 }
 
-void App::back() {
+void App::backImpl() {
     if (busy()) {
         // Cancel on the worker first; release this route only after joinJob().
         pendingBack_ = true;
@@ -935,12 +978,19 @@ void App::openHub() {
 }
 
 void App::tileMove(int dx, int dy) {
+    const int before = hubSelection_;
+    moveHubSelection(dx, dy);
+    if (hubSelection_ != before) emitThemeEvent("focus", static_cast<size_t>(hubSelection_));
+}
+
+void App::moveHubSelection(int dx, int dy) {
     hubSelection_ = static_cast<int>(layoutNeighbor(hubLayout(), static_cast<size_t>(hubSelection_), dx, dy, true));
 }
 
 void App::tileActivate() {
     if (busy() || playbackReady_ || !tileHubVisible() || tileLaunching() ||
         hubSelection_ < 0 || hubSelection_ >= kTileCount) return;
+    emitThemeEvent("open", static_cast<size_t>(hubSelection_));
     hubLaunchAt_ = sceKernelGetSystemTimeWide();
 }
 

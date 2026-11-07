@@ -29,7 +29,7 @@ struct LayoutRequest {
 struct ThemeColors {
     // Each colour is 0xRRGGBB when set. A theme only overrides what it names.
     struct Slot { bool set = false; uint32_t rgb = 0; };
-    Slot background, panel, text, dim, line, accent, ring;
+    Slot background, panel, raised, text, dim, line, accent, ring;
 };
 
 // How the scrolling content follows the focus.

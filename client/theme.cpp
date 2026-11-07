@@ -186,7 +186,7 @@ struct Theme::Impl {
         lua_getfield(L, -1, "colors");
         if (lua_istable(L, -1)) {
             struct { const char* key; ThemeColors::Slot* slot; } map[] = {
-                {"background", &colors.background}, {"panel", &colors.panel}, {"text", &colors.text}, {"dim", &colors.dim},
+                {"background", &colors.background}, {"panel", &colors.panel}, {"raised", &colors.raised}, {"text", &colors.text}, {"dim", &colors.dim},
                 {"line", &colors.line}, {"accent", &colors.accent}, {"ring", &colors.ring}};
             for (auto& entry : map) {
                 lua_getfield(L, -1, entry.key);
