@@ -1,5 +1,6 @@
 #include "wili_update_swap.h"
 #include "wili_update_swap_priv.h"
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -12,25 +13,25 @@ typedef struct {
     const char *root;
     char names[MAX_ENTRIES][MAX_REL + 1];
     int count;
+    char manifest[MANIFEST_CAP + 1];
+    char log[3072];
+    size_t log_len;
+    int log_loaded;
 } swap_ctx;
 
-static char manifest_buf[MANIFEST_CAP + 1];
 
 /* <root>/update.log: what the loader did, rewritten after every line so the
  * last line survives a crash. Best effort; never affects the swap. */
-static char log_buf[3072];
-static size_t log_len;
-static int log_loaded;
-static void log_load(const swap_ctx *c) {
+static void log_load(swap_ctx *c) {
     char p[MAX_PATH];
     int n;
-    if (log_loaded) return;
-    log_loaded = 1;
+    if (c->log_loaded) return;
+    c->log_loaded = 1;
     snprintf(p, sizeof p, "%s/update.log", c->root);
-    n = c->fs->exists(c->fs->ctx, p) ? c->fs->read(c->fs->ctx, p, log_buf, sizeof log_buf - 1) : 0;
-    log_len = n > 0 ? (size_t)n : 0;
+    n = c->fs->exists(c->fs->ctx, p) ? c->fs->read(c->fs->ctx, p, c->log, sizeof c->log - 1) : 0;
+    c->log_len = n > 0 ? (size_t)n : 0;
 }
-static void slog(const swap_ctx *c, const char *fmt, ...) {
+static void slog(swap_ctx *c, const char *fmt, ...) {
     char line[160], p[MAX_PATH];
     va_list ap;
     int n;
@@ -40,56 +41,56 @@ static void slog(const swap_ctx *c, const char *fmt, ...) {
     if (n <= 0) return;
     if ((size_t)n > sizeof line - 2) n = (int)sizeof line - 2;
     log_load(c);
-    if (log_len + (size_t)n + 1 >= sizeof log_buf) { /* drop the oldest half, at a line start */
-        size_t cut = log_len / 2;
-        while (cut < log_len && log_buf[cut - 1] != '\n') ++cut;
-        memmove(log_buf, log_buf + cut, log_len - cut);
-        log_len -= cut;
+    if (c->log_len + (size_t)n + 1 >= sizeof c->log) { /* drop the oldest half, at a line start */
+        size_t cut = c->log_len / 2;
+        while (cut < c->log_len && c->log[cut - 1] != '\n') ++cut;
+        memmove(c->log, c->log + cut, c->log_len - cut);
+        c->log_len -= cut;
     }
-    memcpy(log_buf + log_len, line, (size_t)n);
-    log_len += (size_t)n;
-    log_buf[log_len++] = '\n';
+    memcpy(c->log + c->log_len, line, (size_t)n);
+    c->log_len += (size_t)n;
+    c->log[c->log_len++] = '\n';
     snprintf(p, sizeof p, "%s/update.log", c->root);
-    c->fs->write(c->fs->ctx, p, log_buf, log_len);
+    c->fs->write(c->fs->ctx, p, c->log, c->log_len);
 }
 /* <root>/update.notice: first line "applied" or "failed", then the last log lines.
  * The client shows it once after start-up and deletes it when the user dismisses it. */
-static void write_notice(const swap_ctx *c, const char *kind) {
+static void write_notice(swap_ctx *c, const char *kind) {
     char out[400], p[MAX_PATH];
-    size_t start = log_len, lines = 0, n;
+    size_t start = c->log_len, lines = 0, n;
     log_load(c);
-    start = log_len;
+    start = c->log_len;
     while (start > 0 && lines < 4) { /* up to the last 4 lines */
         --start;
-        if (start > 0 && log_buf[start - 1] == '\n') ++lines;
+        if (start > 0 && c->log[start - 1] == '\n') ++lines;
         else if (start == 0) ++lines;
     }
-    if (log_len - start > 300) start = log_len - 300;
+    if (c->log_len - start > 300) start = c->log_len - 300;
     n = (size_t)snprintf(out, sizeof out, "%s\n", kind);
-    memcpy(out + n, log_buf + start, log_len - start);
-    n += log_len - start;
+    memcpy(out + n, c->log + start, c->log_len - start);
+    n += c->log_len - start;
     snprintf(p, sizeof p, "%s/update.notice", c->root);
     c->fs->write(c->fs->ctx, p, out, n);
 }
 
 
-static void path(const swap_ctx *c, char *out, const char *a, const char *b, const char *suffix) {
+static void path(swap_ctx *c, char *out, const char *a, const char *b, const char *suffix) {
     snprintf(out, MAX_PATH, "%s/%s%s%s", c->root, a, b ? b : "", suffix ? suffix : "");
 }
-static void live(const swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, NULL); }
-static void bak(const swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, ".bak"); }
-static void pend(const swap_ctx *c, char *o, const char *rel) { path(c, o, "pending/", rel, NULL); }
+static void live(swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, NULL); }
+static void bak(swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, ".bak"); }
+static void pend(swap_ctx *c, char *o, const char *rel) { path(c, o, "pending/", rel, NULL); }
 
 static int load_manifest(swap_ctx *c) {
     char p[MAX_PATH];
     int n, i, eboot = -1;
     char *line, *end;
     snprintf(p, sizeof p, "%s/pending/MANIFEST", c->root);
-    n = c->fs->read(c->fs->ctx, p, manifest_buf, MANIFEST_CAP);
+    n = c->fs->read(c->fs->ctx, p, c->manifest, MANIFEST_CAP);
     if (n <= 0) return -1;
-    manifest_buf[n] = 0;
+    c->manifest[n] = 0;
     c->count = 0;
-    for (line = manifest_buf; *line;) {
+    for (line = c->manifest; *line;) {
         end = strchr(line, '\n');
         if (end) *end = 0;
         n = (int)strlen(line);
@@ -119,7 +120,7 @@ static int load_manifest(swap_ctx *c) {
 
 
 /* ---- phases ---- */
-static int do_backup(const swap_ctx *c) {
+static int do_backup(swap_ctx *c) {
     int i;
     char l[MAX_PATH], b[MAX_PATH];
     for (i = 0; i < c->count; ++i) {
@@ -129,7 +130,7 @@ static int do_backup(const swap_ctx *c) {
     }
     return 0;
 }
-static int do_install(const swap_ctx *c) {
+static int do_install(swap_ctx *c) {
     int i;
     char l[MAX_PATH], p[MAX_PATH];
     for (i = 0; i < c->count; ++i) {
@@ -154,7 +155,7 @@ static int do_install(const swap_ctx *c) {
 /* Pass 1 (full rollback only): remove files that did not exist before. After a
  * complete backup phase "no .bak" means exactly that. This must finish before
  * pass 2 starts restoring, or a restored file would look like a new one. */
-static void rollback_remove_new(const swap_ctx *c) {
+static void rollback_remove_new(swap_ctx *c) {
     int i;
     char l[MAX_PATH], b[MAX_PATH];
     for (i = 0; i < c->count; ++i) {
@@ -163,7 +164,7 @@ static void rollback_remove_new(const swap_ctx *c) {
     }
 }
 /* Pass 2: put the old files back and drop leftover staged files. */
-static void rollback_restore(const swap_ctx *c) {
+static void rollback_restore(swap_ctx *c) {
     int i;
     char l[MAX_PATH], b[MAX_PATH], p[MAX_PATH];
     for (i = 0; i < c->count; ++i) {
@@ -196,14 +197,16 @@ static wili_swap_status fail_rollback(swap_ctx *c, phase_t from) {
 }
 
 wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
-    static swap_ctx ctx; /* loader is single-threaded; keeps the 128 KB heap free */
-    swap_ctx *c = &ctx;
+    /* About 45 KB, taken from the loader's own heap and freed before the client starts:
+     * as static data it would stay allocated for the whole session. */
+    swap_ctx *c = (swap_ctx *)malloc(sizeof *c);
     wili_swap_status r = WILI_SWAP_ERROR;
     state_t s;
     int i;
     char b[MAX_PATH], m[MAX_PATH];
-    c->fs = fs; c->root = root; c->count = 0;
-    log_loaded = 0; log_len = 0;
+    if (!c) return WILI_SWAP_ERROR;
+    c->fs = fs; c->root = root; c->count = 0; c->log_len = 0; c->log_loaded = 0;
+    c->log_loaded = 0; c->log_len = 0;
     s = swap_read_state(c->fs, c->root);
     snprintf(m, sizeof m, "%s/pending/MANIFEST", root);
     if (s.phase != S_NONE || fs->exists(fs->ctx, m)) slog(c, "swap: state=%d trial=%d manifest=%d", (int)s.phase, s.trial, fs->exists(fs->ctx, m));
@@ -251,5 +254,6 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
         r = WILI_SWAP_APPLIED;
     }
 out:
+    free(c);
     return r;
 }

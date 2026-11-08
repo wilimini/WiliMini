@@ -29,7 +29,8 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out
 "$out/playback-controls-test"
 sh tools/test-update-package.sh
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
-    tests/update_swap_test.c platform/src/wili_update_swap.c platform/src/wili_update_swap_run.c -o "$out/update-swap-test"
+    tests/update_swap_test.c platform/src/wili_update_swap.c platform/src/wili_update_swap_run.c -o # The crash test longjmps out of the swap to model a power loss, which skips free().
+ASAN_OPTIONS=detect_leaks=0 "$out/update-swap-test"
 "$out/update-swap-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
     tests/update_swap_posix_test.c platform/src/wili_update_swap.c platform/src/wili_update_swap_run.c -o "$out/update-swap-posix-test"
