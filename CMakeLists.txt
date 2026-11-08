@@ -47,7 +47,15 @@ set(PSP_FFMPEG_PREFIX "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio-install" CACHE PAT
     "PSP FFmpeg installation prefix")
 set(PSP_CURL_PREFIX "${CMAKE_SOURCE_DIR}/build/curl-install" CACHE PATH
     "PSP libcurl installation prefix")
-set(BILI_CA_BUNDLE "/etc/ssl/cert.pem" CACHE FILEPATH "CA bundle installed with the client")
+find_file(BILI_CA_BUNDLE_DEFAULT
+    NAMES cert.pem certs/ca-certificates.crt ca-bundle.crt ca-certificates.crt
+          pki/tls/certs/ca-bundle.crt
+    PATHS /etc/ssl /etc /etc/pki/tls/certs
+    NO_DEFAULT_PATH)
+if(NOT BILI_CA_BUNDLE_DEFAULT)
+    set(BILI_CA_BUNDLE_DEFAULT "/etc/ssl/cert.pem")
+endif()
+set(BILI_CA_BUNDLE "${BILI_CA_BUNDLE_DEFAULT}" CACHE FILEPATH "CA bundle installed with the client")
 set(BILI_DIST_DIR "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "Packaging root")
 option(BILI_BUILD_CLIENT "Configure the PSP client and packaging targets" ON)
 set(BILI_FONT_FILE "" CACHE FILEPATH "Font source used by the generate-font target")

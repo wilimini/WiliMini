@@ -8,10 +8,12 @@ PSP_CMAKE ?= $(PSPDEV)/bin/psp-cmake
 BUILD_TOOL ?= cmake
 PPSSPP_PACKAGE_DIR ?= dist/PSP/GAME/WiliMini
 PPSSPP_GAME_DIR ?= $(HOME)/.config/ppsspp/PSP/GAME
+PSPLINK_PORT ?= 11000
+PSPLINK_DEST ?= ms0:/PSP/GAME/WiliMini
 
 COMMON_CONFIG := -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
-.PHONY: all configure build package ppsspp-install dependencies curl ffmpeg me assets clean
+.PHONY: all configure build package ppsspp-install psplink-install dependencies curl ffmpeg me assets clean
 
 all: package
 
@@ -29,6 +31,10 @@ ppsspp-install:
 	mkdir -p "$(PPSSPP_GAME_DIR)/WiliMini"
 	cp -R "$(PPSSPP_PACKAGE_DIR)/." "$(PPSSPP_GAME_DIR)/WiliMini/"
 	@echo "Installed WiliMini to $(PPSSPP_GAME_DIR)/WiliMini"
+
+# Needs usbhostfs_pc already running from the repository root; only runs pspsh.
+psplink-install:
+	PATH="$(PSPDEV)/bin:$$PATH" sh scripts/psplink-install.sh "$(PPSSPP_PACKAGE_DIR)" "$(PSPLINK_DEST)" "$(PSPLINK_PORT)"
 
 dependencies:
 	PSPDEV="$(PSPDEV)" PATH="$(PSPDEV)/bin:$$PATH" $(PSP_CMAKE) -S . -B build/dependencies \
