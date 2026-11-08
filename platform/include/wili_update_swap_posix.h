@@ -36,7 +36,7 @@ static int wili_swap_px_write(void *ctx, const char *p, const char *d, size_t n)
     return (fclose(f) == 0 && ok) ? 0 : -1;
 }
 static int wili_swap_px_copy(void *ctx, const char *from, const char *to) {
-    static char buf[16384];
+    char buf[16384]; /* on the stack: a static one would cost the client 16 KB of RAM for good */
     (void)ctx;
     FILE *in = fopen(from, "rb");
     if (!in) return -1;
