@@ -36,3 +36,15 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithir
     client/services/update_package.cpp client/services/update_core.cpp "$out/wili_update_swap.o" -lz -lpthread \
     -o "$out/update-controller-test"
 "$out/update-controller-test" "$out/update-fixture.zip.pkg"
+# Multi-connection download for several connection counts, with ASan/UBSan and with TSan.
+for n in 1 2 3 5 8; do
+    for san in address,undefined thread; do
+        ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=$san -Iplatform/include \
+            -c platform/src/wili_update_swap.c -o "$out/wili_update_swap_par.o"
+        ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=$san -DBILI_UPDATE_CONNECTIONS=$n \
+            -Ithird_party/nlohmann -Iplatform/include tests/update_parallel_test.cpp client/services/update_install.cpp \
+            client/services/update_package.cpp client/services/update_core.cpp "$out/wili_update_swap_par.o" -lz -lpthread \
+            -o "$out/update-parallel-test"
+        "$out/update-parallel-test"
+    done
+done

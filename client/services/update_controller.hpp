@@ -20,6 +20,9 @@ struct UpdatePolicy {
     std::function<bool(std::string& reason)> preflight;
     // Free bytes on the storage holding the package, 0 if unknown (not enforced).
     std::function<uint64_t()> freeSpace;
+    // Runs the given tasks at the same time (the first may run on the calling thread) and
+    // returns when all have finished. Empty = one connection only.
+    std::function<void(std::vector<std::function<void()>>&)> runParallel;
 };
 
 class UpdateController {
