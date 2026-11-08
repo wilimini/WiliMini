@@ -39,6 +39,9 @@ jobs:
     permissions:
       contents: read
       packages: read # pull the private playback image from GHCR
+    defaults:
+      run:
+        shell: bash
     container:
       image: ${{ needs.image.outputs.playback_image }}
       credentials:
@@ -73,17 +76,19 @@ jobs:
       - name: Native ME playback (PSP-1000 profile)
         run: python3 tools/ppsspp/test-psp-playback.py
 
+      # In a container job ${{ github.workspace }} is the host path; use $GITHUB_WORKSPACE.
       - name: Native ME playback (Slim profile)
         env:
           BILI_HEADLESS_MODEL: "3000"
-          BILI_PLAYBACK_RESULTS: ${{ github.workspace }}/results/playback-slim
-        run: python3 tools/ppsspp/test-psp-playback.py
+        run: |
+          export BILI_PLAYBACK_RESULTS="$GITHUB_WORKSPACE/results/playback-slim"
+          python3 tools/ppsspp/test-psp-playback.py
 
       - name: Playback controls
-        env:
-          BILI_HEADLESS_CLIENT_DIR: ${{ github.workspace }}/build/playback-test
-          BILI_HEADLESS_PACKAGE: ${{ github.workspace }}/build/playback-test-dist/PSP/GAME/WiliMini
-        run: python3 tools/ppsspp/test-playback-controls.py
+        run: |
+          export BILI_HEADLESS_CLIENT_DIR="$GITHUB_WORKSPACE/build/playback-test"
+          export BILI_HEADLESS_PACKAGE="$GITHUB_WORKSPACE/build/playback-test-dist/PSP/GAME/WiliMini"
+          python3 tools/ppsspp/test-playback-controls.py
 
       - name: Build production package
         run: |

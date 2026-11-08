@@ -25,6 +25,10 @@ jobs:
     permissions:
       contents: read
       packages: read # pull the CI image from GHCR
+    # Container jobs default to sh; the archive step uses bash syntax.
+    defaults:
+      run:
+        shell: bash
     container:
       image: ${{ needs.image.outputs.ci_image }}
       credentials:
