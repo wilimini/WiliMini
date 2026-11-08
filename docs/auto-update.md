@@ -57,6 +57,28 @@ with nothing to verify against. The same payload shape is used by GitHub and
 Codeberg (Forgejo), so the client can later fall back to
 `https://codeberg.org/api/v1/repos/<owner>/<repo>/releases/latest`.
 
+## Multi-connection download
+
+The release zip is split into `BILI_UPDATE_CONNECTIONS` equal segments (CMake cache
+variable, 1-8, default 4; 1 is the old single-connection path) fetched at the same time
+with `Range` requests, one connection per segment. Segments are never smaller than 256 KiB,
+so small files use fewer connections.
+
+- `update.part` is segment 0 and is always a valid prefix of the zip. Segment `i` is
+  `update.part.<n>.<i>` (`n` = effective connection count). When all are complete they are
+  appended to `update.part` in order, then the usual SHA-256 check and rename run.
+- Each file's length is its own resume offset. A prefix longer than segment 0 (single-connection
+  resume, interrupted merge) is continued alone; segment files left by a build with another
+  connection count are deleted.
+- A server that answers a ranged request without a valid 206 makes the download fall back to a
+  single connection. Cancel stops every connection and keeps the data.
+- Each connection runs on its own thread (`wili_update_dl`, 224 KB stack) with its own libcurl
+  handle and TLS context, so memory use and the number of TLS handshakes grow with the count.
+  mbedTLS parses the CA bundle for every new connection. Check free memory before raising the default,
+  especially on PSP-1000 (smaller heap profile), which has not been tested.
+- Host check: `sh tools/test-update-package.sh` builds `tests/update_parallel_test.cpp` for 1, 2, 3, 5 and 8
+  connections under ASan/UBSan and ThreadSanitizer.
+
 ## Codeberg mirror
 
 `.github/workflows/mirror-codeberg.yml` pushes `main` and `v*` tags to Codeberg
