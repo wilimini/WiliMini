@@ -36,6 +36,9 @@ jobs:
     needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read # pull the private playback image from GHCR
     container:
       image: ${{ needs.image.outputs.playback_image }}
       credentials:

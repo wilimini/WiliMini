@@ -22,6 +22,9 @@ jobs:
   build:
     needs: image
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read # pull the CI image from GHCR
     container:
       image: ${{ needs.image.outputs.ci_image }}
       credentials:
