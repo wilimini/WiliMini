@@ -47,6 +47,9 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+      # Docker's default /dev/shm is 64 MB. PPSSPP backs the emulated 64 MB (Slim) PSP with
+      # shared memory; with the default the headless run died with SIGBUS (exit 135).
+      options: --shm-size=1g
     steps:
       - uses: actions/checkout@v4
         with:
