@@ -183,7 +183,7 @@
   "update_ready": "Update ready. Press {confirm} to exit, then start WiliMini again to finish installing.",
   "update_failed": "Update failed: {reason}",
   "update_retry": "Press {confirm} to try again, or ←→ to switch source.",
-  "update_channel": "Release source: ‹ {name} ›  (←→ change)",
+  "update_channel": "‹ {name} ›",
   "notice_applied_title": "Update installed",
   "notice_applied_text": "WiliMini was updated to {version}.",
   "notice_failed_title": "Update failed",

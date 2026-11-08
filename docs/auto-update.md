@@ -28,7 +28,8 @@ transport test) or `sh tools/test-update-package.sh` for the updater alone.
 ## How an update works
 
 1. Check: `GET /releases/latest` on the release source chosen on the update page
-   (GitHub or Codeberg, ←→ to switch, saved in `settings.json` as `update_channel`).
+   (Codeberg by default; GitHub or Codeberg can be selected with ←→ and is saved
+   in `settings.json` as `update_channel`). Existing saved selections are preserved.
    There is no automatic fallback: if a source is unreachable the page says so and
    the user can switch. Prereleases, drafts and downgrades are ignored.
 2. Download `WiliMini-<tag>.zip` to `.part` with Range resume; verify SHA-256

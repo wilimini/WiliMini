@@ -183,7 +183,7 @@
   "update_ready": "更新已就绪。按 {confirm} 退出，然后重新启动 WiliMini 完成安装。",
   "update_failed": "更新失败：{reason}",
   "update_retry": "按 {confirm} 重试，或按 ←→ 切换来源。",
-  "update_channel": "更新来源：‹ {name} ›（←→ 切换）",
+  "update_channel": "‹ {name} ›",
   "notice_applied_title": "更新完成",
   "notice_applied_text": "WiliMini 已更新到 {version}。",
   "notice_failed_title": "更新失败",
