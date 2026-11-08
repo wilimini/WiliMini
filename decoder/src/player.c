@@ -107,9 +107,18 @@ const char *psp_video_stage_name(PspVideoStage stage) {
 static int poll_controller;
 static int video_cancel_thread(SceSize size, void *arg) {
     (void)size; (void)arg;
+    uint64_t last_tick = 0;
     while (poll_controller && !quit_requested) {
         SceCtrlData pad = {0};
         sceCtrlPeekBufferPositive(&pad, 1);
+        /* Playback has no button input for long stretches; reset the idle
+         * timers so the backlight and auto-suspend do not kick in. Paused
+         * playback is left to sleep normally. */
+        uint64_t now = sceKernelGetSystemTimeWide();
+        if (!controls.paused && now - last_tick >= 5000000) {
+            scePowerTick(PSP_POWER_TICK_ALL);
+            last_tick = now;
+        }
         if (controls_lock >= 0) {
             unsigned keys = 0;
             if (pad.Buttons & cancel_button) keys |= PC_BACK;
