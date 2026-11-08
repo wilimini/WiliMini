@@ -69,11 +69,14 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 - **内容浏览**：推荐、热门、搜索、动态、用户空间、番剧、影视和收藏
 - **视频播放**：支持 360p H.264/AAC，支持 DASH 和 MP4
 - **播放体验**：全屏控制栏、画质选择、弹幕、可用字幕轨道、观看历史与播放进度
+- **硬件加速渲染**：界面全面由 PSP 图形硬件引擎（GE）批处理绘制，动效流畅不卡顿
+- **在线自动更新**：支持在 PSP 检查更新并一键自动升级，支持 GitHub 与 Codeberg 双来源、断点续传与失败回滚
+- **内置拼音输入法**：内置轻量全拼输入法，非中文系统固件无需切换系统语言即可便捷进行搜索和发表评论
 - **PSP 优化**：使用 VFPU、DMA 和 Media Engine 优化性能
 - **模拟器支持**：可以在启用 Media Engine 的 PPSSPP 中运行和验证
-- **主题切换**：支持深色和浅色主题
+- **主题切换**：支持深色与浅色主题，支持经典、磁贴与 Metro 多种主页风格
 - **语言选项**：设置页和按键提示支持简体中文与 English
-- **全型号支持**：支持PSP-1000, PSP-2000, PSP-3000, PSP Go
+- **全型号支持**：支持 PSP-1000, PSP-2000, PSP-3000, PSP Go
 
 ## 性能优化架构
 
@@ -139,6 +142,15 @@ PSP Go 也可以使用：
 ef0:/PSP/GAME/WiliMini/EBOOT.PBP
 ```
 
+### 在线自动更新（OTA）
+
+完成首次安装后，后续版本升级无需再次拔插记忆棒或连接电脑拷贝：
+
+1. 在客户端进入 **设置** → **检查更新**。
+2. 客户端将自动获取最新版本信息。可根据网络状况在 **Codeberg**（推荐国内直连）与 **GitHub** 之间自由选择更新源。
+3. 确认后自动进行断点续传下载并校验 SHA-256。
+4. 下载完成后提示退出客户端，下次启动时加载器会自动替换安装。
+
 ### 从源码构建
 
 构建完成后，将整个 `dist/PSP/GAME/WiliMini/` 目录复制到目标设备的
@@ -157,10 +169,11 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 - [播放控制与弹幕](docs/playback-controls.md)：快捷键、画质菜单、跳转和叠加绘制
 - [客户端服务说明](docs/client-services.md)：网络服务和客户端模块
 - [界面渲染](docs/ui-rendering.md)：全部由 GE 绘制的精灵批处理、字形图集和页面转场
+- [内置拼音输入法](docs/pinyin-ime.md)：独立全拼输入引擎、词库与 UI 交互
+- [自动更新与镜像机制](docs/auto-update.md)：OTA 流程、掉电安全原子替换与 Codeberg 同步
+- [Custom Core 执行后端](docs/custom-core-backend.md)：适用于全机型（含 PSP-1000）的轻量 ME 执行路径
 - [界面文案目录](docs/localization.md)：静态语言表和生成方式
 - [PPSSPP 播放后端](docs/ppsspp-player.md)：模拟器构建、固件和播放测试
-- [Media Engine 兼容性分析](docs/me-compatibility.md)：ME bridge 与固件差异
-- [内存配置说明](docs/memory-profiles.md)：PSP-1000 与扩展内存配置
 - [调试指南](docs/debug.md)：PSPLink、USBHostFS 和真机实验流程
 - [PSP SELECT 网络问题分析](docs/PSP-SELECT-NETWORK-BUG.md)
 - [PSP 解码优化记录](docs/psp-decode-optimization-journey.md)
@@ -183,6 +196,9 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 | 直播播放 | 暂不支持 |
 | 续播和退出恢复 | 部分完成 |
 | Media Engine 加速 | 实验性 |
+| GE 硬件加速 UI 渲染 | 已接入 |
+| 内置拼音输入法 | 已接入 |
+| 在线自动更新（OTA） | 已接入 |
 
 当前主要针对 360p H.264/AAC 内容进行验证。复杂画面可能出现跳帧或停顿。
 
