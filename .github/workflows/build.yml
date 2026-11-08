@@ -46,6 +46,11 @@ jobs:
             exit 1
           fi
 
+      # Packaging reads build/curl-source directly (license + manifest hash), so link the
+      # image's patched libcurl source into the workspace.
+      - name: Link prebuilt libcurl source
+        run: mkdir -p build && ln -sfn "$BILI_CURL_SOURCE_DIR" build/curl-source
+
       # Not `make package`: that target also rebuilds FFmpeg and libcurl, which the image
       # already provides through PSP_FFMPEG_PREFIX / PSP_CURL_PREFIX.
       - name: Build PSP package
@@ -54,6 +59,8 @@ jobs:
           psp-gcc --version
           psp-cmake -S . -B build/client -DCMAKE_BUILD_TYPE=Release \
             -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
             -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
           cmake --build build/client --target package --parallel "$(nproc)"
 

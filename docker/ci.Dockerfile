@@ -49,7 +49,11 @@ COPY cmake/ cmake/
 COPY patches/ patches/
 RUN make dependencies PSPDEV="$PSPDEV" PARALLEL="$(nproc)" \
  && mkdir -p /opt/wilimini-deps \
- && cp -a build/curl-install build/ffmpeg-audio-install /opt/wilimini-deps/
+ && cp -a build/curl-install build/ffmpeg-audio-install build/ffmpeg-source build/ffmpeg-audio build/curl-source /opt/wilimini-deps/
+# ffmpeg-source (about 100 MB) and ffmpeg-audio (its build dir, with the generated
+# config.h) are kept: the client compiles against FFmpeg's internal headers
+# (libavcodec/psp_profile.h comes from our patch) and packages its license. curl-source
+# (30 MB) supplies libcurl's license and the patched select.c hashed into the build manifest.
 
 # ---- PPSSPP headless (built in parallel with the stages above) ----
 FROM toolchain AS ppsspp
@@ -77,7 +81,10 @@ RUN python3 /src/tools/ppsspp/prepare-me-firmware.py --output /opt/me-firmware/f
 FROM toolchain AS ci
 COPY --from=deps /opt/wilimini-deps /opt/wilimini-deps
 ENV PSP_FFMPEG_PREFIX=/opt/wilimini-deps/ffmpeg-audio-install \
-    PSP_CURL_PREFIX=/opt/wilimini-deps/curl-install
+    PSP_CURL_PREFIX=/opt/wilimini-deps/curl-install \
+    BILI_FFMPEG_SOURCE_DIR=/opt/wilimini-deps/ffmpeg-source \
+    BILI_FFMPEG_BUILD_DIR=/opt/wilimini-deps/ffmpeg-audio \
+    BILI_CURL_SOURCE_DIR=/opt/wilimini-deps/curl-source
 WORKDIR /work
 
 FROM ci AS ci-playback

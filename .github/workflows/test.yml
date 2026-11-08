@@ -50,6 +50,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # Packaging reads build/curl-source directly (license + manifest hash), so link the
+      # image's patched libcurl source into the workspace.
+      - name: Link prebuilt libcurl source
+        run: mkdir -p build && ln -sfn "$BILI_CURL_SOURCE_DIR" build/curl-source
+
       # PPSSPP headless and the ME firmware come from the image (PPSSPP_HEADLESS,
       # BILI_HEADLESS_FIRMWARE_DIR). Packages are built with cmake directly because
       # `make package` would also rebuild FFmpeg and libcurl, which the image provides
@@ -58,6 +63,8 @@ jobs:
         run: |
           psp-cmake -S . -B build/playback-test -DCMAKE_BUILD_TYPE=Release \
             -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
             -DBILI_DEVICE_PLAYBACK_TEST=ON \
             -DBILI_DIST_DIR="$GITHUB_WORKSPACE/build/playback-test-dist" \
             -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
@@ -82,6 +89,8 @@ jobs:
         run: |
           psp-cmake -S . -B build/client -DCMAKE_BUILD_TYPE=Release \
             -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
             -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
           cmake --build build/client --target package --parallel "$(nproc)"
 
