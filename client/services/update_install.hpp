@@ -12,7 +12,7 @@
 // Parallel Range connections used for the release zip (1 = single connection).
 // Set with -DBILI_UPDATE_CONNECTIONS=N in CMake; host tests override it with -D.
 #ifndef BILI_UPDATE_CONNECTIONS
-#define BILI_UPDATE_CONNECTIONS 4
+#define BILI_UPDATE_CONNECTIONS 2
 #endif
 #define BILI_UPDATE_MAX_CONNECTIONS 8
 static_assert(BILI_UPDATE_CONNECTIONS >= 1 && BILI_UPDATE_CONNECTIONS <= BILI_UPDATE_MAX_CONNECTIONS,

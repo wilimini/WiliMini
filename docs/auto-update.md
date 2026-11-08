@@ -60,7 +60,7 @@ Codeberg (Forgejo), so the client can later fall back to
 ## Multi-connection download
 
 The release zip is split into `BILI_UPDATE_CONNECTIONS` equal segments (CMake cache
-variable, 1-8, default 4; 1 is the old single-connection path) fetched at the same time
+variable, 1-8, default 2; 1 is the old single-connection path) fetched at the same time
 with `Range` requests, one connection per segment. Segments are never smaller than 256 KiB,
 so small files use fewer connections.
 

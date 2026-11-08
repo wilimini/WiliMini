@@ -300,7 +300,7 @@ set(CLIENT_INCLUDE_DIRS
     "${PSP_CURL_PREFIX}/include")
 target_include_directories(wili_client_objects PRIVATE ${CLIENT_INCLUDE_DIRS})
 target_compile_definitions(wili_client_objects PRIVATE _POSIX_C_SOURCE=200809L)
-set(BILI_UPDATE_CONNECTIONS 4 CACHE STRING "Parallel HTTPS connections used to download an update (1-8; 1 = single connection)")
+set(BILI_UPDATE_CONNECTIONS 2 CACHE STRING "Parallel HTTPS connections used to download an update (1-8; 1 = single connection)")
 if(NOT BILI_UPDATE_CONNECTIONS MATCHES "^[1-8]$")
     message(FATAL_ERROR "BILI_UPDATE_CONNECTIONS must be an integer from 1 to 8")
 endif()
