@@ -1,10 +1,84 @@
 #include "wili_update_swap.h"
-#include "wili_update_swap_priv.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 
-/* Parts shared by the loader (wili_update_swap_run.c) and the client, which only needs
- * wili_swap_path_ok() and wili_swap_commit(): no big buffers live here. */
+#define MAX_ENTRIES 256
+#define MAX_REL 100
+#define MAX_PATH 224
+#define MANIFEST_CAP 16384
+
+/* The working buffers (about 45 KB). Only wili_swap_run() needs them, so it takes
+ * them from the loader's heap and frees them before the client starts: as static
+ * data they would stay allocated for the whole session. */
+typedef struct {
+    char names[MAX_ENTRIES][MAX_REL + 1];
+    char manifest[MANIFEST_CAP + 1];
+    char log[3072];
+    size_t log_len;
+    int log_loaded;
+} swap_bufs;
+
+typedef struct {
+    const wili_swap_fs *fs;
+    const char *root;
+    swap_bufs *b; /* NULL in wili_swap_commit(), which needs no buffers */
+    int count;
+} swap_ctx;
+
+/* <root>/update.log: what the loader did, rewritten after every line so the
+ * last line survives a crash. Best effort; never affects the swap. */
+static void log_load(const swap_ctx *c) {
+    char p[MAX_PATH];
+    int n;
+    if (c->b->log_loaded) return;
+    c->b->log_loaded = 1;
+    snprintf(p, sizeof p, "%s/update.log", c->root);
+    n = c->fs->exists(c->fs->ctx, p) ? c->fs->read(c->fs->ctx, p, c->b->log, sizeof c->b->log - 1) : 0;
+    c->b->log_len = n > 0 ? (size_t)n : 0;
+}
+static void slog(const swap_ctx *c, const char *fmt, ...) {
+    char line[160], p[MAX_PATH];
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n <= 0) return;
+    if ((size_t)n > sizeof line - 2) n = (int)sizeof line - 2;
+    log_load(c);
+    if (c->b->log_len + (size_t)n + 1 >= sizeof c->b->log) { /* drop the oldest half, at a line start */
+        size_t cut = c->b->log_len / 2;
+        while (cut < c->b->log_len && c->b->log[cut - 1] != '\n') ++cut;
+        memmove(c->b->log, c->b->log + cut, c->b->log_len - cut);
+        c->b->log_len -= cut;
+    }
+    memcpy(c->b->log + c->b->log_len, line, (size_t)n);
+    c->b->log_len += (size_t)n;
+    c->b->log[c->b->log_len++] = '\n';
+    snprintf(p, sizeof p, "%s/update.log", c->root);
+    c->fs->write(c->fs->ctx, p, c->b->log, c->b->log_len);
+}
+/* <root>/update.notice: first line "applied" or "failed", then the last log lines.
+ * The client shows it once after start-up and deletes it when the user dismisses it. */
+static void write_notice(const swap_ctx *c, const char *kind) {
+    char out[400], p[MAX_PATH];
+    size_t start = c->b->log_len, lines = 0, n;
+    log_load(c);
+    start = c->b->log_len;
+    while (start > 0 && lines < 4) { /* up to the last 4 lines */
+        --start;
+        if (start > 0 && c->b->log[start - 1] == '\n') ++lines;
+        else if (start == 0) ++lines;
+    }
+    if (c->b->log_len - start > 300) start = c->b->log_len - 300;
+    n = (size_t)snprintf(out, sizeof out, "%s\n", kind);
+    memcpy(out + n, c->b->log + start, c->b->log_len - start);
+    n += c->b->log_len - start;
+    snprintf(p, sizeof p, "%s/update.notice", c->root);
+    c->fs->write(c->fs->ctx, p, out, n);
+}
 
 int wili_swap_path_ok(const char *rel) {
     size_t n = rel ? strlen(rel) : 0;
@@ -25,18 +99,63 @@ int wili_swap_path_ok(const char *rel) {
     return 1;
 }
 
-int swap_write_state(const wili_swap_fs *fs, const char *root, phase_t ph, int trial) {
+static void path(const swap_ctx *c, char *out, const char *a, const char *b, const char *suffix) {
+    snprintf(out, MAX_PATH, "%s/%s%s%s", c->root, a, b ? b : "", suffix ? suffix : "");
+}
+static void live(const swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, NULL); }
+static void bak(const swap_ctx *c, char *o, const char *rel) { path(c, o, rel, NULL, ".bak"); }
+static void pend(const swap_ctx *c, char *o, const char *rel) { path(c, o, "pending/", rel, NULL); }
+
+static int load_manifest(swap_ctx *c) {
+    char p[MAX_PATH];
+    int n, i, eboot = -1;
+    char *line, *end;
+    snprintf(p, sizeof p, "%s/pending/MANIFEST", c->root);
+    n = c->fs->read(c->fs->ctx, p, c->b->manifest, MANIFEST_CAP);
+    if (n <= 0) return -1;
+    c->b->manifest[n] = 0;
+    c->count = 0;
+    for (line = c->b->manifest; *line;) {
+        end = strchr(line, '\n');
+        if (end) *end = 0;
+        n = (int)strlen(line);
+        if (n && line[n - 1] == '\r') line[--n] = 0;
+        if (n) {
+            if (!wili_swap_path_ok(line) && strcmp(line, "EBOOT.PBP") != 0) return -1;
+            if (c->count >= MAX_ENTRIES) return -1;
+            for (i = 0; i < c->count; ++i) if (strcmp(c->b->names[i], line) == 0) return -1;
+            strcpy(c->b->names[c->count++], line);
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+    if (c->count == 0) return -1;
+    /* EBOOT.PBP last: the loader cannot replace itself before everything else is in place. */
+    for (i = 0; i < c->count; ++i) if (strcmp(c->b->names[i], "EBOOT.PBP") == 0) eboot = i;
+    if (eboot >= 0 && eboot != c->count - 1) {
+        char t[MAX_REL + 1];
+        strcpy(t, c->b->names[eboot]);
+        strcpy(c->b->names[eboot], c->b->names[c->count - 1]);
+        strcpy(c->b->names[c->count - 1], t);
+    }
+    return 0;
+}
+
+/* ---- state ---- */
+typedef enum { S_NONE, S_BACKUP, S_INSTALL, S_TRIAL, S_ROLLBACK, S_ROLLBACK_B, S_DONE, S_ROLLBACK2 } phase_t;
+typedef struct { phase_t phase; int trial; } state_t;
+
+static int write_state(const swap_ctx *c, phase_t ph, int trial) {
     static const char *names[] = {"", "BACKUP", "INSTALL", "TRIAL", "ROLLBACK", "ROLLBACK_B", "DONE", "ROLLBACK2"};
     char text[40], st[MAX_PATH], tmp[MAX_PATH];
     int len = snprintf(text, sizeof text, "%s %d\n", names[ph], trial);
-    snprintf(st, sizeof st, "%s/update.state", root);
-    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", root);
+    snprintf(st, sizeof st, "%s/update.state", c->root);
+    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", c->root);
     /* Complete tmp first; a crash between remove and rename leaves a valid tmp. */
-    if (fs->write(fs->ctx, tmp, text, (size_t)len) < 0) return -1;
-    if (fs->remove(fs->ctx, st) < 0) return -1;
-    return fs->rename(fs->ctx, tmp, st);
+    if (c->fs->write(c->fs->ctx, tmp, text, (size_t)len) < 0) return -1;
+    if (c->fs->remove(c->fs->ctx, st) < 0) return -1;
+    return c->fs->rename(c->fs->ctx, tmp, st);
 }
-
 static int parse_state(const char *t, int n, state_t *s) {
     static const char *names[] = {"", "BACKUP", "INSTALL", "TRIAL", "ROLLBACK", "ROLLBACK_B", "DONE", "ROLLBACK2"};
     int ph, trial;
@@ -46,43 +165,183 @@ static int parse_state(const char *t, int n, state_t *s) {
     for (ph = 1; ph <= S_ROLLBACK2; ++ph) if (strcmp(word, names[ph]) == 0) { s->phase = (phase_t)ph; s->trial = trial; return 1; }
     return 0;
 }
-
-state_t swap_read_state(const wili_swap_fs *fs, const char *root) {
+static state_t read_state(const swap_ctx *c) {
     state_t s = {S_NONE, 0};
     char st[MAX_PATH], tmp[MAX_PATH], buf[48];
     int n;
-    snprintf(st, sizeof st, "%s/update.state", root);
-    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", root);
-    if (fs->exists(fs->ctx, st)) {
-        n = fs->read(fs->ctx, st, buf, sizeof buf - 1);
+    snprintf(st, sizeof st, "%s/update.state", c->root);
+    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", c->root);
+    if (c->fs->exists(c->fs->ctx, st)) {
+        n = c->fs->read(c->fs->ctx, st, buf, sizeof buf - 1);
         if (n > 0 && parse_state(buf, n, &s)) return s;
         s.phase = S_NONE;
         return s;
     }
-    if (fs->exists(fs->ctx, tmp)) {
-        n = fs->read(fs->ctx, tmp, buf, sizeof buf - 1);
+    if (c->fs->exists(c->fs->ctx, tmp)) {
+        n = c->fs->read(c->fs->ctx, tmp, buf, sizeof buf - 1);
         if (n > 0 && parse_state(buf, n, &s)) return s;
-        fs->remove(fs->ctx, tmp); /* torn first write: nothing has started */
+        c->fs->remove(c->fs->ctx, tmp); /* torn first write: nothing has started */
         s.phase = S_NONE;
     }
     return s;
 }
 
-void swap_finish_files(const wili_swap_fs *fs, const char *root) {
+/* ---- phases ---- */
+static int do_backup(const swap_ctx *c) {
+    int i;
+    char l[MAX_PATH], b[MAX_PATH];
+    for (i = 0; i < c->count; ++i) {
+        live(c, l, c->b->names[i]); bak(c, b, c->b->names[i]);
+        if (c->fs->exists(c->fs->ctx, l) && !c->fs->exists(c->fs->ctx, b))
+            if (c->fs->rename(c->fs->ctx, l, b) < 0) { slog(c, "backup failed: %s", c->b->names[i]); return -1; }
+    }
+    return 0;
+}
+static int do_install(const swap_ctx *c) {
+    int i;
+    char l[MAX_PATH], p[MAX_PATH];
+    for (i = 0; i < c->count; ++i) {
+        pend(c, p, c->b->names[i]); live(c, l, c->b->names[i]);
+        if (!c->fs->exists(c->fs->ctx, p)) {
+            if (c->fs->exists(c->fs->ctx, l)) continue; /* already moved */
+            slog(c, "staged file missing: %s", c->b->names[i]);
+            return -1;
+        }
+        if (c->fs->mkdirs(c->fs->ctx, l) < 0) { slog(c, "mkdir failed: %s", c->b->names[i]); return -1; }
+        /* A partial copy from an earlier power loss may be there: start from nothing. */
+        if (c->fs->exists(c->fs->ctx, l) && c->fs->remove(c->fs->ctx, l) < 0) { slog(c, "remove failed: %s", c->b->names[i]); return -1; }
+        if (c->fs->copy(c->fs->ctx, p, l) < 0) {
+            slog(c, "install copy failed: %s", c->b->names[i]);
+            c->fs->remove(c->fs->ctx, l);
+            return -1;
+        }
+        if (c->fs->remove(c->fs->ctx, p) < 0) { slog(c, "remove staged failed: %s", c->b->names[i]); return -1; }
+    }
+    return 0;
+}
+/* Pass 1 (full rollback only): remove files that did not exist before. After a
+ * complete backup phase "no .bak" means exactly that. This must finish before
+ * pass 2 starts restoring, or a restored file would look like a new one. */
+static void rollback_remove_new(const swap_ctx *c) {
+    int i;
+    char l[MAX_PATH], b[MAX_PATH];
+    for (i = 0; i < c->count; ++i) {
+        live(c, l, c->b->names[i]); bak(c, b, c->b->names[i]);
+        if (!c->fs->exists(c->fs->ctx, b)) c->fs->remove(c->fs->ctx, l);
+    }
+}
+/* Pass 2: put the old files back and drop leftover staged files. */
+static void rollback_restore(const swap_ctx *c) {
+    int i;
+    char l[MAX_PATH], b[MAX_PATH], p[MAX_PATH];
+    for (i = 0; i < c->count; ++i) {
+        live(c, l, c->b->names[i]); bak(c, b, c->b->names[i]); pend(c, p, c->b->names[i]);
+        if (c->fs->exists(c->fs->ctx, b)) {
+            if (c->fs->exists(c->fs->ctx, l)) c->fs->remove(c->fs->ctx, l);
+            c->fs->rename(c->fs->ctx, b, l);
+        }
+        c->fs->remove(c->fs->ctx, p);
+    }
+}
+static void finish_files(const swap_ctx *c) {
     char m[MAX_PATH], st[MAX_PATH], tmp[MAX_PATH];
+    snprintf(m, sizeof m, "%s/pending/MANIFEST", c->root);
+    snprintf(st, sizeof st, "%s/update.state", c->root);
+    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", c->root);
+    c->fs->remove(c->fs->ctx, m);   /* manifest first: a leftover state alone is harmless */
+    c->fs->remove(c->fs->ctx, tmp);
+    c->fs->remove(c->fs->ctx, st);
+}
+static wili_swap_status fail_rollback(swap_ctx *c, phase_t from) {
+    char f[MAX_PATH];
+    if (from == S_BACKUP || from == S_ROLLBACK_B) {
+        if (from == S_BACKUP && write_state(c, S_ROLLBACK_B, 0) < 0) return WILI_SWAP_ERROR;
+    } else {
+        if (from != S_ROLLBACK2) {
+            if (from != S_ROLLBACK && write_state(c, S_ROLLBACK, 0) < 0) return WILI_SWAP_ERROR;
+            rollback_remove_new(c);
+            if (write_state(c, S_ROLLBACK2, 0) < 0) return WILI_SWAP_ERROR;
+        }
+    }
+    rollback_restore(c);
+    snprintf(f, sizeof f, "%s/update.failed", c->root);
+    slog(c, "rolled back");
+    c->fs->write(c->fs->ctx, f, "rolled back\n", 12);
+    write_notice(c, "failed");
+    finish_files(c);
+    return WILI_SWAP_ROLLED_BACK;
+}
+
+wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
+    swap_ctx ctx;
+    swap_ctx *c = &ctx;
+    wili_swap_status r = WILI_SWAP_ERROR;
+    state_t s;
+    int i;
+    char b[MAX_PATH], m[MAX_PATH];
+    c->b = (swap_bufs *)malloc(sizeof *c->b);
+    if (!c->b) return WILI_SWAP_ERROR;
+    c->fs = fs; c->root = root; c->count = 0;
+    c->b->log_loaded = 0; c->b->log_len = 0;
+    s = read_state(c);
     snprintf(m, sizeof m, "%s/pending/MANIFEST", root);
-    snprintf(st, sizeof st, "%s/update.state", root);
-    snprintf(tmp, sizeof tmp, "%s/update.state.tmp", root);
-    fs->remove(fs->ctx, m);   /* manifest first: a leftover state alone is harmless */
-    fs->remove(fs->ctx, tmp);
-    fs->remove(fs->ctx, st);
+    if (s.phase != S_NONE || fs->exists(fs->ctx, m)) slog(c, "swap: state=%d trial=%d manifest=%d", (int)s.phase, s.trial, fs->exists(fs->ctx, m));
+    if (s.phase == S_NONE) {
+        if (!fs->exists(fs->ctx, m)) { r = WILI_SWAP_NONE; goto out; }
+        if (load_manifest(c) < 0) { /* unusable staging: discard it */
+            slog(c, "manifest rejected (bad entry, >%d entries or >%d bytes); discarded", MAX_ENTRIES, MANIFEST_CAP);
+            fs->remove(fs->ctx, m);
+            r = WILI_SWAP_NONE; goto out;
+        }
+        /* Drop backups of the previous update before this one begins. */
+        for (i = 0; i < c->count; ++i) { bak(c, b, c->b->names[i]); fs->remove(fs->ctx, b); }
+        { char f[MAX_PATH]; snprintf(f, sizeof f, "%s/update.failed", root); fs->remove(fs->ctx, f); }
+        if (write_state(c, S_BACKUP, 0) < 0) goto out;
+        s.phase = S_BACKUP; s.trial = 0;
+    } else if (s.phase == S_DONE) {
+        finish_files(c);
+        r = WILI_SWAP_NONE; goto out;
+    } else if (load_manifest(c) < 0) {
+        if (s.phase == S_ROLLBACK2 || s.phase == S_ROLLBACK_B) { /* power loss inside finish_files() */
+            finish_files(c);
+            r = WILI_SWAP_ROLLED_BACK;
+        }
+        goto out; /* state without a manifest cannot be acted on safely */
+    }
+    if (s.phase == S_BACKUP) {
+        if (do_backup(c) < 0) { r = fail_rollback(c, S_BACKUP); goto out; }
+        if (write_state(c, S_INSTALL, 0) < 0) goto out;
+        s.phase = S_INSTALL;
+    }
+    if (s.phase == S_INSTALL) {
+        if (do_install(c) < 0) { r = fail_rollback(c, S_INSTALL); goto out; }
+        slog(c, "installed %d files; trial boot", c->count);
+        write_notice(c, "applied"); /* before the state, so it exists whenever the state says installed */
+        if (write_state(c, S_TRIAL, 0) < 0) goto out;
+        s.phase = S_TRIAL; s.trial = 0;
+    }
+    if (s.phase == S_ROLLBACK || s.phase == S_ROLLBACK2 || s.phase == S_ROLLBACK_B) {
+        r = fail_rollback(c, s.phase);
+        goto out;
+    }
+    if (s.phase == S_TRIAL) {
+        if (s.trial >= WILI_SWAP_TRIAL_BOOTS) { slog(c, "new version never committed; rolling back"); r = fail_rollback(c, S_TRIAL); goto out; }
+        if (write_state(c, S_TRIAL, s.trial + 1) < 0) goto out;
+        r = WILI_SWAP_APPLIED;
+    }
+out:
+    free(c->b);
+    return r;
 }
 
 int wili_swap_commit(const wili_swap_fs *fs, const char *root) {
-    state_t s = swap_read_state(fs, root);
+    swap_ctx c;
+    state_t s;
+    c.fs = fs; c.root = root; c.b = NULL; c.count = 0;
+    s = read_state(&c);
     if (s.phase == S_NONE) return 0; /* nothing pending (e.g. dev build) */
     if (s.phase != S_TRIAL && s.phase != S_DONE) return -1;
-    if (s.phase == S_TRIAL && swap_write_state(fs, root, S_DONE, 0) < 0) return -1;
-    swap_finish_files(fs, root);
+    if (s.phase == S_TRIAL && write_state(&c, S_DONE, 0) < 0) return -1;
+    finish_files(&c);
     return 0;
 }

@@ -1,12 +1,8 @@
 #include "update_core.hpp"
-extern "C" {
-#include "../json.h"
-}
-#include <vector>
+#include "../api/wiliwili/bilibili/util/json.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <cstring>
 namespace pspapp {
 
 bool parseSemVer(std::string_view t, SemVer& out) {
@@ -62,52 +58,39 @@ static bool isHex64(const std::string& s) {
     return s.size() == 64 && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isxdigit(c); });
 }
 
-// Uses the project's allocation-free token reader (client/json.c) instead of nlohmann:
-// the templates cost about 70 KB of the PSP's scarce RAM for one small payload.
-namespace {
-constexpr int kMaxReleaseTokens = 4096; // GitHub payloads need a few hundred
-bool tokenIs(const Json& j, int n, const char* word) {
-    if (n < 0) return false;
-    const JsonToken& t = j.tokens[n];
-    return (size_t)(t.end - t.start) == std::strlen(word) && !std::strncmp(j.text + t.start, word, t.end - t.start);
-}
-// String member of `object`, "" if missing or not a string.
-std::string strMember(const Json& j, int object, const char* key, size_t cap) {
-    int n = json_key(&j, object, key);
-    if (n < 0) return {};
-    std::vector<char> buf(cap + 1);
-    int len = json_string(&j, n, buf.data(), buf.size());
-    return len < 0 ? std::string() : std::string(buf.data(), (size_t)len);
-}
-}
-
 bool parseRelease(std::string_view text, ReleaseInfo& out) {
+    using nlohmann::json;
     if (text.size() > kMaxReleaseJson) return false;
-    std::string copy(text); // the reader needs a NUL-terminated buffer
-    std::vector<JsonToken> tokens(kMaxReleaseTokens);
-    Json j;
-    if (json_parse(&j, copy.c_str(), tokens.data(), kMaxReleaseTokens) < 0) return false;
-    if (j.text[j.tokens[0].start] != '{') return false;
-    if (tokenIs(j, json_key(&j, 0, "draft"), "true") || tokenIs(j, json_key(&j, 0, "prerelease"), "true")) return false;
+    json j = json::parse(text.begin(), text.end(), nullptr, false);
+    if (!j.is_object()) return false;
+    auto str = [&](const json& o, const char* k) -> std::string {
+        auto it = o.find(k);
+        return it != o.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    auto flag = [&](const char* k) {
+        auto it = j.find(k);
+        return it != j.end() && it->is_boolean() && it->get<bool>();
+    };
+    if (flag("draft") || flag("prerelease")) return false;
     ReleaseInfo r;
-    r.tag = strMember(j, 0, "tag_name", 64);
+    r.tag = str(j, "tag_name");
     SemVer v;
     if (r.tag.empty() || !parseSemVer(r.tag, v) || v.prerelease) return false;
-    r.notes = strMember(j, 0, "body", kMaxReleaseNotes); // json_string truncates at the buffer size
-    const int assets = json_key(&j, 0, "assets");
-    if (assets < 0 || j.text[j.tokens[assets].start] != '[') return false;
+    r.notes = str(j, "body");
+    if (r.notes.size() > kMaxReleaseNotes) r.notes.resize(kMaxReleaseNotes);
+    auto assets = j.find("assets");
+    if (assets == j.end() || !assets->is_array()) return false;
     const std::string want = "WiliMini-" + r.tag + ".zip";
-    for (int n = assets + 1; n < j.tokens[assets].next; n = j.tokens[n].next) {
-        if (j.text[j.tokens[n].start] != '{') continue;
-        const std::string name = strMember(j, n, "name", 128);
-        const std::string url = strMember(j, n, "browser_download_url", 512);
+    for (const auto& a : *assets) {
+        if (!a.is_object()) continue;
+        std::string name = str(a, "name");
+        std::string url = str(a, "browser_download_url");
         if (name == want && !url.empty()) {
             r.zipName = name;
             r.zipUrl = url;
-            const int sz = json_key(&j, n, "size");
-            if (sz >= 0 && j.text[j.tokens[sz].start] >= '0' && j.text[j.tokens[sz].start] <= '9')
-                r.zipSize = (uint64_t)json_number(&j, sz);
-            const std::string d = strMember(j, n, "digest", 96); // "sha256:<hex>" on GitHub
+            auto sz = a.find("size");
+            if (sz != a.end() && sz->is_number_unsigned()) r.zipSize = sz->get<uint64_t>();
+            std::string d = str(a, "digest"); // "sha256:<hex>" on GitHub
             if (d.rfind("sha256:", 0) == 0 && isHex64(d.substr(7))) r.sha256 = lower(d.substr(7));
         } else if (name == "SHA256SUMS" && !url.empty()) {
             r.sumsUrl = url;
