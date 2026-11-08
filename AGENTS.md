@@ -51,6 +51,9 @@ dependencies; `make me` builds the client and Media Engine components;
 `make assets` generates configured assets. Configure builds with `BUILD_DIR`,
 `BUILD_TYPE`, `PARALLEL`, and `CMAKE_ARGS`.
 
+CI builds in the images from `docker/ci.Dockerfile`; see `docs/ci.md` before
+changing dependency recipes, patches or toolchain pins.
+
 Packages are written to `dist/PSP/GAME/WiliMini/` by default. Launch through
 `EBOOT.PBP`, not directly through `wili_mini.prx`: the loader initializes required
 network modules and the Media Engine bridge.

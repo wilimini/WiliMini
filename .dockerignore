@@ -1,0 +1,8 @@
+# Whitelist: the image build needs only these files (see docker/ci.Dockerfile).
+*
+!Makefile
+!CMakeLists.txt
+!cmake
+!patches
+!tools/ppsspp/build-ppsspp-headless.sh
+!tools/ppsspp/prepare-me-firmware.py

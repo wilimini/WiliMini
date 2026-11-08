@@ -11,12 +11,29 @@ on:
 permissions:
   contents: read
 
-env:
-  PSPDEV_VERSION: v20261001
-
 jobs:
+  # Toolchain and prebuilt PSP dependencies live in an image (docker/ci.Dockerfile).
+  image:
+    uses: ./.github/workflows/ci-image.yml
+    permissions:
+      contents: read
+      packages: write
+
   build:
+    needs: image
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read # pull the CI image from GHCR
+    # Container jobs default to sh; the archive step uses bash syntax.
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ${{ needs.image.outputs.ci_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out source and submodules
         uses: actions/checkout@v4
@@ -33,25 +50,23 @@ jobs:
             exit 1
           fi
 
-      - name: Install PSP build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkgconf libreadline8 \
-            libusb-0.1-4 libgpgme11 libarchive-tools fakeroot curl \
-            git python3 bash zlib1g-dev libssl-dev
-          curl -fL --retry 3 \
-            "https://github.com/pspdev/pspdev/releases/download/${PSPDEV_VERSION}/pspdev-ubuntu-latest-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/pspdev.tar.gz"
-          tar -xzf "$RUNNER_TEMP/pspdev.tar.gz" -C "$RUNNER_TEMP"
-          echo "PSPDEV=$RUNNER_TEMP/pspdev" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/pspdev/bin" >> "$GITHUB_PATH"
+      # Packaging reads build/curl-source directly (license + manifest hash), so link the
+      # image's patched libcurl source into the workspace.
+      - name: Link prebuilt libcurl source
+        run: mkdir -p build && ln -sfn "$BILI_CURL_SOURCE_DIR" build/curl-source
 
+      # Not `make package`: that target also rebuilds FFmpeg and libcurl, which the image
+      # already provides through PSP_FFMPEG_PREFIX / PSP_CURL_PREFIX.
       - name: Build PSP package
         run: |
           cmake --version
           psp-gcc --version
-          make package PSPDEV="$PSPDEV" PARALLEL=2 \
-            CMAKE_ARGS="-DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+          psp-cmake -S . -B build/client -DCMAKE_BUILD_TYPE=Release \
+            -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
+            -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          cmake --build build/client --target package --parallel "$(nproc)"
 
       - name: Create install archive and checksum
         env:

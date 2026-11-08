@@ -10,12 +10,15 @@ on:
 permissions:
   contents: read
 
-env:
-  PSPDEV_VERSION: v20261001
-  # PPSSPP master provides ME instruction emulation (Core/MIPS/MeCore.cpp).
-  PPSSPP_REF: 44f1f44be7ff3af79d96e0d14e2d5f9e6ec923b7
-
 jobs:
+  # PSPDEV, prebuilt PSP FFmpeg/libcurl, PPSSPP headless and the ME firmware live in a
+  # private image (docker/ci.Dockerfile, target ci-playback).
+  image:
+    uses: ./.github/workflows/ci-image.yml
+    permissions:
+      contents: read
+      packages: write
+
   host:
     name: Host checks
     runs-on: ubuntu-24.04
@@ -30,80 +33,74 @@ jobs:
 
   ppsspp-me:
     name: PPSSPP + Media Engine
+    needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read # pull the private playback image from GHCR
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: ${{ needs.image.outputs.playback_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # Docker's default /dev/shm is 64 MB. PPSSPP backs the emulated 64 MB (Slim) PSP with
+      # shared memory; with the default the headless run died with SIGBUS (exit 135).
+      options: --shm-size=1g
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install build and test tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkgconf libreadline8 \
-            libusb-0.1-4 libgpgme11 libarchive-tools fakeroot curl git python3 \
-            bash zlib1g-dev libssl-dev ffmpeg libpng-dev libgl1-mesa-dev \
-            libglu1-mesa-dev libx11-dev libsdl2-dev python3-pil
-          curl -fL --retry 3 \
-            "https://github.com/pspdev/pspdev/releases/download/${PSPDEV_VERSION}/pspdev-ubuntu-latest-x86_64.tar.gz" \
-            -o "$RUNNER_TEMP/pspdev.tar.gz"
-          tar -xzf "$RUNNER_TEMP/pspdev.tar.gz" -C "$RUNNER_TEMP"
-          echo "PSPDEV=$RUNNER_TEMP/pspdev" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/pspdev/bin" >> "$GITHUB_PATH"
+      # Packaging reads build/curl-source directly (license + manifest hash), so link the
+      # image's patched libcurl source into the workspace.
+      - name: Link prebuilt libcurl source
+        run: mkdir -p build && ln -sfn "$BILI_CURL_SOURCE_DIR" build/curl-source
 
-      # Headless PPSSPP is cached by its pinned revision and the build recipe.
-      - name: Restore PPSSPP Headless
-        id: ppsspp-cache
-        uses: actions/cache@v4
-        with:
-          path: build/ppsspp-headless
-          key: ppsspp-headless-${{ env.PPSSPP_REF }}-${{ hashFiles('tools/ppsspp/build-ppsspp-headless.sh') }}
-
-      - name: Build PPSSPP Headless
-        if: steps.ppsspp-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone https://github.com/hrydgard/ppsspp.git build/ppsspp-src
-          git -C build/ppsspp-src checkout --detach "$PPSSPP_REF"
-          git -C build/ppsspp-src submodule update --init --recursive --depth 1
-          PPSSPP_USE_FFMPEG=OFF JOBS=4 sh tools/ppsspp/build-ppsspp-headless.sh
-
-      # The images are extracted from the user-supplied official updater at run time,
-      # verified by SHA-256 and never uploaded, cached or packaged. Set the repository
-      # variable PSP_661_UPDATER_URL to use a different HTTPS mirror.
-      - name: Extract ME firmware
-        run: |
-          python3 tools/ppsspp/prepare-me-firmware.py \
-            ${PSP_661_UPDATER_URL:+--url "$PSP_661_UPDATER_URL"} \
-            --output "$RUNNER_TEMP/me-firmware/flash0"
-          echo "BILI_HEADLESS_FIRMWARE_DIR=$RUNNER_TEMP/me-firmware/flash0" >> "$GITHUB_ENV"
-        env:
-          PSP_661_UPDATER_URL: ${{ vars.PSP_661_UPDATER_URL }}
-
+      # PPSSPP headless and the ME firmware come from the image (PPSSPP_HEADLESS,
+      # BILI_HEADLESS_FIRMWARE_DIR). Packages are built with cmake directly because
+      # `make package` would also rebuild FFmpeg and libcurl, which the image provides
+      # through PSP_FFMPEG_PREFIX / PSP_CURL_PREFIX.
       - name: Build test package (controlled playback, no account or network APIs)
         run: |
-          make package PSPDEV="$PSPDEV" PARALLEL=2 BUILD_DIR=build/playback-test \
-            CMAKE_ARGS="-DBILI_DEVICE_PLAYBACK_TEST=ON -DBILI_DIST_DIR=$GITHUB_WORKSPACE/build/playback-test-dist -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt"
+          psp-cmake -S . -B build/playback-test -DCMAKE_BUILD_TYPE=Release \
+            -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
+            -DBILI_DEVICE_PLAYBACK_TEST=ON \
+            -DBILI_DIST_DIR="$GITHUB_WORKSPACE/build/playback-test-dist" \
+            -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          cmake --build build/playback-test --target package --parallel "$(nproc)"
 
       - name: Native ME playback (PSP-1000 profile)
         run: python3 tools/ppsspp/test-psp-playback.py
 
+      # In a container job ${{ github.workspace }} is the host path; use $GITHUB_WORKSPACE.
       - name: Native ME playback (Slim profile)
         env:
           BILI_HEADLESS_MODEL: "3000"
-          BILI_PLAYBACK_RESULTS: ${{ github.workspace }}/results/playback-slim
-        run: python3 tools/ppsspp/test-psp-playback.py
+        run: |
+          export BILI_PLAYBACK_RESULTS="$GITHUB_WORKSPACE/results/playback-slim"
+          python3 tools/ppsspp/test-psp-playback.py
 
       - name: Playback controls
-        env:
-          BILI_HEADLESS_CLIENT_DIR: ${{ github.workspace }}/build/playback-test
-          BILI_HEADLESS_PACKAGE: ${{ github.workspace }}/build/playback-test-dist/PSP/GAME/WiliMini
-        run: python3 tools/ppsspp/test-playback-controls.py
+        run: |
+          export BILI_HEADLESS_CLIENT_DIR="$GITHUB_WORKSPACE/build/playback-test"
+          export BILI_HEADLESS_PACKAGE="$GITHUB_WORKSPACE/build/playback-test-dist/PSP/GAME/WiliMini"
+          python3 tools/ppsspp/test-playback-controls.py
 
       - name: Build production package
         run: |
-          make package PSPDEV="$PSPDEV" PARALLEL=2 \
-            CMAKE_ARGS='-DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt'
+          psp-cmake -S . -B build/client -DCMAKE_BUILD_TYPE=Release \
+            -DPSP_FFMPEG_PREFIX="$PSP_FFMPEG_PREFIX" -DPSP_CURL_PREFIX="$PSP_CURL_PREFIX" \
+            -DBILI_FFMPEG_SOURCE_DIR="$BILI_FFMPEG_SOURCE_DIR" \
+            -DBILI_FFMPEG_BUILD_DIR="$BILI_FFMPEG_BUILD_DIR" \
+            -DBILI_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+          cmake --build build/client --target package --parallel "$(nproc)"
 
       - name: UI smoke (all home styles)
         run: python3 tools/ppsspp/test-ui-smoke.py
