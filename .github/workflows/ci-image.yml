@@ -1,0 +1,122 @@
+name: CI image
+
+# Builds and publishes the CI environment images (docker/ci.Dockerfile) to GHCR, tagged
+# by a hash of everything they are built from. Called by build.yml and test.yml; an
+# image whose tag already exists is reused, so most runs only pull it.
+#
+#   wilimini-ci           toolchain + prebuilt PSP FFmpeg/libcurl (public is fine)
+#   wilimini-ci-playback  + PPSSPP headless + ME firmware: MUST stay a private package
+#
+# One-time setup after the first push: in the GitHub package settings, make
+# wilimini-ci public if fork pull requests should build, and keep
+# wilimini-ci-playback private. The "playback image is private" step fails the run
+# if the firmware image can be pulled anonymously.
+
+on:
+  workflow_call:
+    outputs:
+      ci_image:
+        description: Reference of the toolchain + dependencies image
+        value: ${{ jobs.image.outputs.ci_image }}
+      playback_image:
+        description: Reference of the playback test image (private)
+        value: ${{ jobs.image.outputs.playback_image }}
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    outputs:
+      ci_image: ${{ steps.ref.outputs.ci }}
+      playback_image: ${{ steps.ref.outputs.playback }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image references
+        id: ref
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          tag=${{ hashFiles('docker/ci.Dockerfile', '.dockerignore', 'Makefile', 'CMakeLists.txt', 'cmake/**', 'patches/**', 'tools/ppsspp/build-ppsspp-headless.sh', 'tools/ppsspp/prepare-me-firmware.py') }}
+          tag=${tag:0:16}
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "ci=ghcr.io/$owner/wilimini-ci:$tag" >> "$GITHUB_OUTPUT"
+          echo "playback=ghcr.io/$owner/wilimini-ci-playback:$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check which images already exist
+        id: exists
+        run: |
+          for kind in ci playback; do
+            ref=$(case $kind in ci) echo "${{ steps.ref.outputs.ci }}";; *) echo "${{ steps.ref.outputs.playback }}";; esac)
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "$kind=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$kind=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Refuse to build from a fork
+        if: >-
+          (steps.exists.outputs.ci != 'true' || steps.exists.outputs.playback != 'true') &&
+          github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "::error::The CI image for this change is not published and fork pull requests cannot push it. A maintainer must run the CI image workflow on the base repository."
+          exit 1
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push toolchain + dependencies image
+        if: steps.exists.outputs.ci != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/ci.Dockerfile
+          target: ci
+          push: true
+          tags: ${{ steps.ref.outputs.ci }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=wilimini-ci
+          cache-to: type=gha,mode=max,scope=wilimini-ci
+
+      - name: Build and push playback test image (contains ME firmware)
+        if: steps.exists.outputs.playback != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/ci.Dockerfile
+          target: ci-playback
+          push: true
+          tags: ${{ steps.ref.outputs.playback }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=wilimini-ci
+          cache-to: type=gha,mode=max,scope=wilimini-ci
+
+      # The playback image holds Sony firmware. Fail loudly if it can be pulled without
+      # credentials, i.e. if the package was made public.
+      - name: Check the playback image is private
+        run: |
+          name="${GITHUB_REPOSITORY_OWNER,,}/wilimini-ci-playback"
+          tag="${{ steps.ref.outputs.playback }}"; tag="${tag##*:}"
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:$name:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/$name/manifests/$tag")
+          echo "anonymous manifest request returned HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "::error::ghcr.io/$name is publicly readable but contains ME firmware. Set the package to Private in the GitHub package settings."
+            exit 1
+          fi
