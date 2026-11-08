@@ -65,6 +65,10 @@ RUN git clone https://github.com/hrydgard/ppsspp.git /opt/ppsspp-src \
 
 # ---- ME firmware: official 6.61 updater, verified by SHA-256 ----
 FROM toolchain AS firmware
+# prepare-me-firmware.py builds pspdecrypt with clang (preinstalled on GitHub runners).
+# Installed here, not in `toolchain`, so the ci image's cached layers stay valid.
+RUN apt-get update && apt-get install -y --no-install-recommends clang \
+ && rm -rf /var/lib/apt/lists/*
 COPY tools/ppsspp/prepare-me-firmware.py /src/tools/ppsspp/
 RUN python3 /src/tools/ppsspp/prepare-me-firmware.py --output /opt/me-firmware/flash0
 
