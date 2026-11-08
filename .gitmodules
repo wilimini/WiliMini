@@ -4,3 +4,6 @@
 [submodule "psp-media-engine-custom-core"]
 	path = third_party/psp-media-engine-custom-core
 	url = https://github.com/mcidclan/psp-media-engine-custom-core.git
+[submodule "third_party/psplinkusb"]
+	path = third_party/psplinkusb
+	url = https://github.com/pspdev/psplinkusb.git

@@ -1,0 +1,328 @@
+diff --git a/psplink/Makefile b/psplink/Makefile
+index 6820d91..28b320c 100644
+--- a/psplink/Makefile
++++ b/psplink/Makefile
+@@ -1,5 +1,5 @@
+ TARGET = psplink
+-OBJS = main.o shell.o config.o bitmap.o tty.o decodeaddr.o memoryUID.o kmode.o exception.o exception_asm.o psplinkcnf.o util.o debug.o libs.o apihook.o thctx.o stdio.o usbshell.o modload.o exports.o
++OBJS = main.o shell.o config.o bitmap.o tty.o decodeaddr.o memoryUID.o kmode.o exception.o exception_asm.o psplinkcnf.o util.o debug.o libs.o apihook.o thctx.o stdio.o usbshell.o modload.o pad.o exports.o
+ 
+ # Use only kernel libraries
+ USE_KERNEL_LIBS = 1
+diff --git a/psplink/pad.c b/psplink/pad.c
+new file mode 100644
+index 0000000..2e8ea17
+--- /dev/null
++++ b/psplink/pad.c
+@@ -0,0 +1,255 @@
++/*
++ * PSPLINK
++ * -----------------------------------------------------------------------
++ * Licensed under the BSD license, see LICENSE in PSPLINK root for details.
++ *
++ * pad.c - Inject controller button presses from the PSPLINK shell.
++ *
++ * The sceCtrl read/peek exports are hooked through their syscall table
++ * entries (see apihook.c), which does not depend on the instruction layout
++ * of the firmware's sceCtrl code. Each hook calls the original and then merges
++ * the currently injected button mask into the returned samples.
++ */
++#include <pspkernel.h>
++#include <pspctrl.h>
++#include <string.h>
++#include <stdlib.h>
++#include "psplink.h"
++#include "util.h"
++#include "shell.h"
++#include "apihook.h"
++#include "pad.h"
++
++#define PAD_DEFAULT_HOLD_MS 150
++#define PAD_GAP_MS          150
++#define PAD_MAX_HOLD_MS     10000
++
++struct PadHook
++{
++	unsigned int nid;
++	int negative;
++	int (*orig)(SceCtrlData *, int);
++};
++
++struct PadButton
++{
++	const char *name;
++	unsigned int mask;
++};
++
++static const struct PadButton g_buttons[] = {
++	{ "select", PSP_CTRL_SELECT }, { "start", PSP_CTRL_START },
++	{ "up", PSP_CTRL_UP }, { "right", PSP_CTRL_RIGHT },
++	{ "down", PSP_CTRL_DOWN }, { "left", PSP_CTRL_LEFT },
++	{ "l", PSP_CTRL_LTRIGGER }, { "r", PSP_CTRL_RTRIGGER },
++	{ "triangle", PSP_CTRL_TRIANGLE }, { "circle", PSP_CTRL_CIRCLE },
++	{ "cross", PSP_CTRL_CROSS }, { "square", PSP_CTRL_SQUARE },
++};
++
++/* Indices match the hook functions below */
++static struct PadHook g_hooks[4] = {
++	{ 0x1F803938, 0, NULL }, /* sceCtrlReadBufferPositive */
++	{ 0x3A622550, 0, NULL }, /* sceCtrlPeekBufferPositive */
++	{ 0x60B81F86, 1, NULL }, /* sceCtrlReadBufferNegative */
++	{ 0xC152080A, 1, NULL }, /* sceCtrlPeekBufferNegative */
++};
++
++static volatile unsigned int g_mask = 0;
++static volatile unsigned int g_calls[4];   /* hook invocations */
++static volatile unsigned int g_applied[4]; /* invocations that merged a mask */
++static int g_installed = 0;
++
++static int pad_hook_common(int idx, SceCtrlData *pad, int count)
++{
++	int ret;
++	int i;
++	unsigned int mask;
++
++	ret = g_hooks[idx].orig(pad, count);
++	g_calls[idx]++;
++	mask = g_mask;
++	if((ret <= 0) || (mask == 0) || (pad == NULL))
++	{
++		return ret;
++	}
++
++	g_applied[idx]++;
++
++	if(ret > count)
++	{
++		ret = count;
++	}
++
++	for(i = 0; i < ret; i++)
++	{
++		if(g_hooks[idx].negative)
++		{
++			pad[i].Buttons &= ~mask;
++		}
++		else
++		{
++			pad[i].Buttons |= mask;
++		}
++	}
++
++	return ret;
++}
++
++static int pad_hook0(SceCtrlData *pad, int count) { return pad_hook_common(0, pad, count); }
++static int pad_hook1(SceCtrlData *pad, int count) { return pad_hook_common(1, pad, count); }
++static int pad_hook2(SceCtrlData *pad, int count) { return pad_hook_common(2, pad, count); }
++static int pad_hook3(SceCtrlData *pad, int count) { return pad_hook_common(3, pad, count); }
++
++static int pad_install(void)
++{
++	static void *const funcs[4] = { pad_hook0, pad_hook1, pad_hook2, pad_hook3 };
++	SceUID uid;
++	int i;
++
++	if(g_installed)
++	{
++		return 1;
++	}
++
++	uid = refer_module_by_name("sceController_Service", NULL);
++	if(uid < 0)
++	{
++		SHELL_PRINT("Couldn't find the sceController_Service module\n");
++		return 0;
++	}
++
++	for(i = 0; i < 4; i++)
++	{
++		unsigned int orig;
++
++		orig = apiHookByNid(uid, "sceCtrl", g_hooks[i].nid, funcs[i]);
++		if(orig == 0)
++		{
++			SHELL_PRINT("Couldn't hook sceCtrl NID 0x%08X\n", g_hooks[i].nid);
++			/* The read/peek positive hooks are the ones applications use;
++			 * a missing negative hook is tolerated. */
++			if(!g_hooks[i].negative)
++			{
++				return 0;
++			}
++			continue;
++		}
++
++		g_hooks[i].orig = (void *) orig;
++	}
++
++	g_installed = 1;
++	return 1;
++}
++
++/* Parse "name" or "name+name+..." into a button mask */
++static int pad_parse(const char *arg, unsigned int *mask)
++{
++	char buf[64];
++	char *tok;
++	char *save = NULL;
++	unsigned int m = 0;
++
++	if(strlen(arg) >= sizeof(buf))
++	{
++		return 0;
++	}
++	strcpy(buf, arg);
++
++	for(tok = strtok_r(buf, "+", &save); tok; tok = strtok_r(NULL, "+", &save))
++	{
++		unsigned int i;
++		int found = 0;
++
++		for(i = 0; i < sizeof(g_buttons) / sizeof(g_buttons[0]); i++)
++		{
++			if(strcmp(tok, g_buttons[i].name) == 0)
++			{
++				m |= g_buttons[i].mask;
++				found = 1;
++				break;
++			}
++		}
++
++		if(!found)
++		{
++			SHELL_PRINT("Unknown button '%s'\n", tok);
++			return 0;
++		}
++	}
++
++	if(m == 0)
++	{
++		return 0;
++	}
++
++	*mask = m;
++	return 1;
++}
++
++int padCommand(int argc, char **argv)
++{
++	unsigned int hold = PAD_DEFAULT_HOLD_MS;
++	unsigned int masks[32];
++	int count = 0;
++	int i;
++
++	for(i = 0; i < argc; i++)
++	{
++		if(strcmp(argv[i], "-t") == 0)
++		{
++			if(((i + 1) >= argc) || !strtoint(argv[i + 1], &hold) || (hold == 0) || (hold > PAD_MAX_HOLD_MS))
++			{
++				SHELL_PRINT("-t needs a hold time in ms (1-%d)\n", PAD_MAX_HOLD_MS);
++				return CMD_ERROR;
++			}
++			i++;
++			continue;
++		}
++
++		if(count >= (int) (sizeof(masks) / sizeof(masks[0])))
++		{
++			SHELL_PRINT("Too many buttons (max %d)\n", (int) (sizeof(masks) / sizeof(masks[0])));
++			return CMD_ERROR;
++		}
++
++		if(!pad_parse(argv[i], &masks[count]))
++		{
++			return CMD_ERROR;
++		}
++		count++;
++	}
++
++	if(count == 0)
++	{
++		SHELL_PRINT("No buttons given\n");
++		return CMD_ERROR;
++	}
++
++	if(!pad_install())
++	{
++		return CMD_ERROR;
++	}
++
++	for(i = 0; i < 4; i++)
++	{
++		g_calls[i] = 0;
++		g_applied[i] = 0;
++	}
++
++	for(i = 0; i < count; i++)
++	{
++		g_mask = masks[i];
++		sceKernelDelayThread(hold * 1000);
++		g_mask = 0;
++		sceKernelDelayThread(PAD_GAP_MS * 1000);
++	}
++
++	/* Per hook: ReadPos PeekPos ReadNeg PeekNeg. A zero "calls" means no
++	 * application read the pad through that hook while buttons were held. */
++	SHELL_PRINT("hook calls %u/%u/%u/%u, merged %u/%u/%u/%u (ReadPos/PeekPos/ReadNeg/PeekNeg)\n",
++			g_calls[0], g_calls[1], g_calls[2], g_calls[3],
++			g_applied[0], g_applied[1], g_applied[2], g_applied[3]);
++
++	return CMD_OK;
++}
+diff --git a/psplink/pad.h b/psplink/pad.h
+new file mode 100644
+index 0000000..644421c
+--- /dev/null
++++ b/psplink/pad.h
+@@ -0,0 +1,14 @@
++/*
++ * PSPLINK
++ * -----------------------------------------------------------------------
++ * Licensed under the BSD license, see LICENSE in PSPLINK root for details.
++ *
++ * pad.h - Inject controller button presses from the PSPLINK shell
++ */
++#ifndef __PAD_H__
++#define __PAD_H__
++
++/* Implements the "btn" shell command; returns CMD_OK or CMD_ERROR */
++int padCommand(int argc, char **argv);
++
++#endif
+diff --git a/psplink/shell.c b/psplink/shell.c
+index 0b77e52..613f567 100644
+--- a/psplink/shell.c
++++ b/psplink/shell.c
+@@ -43,6 +43,7 @@
+ #include "libs.h"
+ #include "thctx.h"
+ #include "apihook.h"
++#include "pad.h"
+ #include "tty.h"
+ #include "shellcmd.h"
+ #include "usbshell.h"
+@@ -1449,6 +1450,11 @@ static int apihd_cmd(int argc, char **argv, unsigned int *vRet)
+ 	return CMD_OK;
+ }
+ 
++static int btn_cmd(int argc, char **argv, unsigned int *vRet)
++{
++	return padCommand(argc, argv);
++}
++
+ static int modload_cmd(int argc, char **argv, unsigned int *vRet)
+ {
+ 	SceUID modid;
+diff --git a/psplink/shellcmd.h b/psplink/shellcmd.h
+index 2e6f220..de834af 100644
+--- a/psplink/shellcmd.h
++++ b/psplink/shellcmd.h
+@@ -165,6 +165,7 @@ struct sh_command
+ 	SHELL_CMD("apihooks", NULL, apihooks_cmd, 4, "Hook a user mode API call with sleep", "", "uid|@name library nid|@name ret [param]") \
+ 	SHELL_CMD("apihp", NULL, apihp_cmd, 0, "Print the user mode API hooks", "", "") \
+ 	SHELL_CMD("apihd", NULL, apihd_cmd, 1, "Delete an user mode API hook", "", "id") \
++	SHELL_CMD("btn", NULL, btn_cmd, 1, "Press controller buttons", "Presses each button in turn for the hold time. Join names with + to press them together.", "[-t ms] button[+button...]...") \
+ 	 \
+ 	SHELL_CAT("memory", "Commands to manipulate memory") \
+ 	SHELL_CMD("meminfo", "mf", meminfo_cmd, 0, "Print free memory info", "", "[partitionid]") \

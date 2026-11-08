@@ -70,9 +70,46 @@ Use `reset` only for fault recovery after collecting available evidence. An
 unresponsive PSPLink connection or persistent ME failure requires a manual
 reboot into PSPLink. A responsive shell does not establish that ME recovered.
 
-Do not use PSPLink `scrshot`: its partition-4 allocation overlaps ME firmware.
-Do not use VRAM `savemem` for routine screenshots; it has stalled USB transfers.
-Emulator screenshots do not replace hardware validation.
+PSPLink `scrshot` is allowed only when no video is playing or about to play
+(menus, settings, lists). Do not use it during or around playback: with the ME
+decoder active it crashes the ME. Never use VRAM `savemem` for screenshots; it
+also crashes the ME and has stalled USB transfers. Emulator screenshots do not
+replace hardware validation.
+
+## Pressing buttons from pspsh
+
+`make psplink` builds PSPLink from the pinned `third_party/psplinkusb` submodule with
+`patches/psplink-buttons.patch` applied (the submodule stays untouched; output is in
+`build/psplink/`). The patch adds a `btn` command that injects button presses by hooking
+the `sceCtrl` read/peek syscalls, so it does not depend on RemoteJoy or on firmware code
+layout. Boot this PSPLink build on the PSP instead of the stock one, then in `pspsh`:
+
+```text
+btn down
+btn -t 300 cross
+btn up up cross
+btn l+r
+```
+
+Buttons: `select start up down left right l r triangle circle cross square`. Join names
+with `+` to press together; `-t` sets the hold time in ms (default 150). The command
+blocks until the presses finish and prints an error if the hooks cannot be installed.
+After the presses it prints how many times each `sceCtrl` hook was called and merged a
+button, which shows whether the application is reading the pad through the hooks.
+The stray `Unknown command btn` line after an error comes from the host `pspsh`, whose
+command table predates the patch; it is cosmetic.
+
+UI navigation in the client: `circle` opens or enters, `cross` goes back. Back from
+a page returns focus to the sidebar, where up/down choose the section and `circle`
+enters it. On settings lists left/right change the value, so do not press them
+while only exploring.
+
+Confirmed working by the maintainer on a PSP-3000 with ARK-5 using the WiliMini
+client. Other firmware and models are untested. Install the built
+`build/psplink/psplink/psplink.prx` as `PSPLINK.PRX` in the PSPLink folder on the Memory
+Stick (keep a backup of the original) and relaunch PSPLink; the loaded module cannot be
+replaced in place. RemoteJoy's own hook fails on ARK-5 because it expects the old
+`sceCtrl` instruction layout, so RemoteJoy cannot be used for button input there.
 
 ## Playback result folders
 

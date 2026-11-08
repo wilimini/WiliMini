@@ -85,7 +85,7 @@ cd host0:/
 工具会按顺序播放每个样本指定的次数。默认共播放 60 次，约需 10 分钟，日志标记为 `BENCH begin/end`。
 按圆圈可取消当前播放并停止整轮。测试结束后按 START 正常退出。
 也可以在两次播放之间按 START 中止测试。再次运行 `thlist`，确认所有应用工作线程都已退出。
-工具不会自动执行 `reset`。不要使用 PSPLink `scrshot` 或 VRAM `savemem`。
+工具不会自动执行 `reset`。播放期间及前后不要使用 PSPLink `scrshot`，也不要使用 VRAM `savemem`，二者都会使 ME 崩溃。
 
 结果位于设备的 `WiliMini/benchmark-results/`。每次调用各有独立目录：
 

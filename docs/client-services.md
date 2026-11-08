@@ -188,6 +188,6 @@ sequential, so one stalled request can delay the rest of a page.
   credential host checks and header bounds, error-log redaction.
 - Real account confirmation requires scanning the real PSP login screen with
   the account owner's phone.
-- Do not use PSPLink scrshot with the current ME decoder: its partition-4
-  scratch allocation overlaps the decoder's ME firmware image. Direct VRAM
-  savemem also caused USB transfer stalls. Headless captures do not use either.
+- Use PSPLink scrshot only when no video is playing or about to play; with the
+  ME decoder active it crashes the ME. Never use VRAM savemem; it also crashes
+  the ME and has stalled USB transfers. Headless captures use neither.

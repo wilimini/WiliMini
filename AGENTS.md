@@ -121,10 +121,46 @@ Check `root=` in the startup logs to confirm the package location.
 - If PSPLink is unresponsive, manually reboot the PSP and re-enter PSPLink.
   Persistent ME failures also require a manual reboot; a responsive shell alone
   does not establish that ME state has recovered.
-- Do not use PSPLink `scrshot` with the current ME decoder: its partition-4
-  scratch allocation overlaps the ME firmware image. Do not use VRAM `savemem`
-  as a routine screenshot method; it has stalled USB transfers. Emulator
-  screenshots are a separate workflow and do not replace hardware validation.
+- PSPLink `scrshot` is allowed only when no video is playing or about to play
+  (menus, settings, lists). Do not use it during or around playback: with the
+  ME decoder active it crashes the ME. Never use VRAM `savemem` as a screenshot
+  method; it also crashes the ME and has stalled USB transfers. After any ME
+  failure, manually reboot the PSP. Emulator screenshots are a separate workflow
+  and do not replace hardware validation.
+- When `scrshot` is allowed, run `scrshot host0:/name.bmp` in `pspsh`. The file
+  lands in the repository root as a BMP: move it out of the repository and
+  convert it before viewing. It reads the live framebuffer, so a capture taken
+  right after a button press can be a torn frame; wait about 2 seconds or capture
+  twice.
+- `pspsh` prints nothing when commands are piped into it. For scripted use run it
+  under a pty, for example `printf 'thlist\n' | script -qc "pspsh -p 11000" /dev/null`,
+  and wait between commands. Empty output does not mean the PSP is disconnected.
+
+### Button control from pspsh
+
+Drive the on-device UI with the `btn` command in `pspsh`; there is no other
+supported way to inject buttons on hardware. It needs the patched PSPLink:
+`make psplink` builds it from `third_party/psplinkusb` plus
+`patches/psplink-buttons.patch` into `build/psplink/`, and the resulting
+`psplink.prx` must be installed as `PSPLINK.PRX` in the PSPLink folder on the
+Memory Stick, then PSPLink relaunched (back up the original first). Confirm it is
+active: `btn bogus` should answer `Unknown button 'bogus'`.
+
+```text
+btn down
+btn -t 300 cross
+btn up up cross
+btn l+r
+```
+
+Buttons are `select start up down left right l r triangle circle cross square`.
+Join names with `+` to press together; `-t` sets the hold time in ms (default
+150). Each press is followed by a 150 ms gap, and the command blocks until done.
+It prints how many times the `sceCtrl` hooks were called and merged a button;
+all zeros means the application is not reading the pad through the hooks. A
+trailing `Unknown command btn` after an error is the host `pspsh` and is
+harmless. Take a `thlist` baseline and check exit behavior as described above
+after driving the UI. See `docs/debug.md` for details, including UI navigation.
 
 ## Validation and Reporting
 
