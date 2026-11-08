@@ -6,6 +6,35 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* wili_swap_run() takes its working buffers from the heap and frees them on return. A
+ * simulated power loss longjmps over that free(), so the library is compiled into this
+ * test with malloc/free routed through a tracker. guarded() releases what an abandoned
+ * run left behind (a real power cut loses the heap, so a device leaks nothing) and
+ * asserts that a run that returned normally freed everything: LeakSanitizer stays on
+ * for real leaks instead of being suppressed. */
+#define MAX_LIVE 8
+static void *live_allocs[MAX_LIVE];
+static int live_count;
+static void *track_malloc(size_t n) {
+    void *p = malloc(n);
+    assert(p && live_count < MAX_LIVE);
+    live_allocs[live_count++] = p;
+    return p;
+}
+static void track_free(void *p) {
+    for (int i = 0; p && i < live_count; ++i)
+        if (live_allocs[i] == p) { live_allocs[i] = live_allocs[--live_count]; break; }
+    free(p);
+}
+static void release_abandoned(void) {
+    while (live_count) free(live_allocs[--live_count]);
+}
+#define malloc track_malloc
+#define free track_free
+#include "../platform/src/wili_update_swap.c"
+#undef malloc
+#undef free
+
 #define MAXF 96
 typedef struct { char path[160]; char data[4096]; int used; } file_t;
 static file_t fsx[MAXF];
@@ -65,8 +94,10 @@ static void assert_new(void) {
 /* Runs fn until it finishes without a simulated power loss. */
 static int guarded(int (*fn)(void)) {
     int crashed = 0;
-    if (setjmp(boom)) { crashed = 1; crash_at = -1; return -100; }
-    int r = fn(); (void)crashed; return r;
+    if (setjmp(boom)) { crashed = 1; crash_at = -1; release_abandoned(); return -100; }
+    int r = fn(); (void)crashed;
+    assert(live_count == 0); /* a run that returned normally must free its buffers */
+    return r;
 }
 static int do_run(void) { return wili_swap_run(&FS, R); }
 static int do_commit(void) { return wili_swap_commit(&FS, R); }

@@ -28,7 +28,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out
 "$out/playback-controls-test"
 sh tools/test-update-package.sh
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
-    tests/update_swap_test.c platform/src/wili_update_swap.c -o "$out/update-swap-test"
+    tests/update_swap_test.c -o "$out/update-swap-test" # includes the library source itself
 "$out/update-swap-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -Iplatform/include \
     tests/update_swap_posix_test.c platform/src/wili_update_swap.c -o "$out/update-swap-posix-test"
