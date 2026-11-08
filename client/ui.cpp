@@ -3142,6 +3142,29 @@ void ui_dialog_present() {
     draw_buffer = sceGuSwapBuffers();
 }
 
+void drawUpdateNotice(const pspapp::App& app) {
+    const auto locale = app.preferences().locale;
+    const bool failed = app.noticeFailed();
+    fillRect(0, 0, kWidth, kHeight, color(0, 0, 0, 150));
+    fillRect(24, 24, 432, 224, kPanel);
+    fillRect(24, 24, 432, 2, failed ? kPink : kText);
+    drawText(36, 34, 0.9f, failed ? kPink : kText,
+             pspapp::text(failed ? pspapp::TextId::notice_failed_title : pspapp::TextId::notice_applied_title, locale), 408);
+    const std::string message = failed
+        ? pspapp::text(pspapp::TextId::notice_failed_text, locale)
+        : pspapp::formatText(pspapp::TextId::notice_applied_text, locale, {{"version", app.updateVersionNow()}});
+    drawWrapped(36, 64, 0.7f, kText, message, 408, 3, 18);
+    if (!app.noticeLog().empty()) {
+        drawText(36, 124, 0.5f, kTextDim, pspapp::text(pspapp::TextId::notice_log_title, locale), 408);
+        int y = 140;
+        for (const auto& line : app.noticeLog()) {
+            y += std::max(1, drawWrapped(36, y, 0.5f, kTextDim, line, 408, 2, 14)) * 14;
+            if (y > 214) break;
+        }
+    }
+    drawText(36, 226, 0.7f, kPink, uiText(app, pspapp::TextId::notice_ok, {{"confirm", app.preferences().confirmButton()}}), 408);
+}
+
 void ui_render(const pspapp::App& app) {
 #ifdef BILI_UI_FRAME_STATS
     const uint64_t statsStart = sceKernelGetSystemTimeWide();
@@ -3205,6 +3228,7 @@ void ui_render(const pspapp::App& app) {
     }
     if (!hub && app.preferences().tileHome()) squeezePage(nowMs);
     drawFooter(app);
+    if (app.noticeVisible()) drawUpdateNotice(app);
 #ifdef BILI_UI_FRAME_STATS
     {   // CPU drawing time of this frame (excludes the vblank wait). Phase: E tile home entering,
         // H tile home, L launching a tile, P page entering, S page.

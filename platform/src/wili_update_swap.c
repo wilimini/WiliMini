@@ -21,6 +21,16 @@ static char manifest_buf[MANIFEST_CAP + 1];
  * last line survives a crash. Best effort; never affects the swap. */
 static char log_buf[3072];
 static size_t log_len;
+static int log_loaded;
+static void log_load(const swap_ctx *c) {
+    char p[MAX_PATH];
+    int n;
+    if (log_loaded) return;
+    log_loaded = 1;
+    snprintf(p, sizeof p, "%s/update.log", c->root);
+    n = c->fs->exists(c->fs->ctx, p) ? c->fs->read(c->fs->ctx, p, log_buf, sizeof log_buf - 1) : 0;
+    log_len = n > 0 ? (size_t)n : 0;
+}
 static void slog(const swap_ctx *c, const char *fmt, ...) {
     char line[160], p[MAX_PATH];
     va_list ap;
@@ -30,12 +40,37 @@ static void slog(const swap_ctx *c, const char *fmt, ...) {
     va_end(ap);
     if (n <= 0) return;
     if ((size_t)n > sizeof line - 2) n = (int)sizeof line - 2;
-    if (log_len + (size_t)n + 1 >= sizeof log_buf) log_len = 0; /* keep the newest lines */
+    log_load(c);
+    if (log_len + (size_t)n + 1 >= sizeof log_buf) { /* drop the oldest half, at a line start */
+        size_t cut = log_len / 2;
+        while (cut < log_len && log_buf[cut - 1] != '\n') ++cut;
+        memmove(log_buf, log_buf + cut, log_len - cut);
+        log_len -= cut;
+    }
     memcpy(log_buf + log_len, line, (size_t)n);
     log_len += (size_t)n;
     log_buf[log_len++] = '\n';
     snprintf(p, sizeof p, "%s/update.log", c->root);
     c->fs->write(c->fs->ctx, p, log_buf, log_len);
+}
+/* <root>/update.notice: first line "applied" or "failed", then the last log lines.
+ * The client shows it once after start-up and deletes it when the user dismisses it. */
+static void write_notice(const swap_ctx *c, const char *kind) {
+    char out[400], p[MAX_PATH];
+    size_t start = log_len, lines = 0, n;
+    log_load(c);
+    start = log_len;
+    while (start > 0 && lines < 4) { /* up to the last 4 lines */
+        --start;
+        if (start > 0 && log_buf[start - 1] == '\n') ++lines;
+        else if (start == 0) ++lines;
+    }
+    if (log_len - start > 300) start = log_len - 300;
+    n = (size_t)snprintf(out, sizeof out, "%s\n", kind);
+    memcpy(out + n, log_buf + start, log_len - start);
+    n += log_len - start;
+    snprintf(p, sizeof p, "%s/update.notice", c->root);
+    c->fs->write(c->fs->ctx, p, out, n);
 }
 
 int wili_swap_path_ok(const char *rel) {
@@ -225,6 +260,7 @@ static wili_swap_status fail_rollback(swap_ctx *c, phase_t from) {
     snprintf(f, sizeof f, "%s/update.failed", c->root);
     slog(c, "rolled back");
     c->fs->write(c->fs->ctx, f, "rolled back\n", 12);
+    write_notice(c, "failed");
     finish_files(c);
     return WILI_SWAP_ROLLED_BACK;
 }
@@ -237,6 +273,7 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
     int i;
     char b[MAX_PATH], m[MAX_PATH];
     c->fs = fs; c->root = root; c->count = 0;
+    log_loaded = 0; log_len = 0;
     s = read_state(c);
     snprintf(m, sizeof m, "%s/pending/MANIFEST", root);
     if (s.phase != S_NONE || fs->exists(fs->ctx, m)) slog(c, "swap: state=%d trial=%d manifest=%d", (int)s.phase, s.trial, fs->exists(fs->ctx, m));
@@ -269,8 +306,9 @@ wili_swap_status wili_swap_run(const wili_swap_fs *fs, const char *root) {
     }
     if (s.phase == S_INSTALL) {
         if (do_install(c) < 0) { r = fail_rollback(c, S_INSTALL); goto out; }
-        if (write_state(c, S_TRIAL, 0) < 0) goto out;
         slog(c, "installed %d files; trial boot", c->count);
+        write_notice(c, "applied"); /* before the state, so it exists whenever the state says installed */
+        if (write_state(c, S_TRIAL, 0) < 0) goto out;
         s.phase = S_TRIAL; s.trial = 0;
     }
     if (s.phase == S_ROLLBACK || s.phase == S_ROLLBACK2 || s.phase == S_ROLLBACK_B) {

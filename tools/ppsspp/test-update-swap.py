@@ -54,8 +54,13 @@ def stage(game, files):
 def launch(memstick, name):
     shot = out / (name + '.png')
     shot.unlink(missing_ok=True)
+    modal = out / (name + '-notice.png')
+    modal.unlink(missing_ok=True)
     env = dict(os.environ, BILI_HEADLESS_MEMSTICK=str(memstick), BILI_HEADLESS_PLAYER='ppsspp-sceMpeg',
-               BILI_HEADLESS_TIMEOUT='120', BILI_HEADLESS_LOG='1', BILI_HEADLESS_SCREENSHOT_AT=f'10:{shot}')
+               BILI_HEADLESS_TIMEOUT='200', BILI_HEADLESS_LOG='1',
+               # The update message waits for a button: look at it, press confirm, look again.
+               BILI_HEADLESS_PRESS_SCRIPT='20:0x4000:0.2',
+               BILI_HEADLESS_SCREENSHOT_AT=f'12:{modal},26:{shot}')
     with (out / (name + '.log')).open('w') as handle:
         subprocess.run(['sh', str(root / 'tools/ppsspp/run-client-headless.sh')], env=env,
                        stdout=handle, stderr=subprocess.STDOUT)
@@ -84,6 +89,7 @@ check(read(game / 'extra/new-file.txt') == b'hello\n', 'apply: new file in a new
 check(read(game / 'settings.json') is not None, 'apply: settings.json untouched')
 check(not (game / 'pending/MANIFEST').exists(), 'apply: pending/MANIFEST removed after commit')
 check(not (game / 'update.state').exists(), 'apply: update.state removed after the client committed')
+check(not (game / 'update.notice').exists(), 'apply: update.notice deleted once the message was dismissed')
 check(not (game / 'update.failed').exists(), 'apply: no update.failed')
 print('--- apply: update.log ---')
 print((read(game / 'update.log') or b'(none)').decode(errors='replace'))
@@ -103,6 +109,7 @@ launch(memstick, 'rollback')
 check(read(game / 'build.json') == old_build, 'rollback: previous build.json restored')
 check(read(game / 'update.failed') is not None, 'rollback: update.failed written')
 check(not (game / 'update.state').exists() and not (game / 'pending/MANIFEST').exists(), 'rollback: state cleaned up')
+check(not (game / 'update.notice').exists(), 'rollback: update.notice deleted once the message was dismissed')
 print('--- rollback: update.log ---')
 print((read(game / 'update.log') or b'(none)').decode(errors='replace'))
 shutil.rmtree(memstick, ignore_errors=True)

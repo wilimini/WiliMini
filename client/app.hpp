@@ -94,8 +94,16 @@ public:
     bool updateBusy() const { return update_ && update_->busy(); }
     void cancelUpdate() { if (update_) update_->cancel(); }
     const std::string& updateVersion() const { return updateVersion_; }
+    std::string updateVersionNow() const { return buildVersion(); }
     const char* updateChannelName() const { return kUpdateSources[preferences_.updateChannel == 1 ? 1 : 0].name; }
     void changeUpdateChannel();
+    // One-time message after start-up about the last update (see wili_update_swap.h):
+    // shown as a modal that waits for a button; dismissing deletes the note.
+    bool noticeVisible() const { return !noticeKind_.empty(); }
+    bool noticeFailed() const { return noticeKind_ == "failed"; }
+    const std::vector<std::string>& noticeLog() const { return noticeLog_; }
+    void loadUpdateNotice();
+    void dismissUpdateNotice();
 
     void openBrowse(BrowseRequest request);
     void browseMore();
@@ -379,6 +387,8 @@ private:
     std::unique_ptr<UpdateController> update_;
     SceUID updateThread_ = -1;
     std::string updateVersion_;
+    std::string noticeKind_;
+    std::vector<std::string> noticeLog_;
     void openUpdate();
     void startUpdateJob(bool install);
     void joinUpdateThread();

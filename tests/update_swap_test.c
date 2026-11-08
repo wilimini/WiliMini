@@ -93,6 +93,7 @@ static int scenario_success(int at, int after) {
     assert(do_run() == WILI_SWAP_NONE && !find(R "/pending/MANIFEST") && !find(R "/update.state"));
     assert_new();
     assert(same(R "/a.prx.bak", "old-a")); /* manual rollback copy kept; stale bak replaced */
+    { const char* n = get(R "/update.notice"); assert(n && !strncmp(n, "applied\n", 8) && strstr(n, "installed 3 files")); }
     return crashed;
 }
 /* Scenario 2: client never commits; after the trial boots the old version returns. */
@@ -111,6 +112,7 @@ static int scenario_rollback(int at, int after) {
     assert(applied == WILI_SWAP_TRIAL_BOOTS || (crashed && applied == WILI_SWAP_TRIAL_BOOTS - 1));
     assert_old();
     assert(find(R "/update.failed") && !find(R "/pending/MANIFEST") && !find(R "/update.state"));
+    { const char* n = get(R "/update.notice"); assert(n && !strncmp(n, "failed\n", 7) && strstr(n, "rolled back")); }
     crash_at = -1;
     assert(do_run() == WILI_SWAP_NONE); /* does not retry the same staging */
     assert_old();

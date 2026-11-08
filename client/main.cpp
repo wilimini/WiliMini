@@ -194,6 +194,8 @@ int main(int argc, char** argv) {
         WLOG_W(WLC_CLIENT, "update commit failed");
     }
 
+    app.loadUpdateNotice(); // what the loader did with a staged update, if anything
+
     unsigned previous = 0;
     unsigned heldDirection = 0;
     int64_t repeatAt = 0;
@@ -269,6 +271,11 @@ int main(int argc, char** argv) {
         previous = pad.Buttons;
         const unsigned confirmButton = app.preferences().confirmWithCircle ? PSP_CTRL_CIRCLE : PSP_CTRL_CROSS;
         const unsigned backButton = app.preferences().confirmWithCircle ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
+        if (app.noticeVisible()) {
+            // The update message waits for a button; everything else is ignored meanwhile.
+            if (pressed & (confirmButton | backButton)) app.dismissUpdateNotice();
+            pressed &= PSP_CTRL_START;
+        }
 
         if (app.utilityPage() && !app.busy()) {
             if (pressed & PSP_CTRL_START) break;

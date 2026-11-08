@@ -190,6 +190,36 @@ void App::startUpdateJob(bool install) {
     }
 }
 
+void App::loadUpdateNotice() {
+    const std::string text = readSettingsText(CLIENT_PATH("/update.notice"), 1024);
+    noticeKind_.clear();
+    noticeLog_.clear();
+    if (text.empty()) return;
+    size_t pos = 0;
+    bool first = true;
+    while (pos < text.size()) {
+        size_t eol = text.find('\n', pos);
+        if (eol == std::string::npos) eol = text.size();
+        const std::string line = text.substr(pos, eol - pos);
+        pos = eol + 1;
+        if (first) { noticeKind_ = line; first = false; }
+        else if (!line.empty() && noticeLog_.size() < 4) noticeLog_.push_back(line);
+    }
+    if (noticeKind_ != "applied" && noticeKind_ != "failed") { // unknown or damaged: drop it
+        noticeKind_.clear();
+        noticeLog_.clear();
+        std::remove(CLIENT_PATH("/update.notice"));
+    } else {
+        WLOG_I(WLC_CLIENT, "update notice: %s", noticeKind_.c_str());
+    }
+}
+
+void App::dismissUpdateNotice() {
+    noticeKind_.clear();
+    noticeLog_.clear();
+    std::remove(CLIENT_PATH("/update.notice"));
+}
+
 void App::changeUpdateChannel() {
     if (!update_ || updateBusy()) return;
     Preferences next = preferences_;
