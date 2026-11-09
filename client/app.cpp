@@ -368,6 +368,7 @@ void App::init() {
 }
 
 void App::shutdown() {
+    stopMusic();
     coverQueue_.clear();
     queuedJob_ = Job::None;
     if (workerStarted_ && worker_ >= 0) {
@@ -772,6 +773,13 @@ void App::cancelRequest() {
 }
 
 void App::back() {
+    if (screen() == Screen::Music) {
+        stopMusic();
+        navigation_.pop();
+        coverDirty_ = true;
+        status_ = "已返回";
+        return;
+    }
     if (screen() == Screen::Update && updateBusy()) {
         cancelUpdate(); // stay on the page until the worker stops
         status_ = "正在取消更新…";
@@ -1032,6 +1040,92 @@ VideoCard App::selectedDetailCard() const {
         if (!part.title.empty()) card.title = part.title;
     }
     return card;
+}
+
+const std::vector<MusicTrack>& App::musicTracks() const {
+    static const std::vector<MusicTrack> none;
+    return music_ ? music_->tracks() : none;
+}
+
+void App::startMusic() {
+    if (screen() != Screen::Detail || !detailState().loaded || busy() || playbackReady_ || music_ ||
+        detailState().detail.card.bvid.empty()) return;
+    const auto &page = detailState();
+    std::vector<MusicTrack> tracks;
+    for (const auto &part : page.detail.pages) tracks.push_back({part.cid, part.title, part.duration});
+    size_t start = page.part < tracks.size() ? page.part : 0;
+    if (tracks.empty()) {
+        const VideoCard card = selectedDetailCard();
+        tracks.push_back({card.cid, card.title, card.duration});
+    }
+    if (!tracks[start].cid) {
+        status_ = "无法播放音频";
+        return;
+    }
+    MusicSession::Source source;
+    source.bvid = page.detail.card.bvid;
+    source.aid = page.detail.card.aid;
+    music_ = std::make_unique<MusicSession>(std::move(source), std::move(tracks), start,
+                                            static_cast<RepeatMode>(preferences_.musicRepeat));
+    if (!music_->start()) {
+        music_.reset();
+        status_ = "无法启动音乐模式";
+        return;
+    }
+    auto &route = navigation_.push<MusicRoute>();
+    route.queueFocus = start;
+    coverDirty_ = true;
+}
+
+void App::stopMusic() {
+    if (!music_) return;
+    Preferences next = preferences_;
+    next.musicRepeat = static_cast<int>(music_->view().repeat);
+    music_.reset();  // joins the worker; the audio engine and both sources are closed
+    if (next.musicRepeat != preferences_.musicRepeat &&
+        savePreferences(CLIENT_PATH("/settings.json"), next))
+        preferences_ = next;
+}
+
+void App::musicKey(MusicKey key) {
+    if (!music_ || screen() != Screen::Music) return;
+    auto &route = navigation_.get<MusicRoute>();
+    const MusicView view = music_->view();
+    const size_t count = music_->tracks().size();
+    switch (key) {
+    case MusicKey::Confirm:
+        if (route.panel == MusicPanel::Queue) {
+            music_->jump(route.queueFocus);
+            route.panel = MusicPanel::Controls;
+        } else music_->togglePause();
+        break;
+    case MusicKey::Previous: music_->previous(); break;
+    case MusicKey::Next: music_->next(); break;
+    case MusicKey::SeekBack:
+        if (route.panel != MusicPanel::Queue) music_->seekBy(-10000);
+        break;
+    case MusicKey::SeekForward:
+        if (route.panel != MusicPanel::Queue) music_->seekBy(10000);
+        break;
+    case MusicKey::Up:
+        if (route.panel == MusicPanel::Queue) { if (route.queueFocus > 0) --route.queueFocus; }
+        else if (route.panel == MusicPanel::Lyrics) music_->cycleLyricTrack();
+        break;
+    case MusicKey::Down:
+        if (route.panel == MusicPanel::Queue) { if (route.queueFocus + 1 < count) ++route.queueFocus; }
+        else if (route.panel == MusicPanel::Lyrics) music_->cycleLyricTrack();
+        break;
+    case MusicKey::Repeat: music_->cycleRepeat(); break;
+    case MusicKey::Queue:
+        if (count < 2) break;  // one part: nothing to queue
+        if (route.panel == MusicPanel::Queue) route.panel = MusicPanel::Controls;
+        else { route.panel = MusicPanel::Queue; route.queueFocus = view.index; }
+        break;
+    case MusicKey::Lyrics:
+        if (route.panel == MusicPanel::Lyrics) route.panel = MusicPanel::Controls;
+        else if (view.lyrics) route.panel = MusicPanel::Lyrics;
+        break;
+    }
 }
 
 void App::requestPlayback(bool fromStart) {

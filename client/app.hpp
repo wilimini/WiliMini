@@ -8,6 +8,7 @@
 #include <pspkernel.h>
 
 #include "bilibili.h"
+#include "music_session.hpp"
 #include "navigation.hpp"
 #include "preferences.hpp"
 #include "tile_layout.hpp"
@@ -174,6 +175,15 @@ public:
     void setCommentScrollLimit(int limit) { commentsState().scrollLimit = limit; }
     void toggleLater();
     void requestPlayback(bool fromStart = false);
+    // Music mode: audio only, the parts of the open video as a queue. Starts from the detail page.
+    enum class MusicKey { Confirm, Previous, Next, SeekBack, SeekForward, Up, Down, Repeat, Queue, Lyrics };
+    void startMusic();
+    void musicKey(MusicKey key);
+    bool musicActive() const { return music_ != nullptr; }
+    MusicView musicView() const { return music_ ? music_->view() : MusicView{}; }
+    const std::vector<MusicTrack>& musicTracks() const;
+    MusicPanel musicPanel() const { return navigation_.get<MusicRoute>().panel; }
+    size_t musicQueueFocus() const { return navigation_.get<MusicRoute>().queueFocus; }
     bool detailReady() const { return detailState().loaded; }
     int64_t detailStartMs() const { return selectedDetailCard().startMs; }
     void finishPlayback(int error, unsigned frames, int eof, int cancelled,
@@ -261,6 +271,8 @@ private:
     void startComments();
     void loadNextPage();
     void startPlay(const VideoCard &card, uint64_t cid, int duration);
+    void stopMusic();
+    std::unique_ptr<MusicSession> music_;
     VideoCard selectedDetailCard() const;
 
     static int workerEntry(SceSize args, void *argp);
