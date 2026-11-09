@@ -138,6 +138,46 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
     return -1;
 }
 
+int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, AppError* typedError) {
+    if (transfer_cancel) { error = "Cancelled"; return -1; }
+    auto response = BilibiliApi{}.get(bilibili::Api::PlayUrl2,
+        {{"bvid", video.bvid}, {"cid", std::to_string(video.cid)}, {"qn", "16"},
+         {"fnval", bilibili::BilibiliClient::FNVAL}, {"fnver", "0"}, {"fourk", "1"},
+         {"from_client", "BROWSER"}, {"web_location", "1315873"},
+         {"gaia_source", "view-card"}, {"is_main_page", "false"}, {"need_fragment", "false"},
+         {"isGaiaAvoided", "true"}, {"voice_balance", "1"}},
+        true, ErrorOperation::PreparePlayback, false);
+    if (!response) {
+        if (typedError) *typedError = response.error;
+        error = errorMessage(response.error);
+        return -1;
+    }
+    bilibili::VideoUrlResult result;
+    try { result = response.value.data.get<bilibili::VideoUrlResult>(); }
+    catch (...) {
+        if (typedError) *typedError = {ErrorDomain::Api, ErrorKind::InvalidResponse,
+                                       ErrorOperation::PreparePlayback, 0, 0, "playurl_parse_failed"};
+        error = "播放地址响应无法识别";
+        return -1;
+    }
+    if (const auto* audioMedia = selectAudio(result)) {
+        BiliMediaUrl audioUrl{};
+        fillMediaUrl(audioUrl, *audioMedia);
+        if (bili_prepare_audio_playback(&audioUrl, &playback) == 0) {
+            if (!transfer_cancel) return 0;
+            bili_finish_playback(&playback);
+            error = "Cancelled";
+            return -1;
+        }
+    }
+    if (transfer_cancel) { error = "Cancelled"; return -1; }
+    error = network_error[0] ? network_error : "没有可播放的音频流";
+    if (typedError) *typedError = {ErrorDomain::Playback, ErrorKind::Unknown,
+                                   ErrorOperation::PreparePlayback, -1, 0,
+                                   network_error[0] ? network_error : "audio_unavailable"};
+    return -1;
+}
+
 int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
     (void)episode;
     auto response = BilibiliApi{}.get(bilibili::Api::SeasonUrl2,

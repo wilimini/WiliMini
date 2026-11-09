@@ -39,6 +39,9 @@ static struct {
     uint64_t clock_anchor_us;
     int rest_samples;
 } audio;
+/* Output waits this long after prefill so video can reach its first frame.
+ * The audio-only player shortens it. */
+static int64_t audio_start_delay_us = 1000000;
 
 static int audio_wait(SceUID sem)
 {
@@ -338,7 +341,7 @@ static int audio_open(const char *source, const PspVideoSource *stream,
         if (written != count) return -107;
     }
 #endif
-    audio.epoch_us = playback_now_us() + 1000000;
+    audio.epoch_us = playback_now_us() + audio_start_delay_us;
 #if PSP_RGB_PACE
     rgb_startup_ready = 1;
 #endif

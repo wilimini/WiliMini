@@ -1558,6 +1558,31 @@ int bili_prepare_range_playback(const BiliVideo *v, const BiliMediaUrl *video_ur
     return 0;
 }
 
+/* Music mode: only the audio track is fetched, so no video bytes are downloaded. */
+int bili_prepare_audio_playback(const BiliMediaUrl *audio_url, BiliPlayback *out) {
+    if (!audio_url || !out) return -1;
+    memset(out, 0, sizeof(*out));
+    snprintf(out->path, sizeof(out->path), "dash-audio");
+    if (network_connect() < 0) return -1;
+    network_phase = NET_VIDEO_SOURCE;
+    char error[160] = {0};
+    int64_t audio_size = 0;
+    BiliRangeStream *audio = NULL;
+    if (range_start(audio_url, "audio", &audio, error, sizeof(error)) < 0) {
+        snprintf(network_error, sizeof(network_error), "%s", error);
+        return -1;
+    }
+    const int64_t deadline = (int64_t)sceKernelGetSystemTimeWide() + 30000000;
+    if (range_wait(audio, deadline, &audio_size, error, sizeof(error)) < 0) {
+        range_destroy(audio);
+        snprintf(network_error, sizeof(network_error), "%s", error);
+        return -1;
+    }
+    out->streaming = 1;
+    out->audio = audio;
+    return 0;
+}
+
 const PspVideoSource *bili_playback_source(const BiliPlayback *playback) {
     if (!playback || !playback->streaming) return NULL;
     if (playback->live) return bili_live_source(playback->live,0);

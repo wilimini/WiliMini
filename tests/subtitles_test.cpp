@@ -17,5 +17,9 @@ int main() {
     std::string large = "{\"body\":[";
     for (int i = 0; i < 2049; ++i) { if (i) large += ','; large += R"({"from":0,"to":1,"content":"x"})"; }
     large += "]}"; assert(parseSubtitles(large).empty());
+    cues = {{1000, 2000, "a"}, {4000, 5000, "b"}};
+    assert(lyricIndexAt(cues, 0) == -1 && lyricIndexAt(cues, 1000) == 0);
+    assert(lyricIndexAt(cues, 3000) == 0 && lyricIndexAt(cues, 4000) == 1 && lyricIndexAt(cues, 99000) == 1);
+    assert(lyricIndexAt({}, 0) == -1);
     std::cout << "subtitles: PASS\n";
 }

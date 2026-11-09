@@ -15,6 +15,9 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Ithird_party/nlohmann \
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Ithird_party/nlohmann \
     tests/subtitles_test.cpp client/services/subtitles.cpp -o "$out/subtitles-test"
 "$out/subtitles-test"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror \
+    tests/music_queue_test.cpp client/services/music_queue.cpp -o "$out/music-queue-test"
+"$out/music-queue-test"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/pinyin_ime_test.cpp client/pinyin_ime.cpp -o "$out/pinyin-ime-test"
 "$out/pinyin-ime-test" client/assets/ime/pinyin.dat
