@@ -11,6 +11,10 @@
 #include <stdint.h>
 #include "psp_video.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     PSP_AUDIO_IDLE = 0,   /* no session */
     PSP_AUDIO_OPENING,    /* opening or seeking: the position is the target */
@@ -50,5 +54,9 @@ void psp_audio_status(PspAudioStatus *status);
 void psp_audio_close(int drain);
 /* HOME: same as psp_video_stop. Does not block; follow with psp_audio_close. */
 void psp_audio_stop(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
