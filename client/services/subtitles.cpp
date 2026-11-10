@@ -35,4 +35,8 @@ int subtitleAt(const std::vector<SubtitleCue>& cues, int64_t ms) {
     }
     return -1;
 }
+int lyricIndexAt(const std::vector<SubtitleCue>& cues, int64_t ms) {
+    auto end = std::upper_bound(cues.begin(), cues.end(), ms, [](int64_t t, const auto& c) { return t < c.startMs; });
+    return static_cast<int>(end - cues.begin()) - 1;
+}
 }

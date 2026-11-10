@@ -243,11 +243,13 @@ add_library(wili_client_objects OBJECT
     client/app_settings.cpp
     client/playback.cpp
     client/playback_osd.cpp
+    client/music_session.cpp
     client/api_client.cpp
     client/services/app_error.cpp
     client/services/playback_error.cpp
     client/services/network.cpp
     client/services/subtitles.cpp
+    client/services/music_queue.cpp
     client/services/subtitle_service.cpp
     client/services/danmaku.cpp
     client/services/danmaku_service.cpp

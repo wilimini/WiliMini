@@ -1455,3 +1455,4 @@ int psp_video_me_backend(void) {
     return -1;
 #endif
 }
+#include "audio_only.h"

@@ -67,6 +67,8 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.bodySize = root.at("body_size").get<int>();
         loaded.showCovers = root.at("show_covers").get<bool>();
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
+        loaded.musicRepeat = root.value("music_repeat", 0);
+        if (loaded.musicRepeat < 0 || loaded.musicRepeat > 2) loaded.musicRepeat = 0;
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
         const std::string pixelFormat = root.value("playback_pixel_format", std::string("auto"));
         if (pixelFormat == "auto") loaded.playbackPixelFormat = PlaybackPixelFormat::Auto;
@@ -154,6 +156,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
     const std::string text = nlohmann::json({{"version", 1},
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
+        {"music_repeat", preferences.musicRepeat},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
         {"playback_pixel_format", preferences.playbackPixelFormat == PlaybackPixelFormat::Auto ? "auto" :
              preferences.playbackPixelFormat == PlaybackPixelFormat::Rgb565 ? "rgb565" : "rgba8888"},

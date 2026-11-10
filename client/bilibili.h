@@ -58,6 +58,7 @@ const PspVideoSource *bili_live_source(BiliLiveStream *stream, int audio);
 int bili_live_finish(BiliLiveStream *stream);
 int bili_prepare_range_playback(const BiliVideo *video, const BiliMediaUrl *video_url,
                                 const BiliMediaUrl *audio_url, BiliPlayback *out);
+int bili_prepare_audio_playback(const BiliMediaUrl *audio_url, BiliPlayback *out);
 const PspVideoSource *bili_playback_source(const BiliPlayback *playback);
 const PspVideoSource *bili_playback_audio_source(const BiliPlayback *playback);
 int bili_finish_playback(BiliPlayback *playback);

@@ -2,7 +2,7 @@
 
 播放按键参考 [PSP 官方说明](https://manuals.playstation.net/document/en/psp/current/video/keyassign.html)
 和 [wiliwili video_view.cpp](https://github.com/xfangfang/wiliwili/blob/88e5876bea9502d06f46a8656e3530684d3aaf7d/wiliwili/source/view/video_view.cpp)，
-按 PSP 操作习惯调整如下。确认键和返回键遵循客户端设置。
+按 PSP 操作习惯调整如下。确认键和返回键遵循客户端设置。视频详情页按 `SELECT` 进入纯音频音乐模式，详见 [音乐模式](music-player.md)。
 
 | 按键 | 播放中的操作 |
 | --- | --- |

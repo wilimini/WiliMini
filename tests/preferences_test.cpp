@@ -136,6 +136,17 @@ int main(int argc, char** argv) {
     assert(!pspapp::loadPreferences(path, value));
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"log_channels":"a;b"})";
     assert(!pspapp::loadPreferences(path, value));
+    // Music repeat defaults to 0 (RepeatMode::All), round-trips 0/1/2, and clamps out-of-range values.
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false})";
+    assert(pspapp::loadPreferences(path, value) && value.musicRepeat == 0);
+    for (int repeat : {0, 1, 2}) {
+        value.musicRepeat = repeat;
+        assert(pspapp::savePreferences(path, value));
+        pspapp::Preferences repeatRestored;
+        assert(pspapp::loadPreferences(path, repeatRestored) && repeatRestored.musicRepeat == repeat);
+    }
+    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"music_repeat":9})";
+    assert(pspapp::loadPreferences(path, value) && value.musicRepeat == 0);
     std::remove(path);
     std::puts("Preference migration, round trips, invalid buffers and log settings: passed");
 }

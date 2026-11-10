@@ -12,4 +12,6 @@ std::vector<SubtitleTrack> subtitleTracks(const std::string& bvid, uint64_t cid,
 std::vector<SubtitleTrack> loadSubtitles(const std::string& bvid, uint64_t cid, uint64_t aid = 0);
 // Latest starting active cue wins if the source contains overlapping intervals.
 int subtitleAt(const std::vector<SubtitleCue>& cues, int64_t positionMs);
+// Lyrics view: the last cue that has started, kept through gaps; -1 before the first.
+int lyricIndexAt(const std::vector<SubtitleCue>& cues, int64_t positionMs);
 }

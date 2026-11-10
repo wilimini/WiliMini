@@ -54,6 +54,8 @@ struct Preferences {
     int bodySize = 14;
     bool showCovers = true;
     bool slowRepeat = false;
+    // Music mode repeat: 0 all, 1 one, 2 once (MusicQueue's RepeatMode order).
+    int musicRepeat = 0;
     int playbackBufferFrames = defaultPlaybackBufferFrames();
     PlaybackPixelFormat playbackPixelFormat = PlaybackPixelFormat::Auto;
     MeBackend meBackend = MeBackend::CustomCore;
