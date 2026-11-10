@@ -21,6 +21,9 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror \
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/pinyin_ime_test.cpp client/pinyin_ime.cpp -o "$out/pinyin-ime-test"
 "$out/pinyin-ime-test" client/assets/ime/pinyin.dat
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    tests/bitmap_font_test.cpp client/bitmap_font.cpp -o "$out/bitmap-font-test"
+"$out/bitmap-font-test" client/assets/font/wqy.bmf
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithird_party/nlohmann \
     tests/update_core_test.cpp client/services/update_core.cpp -o "$out/update-core-test"
 "$out/update-core-test"

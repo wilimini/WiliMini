@@ -150,6 +150,11 @@ The atlases are allocated on first use and freed by `ui_prepare_playback()` (tog
 the covers and the feed image) so playback has the memory; the next frame rebuilds them.
 About 0.3 MiB in total at peak.
 
+At startup the body font reader loads the existing `wqy.bmf` index in batches.
+It stores one offset and advance per glyph, with size and dimensions shared across
+contiguous codepoint ranges. The bundled font uses about 445 KiB of heap for this
+index. The reader loads glyph pixels from the font file on demand.
+
 ## Diagnostics
 
 `-DBILI_UI_FRAME_STATS=ON` logs `UIFRAME` (CPU time of the frame) and `UIGE`: sprites, batches,
