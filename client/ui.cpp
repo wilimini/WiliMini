@@ -61,7 +61,7 @@ uint32_t kPink = color(204, 65, 113);
 constexpr uint32_t kBlue = color(0, 174, 236);
 constexpr uint32_t kBlack = color(0, 0, 0);
 // Music mode uses its own dark palette, whatever the theme.
-constexpr uint32_t kMusicBg = color(38, 11, 24);
+constexpr uint32_t kMusicBg = color(14, 12, 24);
 constexpr uint32_t kMusicText = color(255, 255, 255);
 constexpr uint32_t kMusicDim = color(217, 198, 206);
 constexpr uint32_t kMusicAccent = color(255, 125, 151);
@@ -190,8 +190,10 @@ struct TexState {
     TexKind kind = TexKind::None;
     const void* data = nullptr;
     int width = 0, height = 0;  // power-of-two size declared to the GE; the buffer pitch equals width
+    bool linear = false;
     bool operator==(const TexState& other) const {
-        return kind == other.kind && data == other.data && width == other.width && height == other.height;
+        return kind == other.kind && data == other.data && width == other.width && height == other.height &&
+               linear == other.linear;
     }
 };
 
@@ -264,7 +266,8 @@ void geApplyTexture(const TexState& tex) {
     // left there, which is not meaningful. Glyphs, masks and 4444 icons use their alpha channel.
     const bool opaque = tex.kind == TexKind::Color5650 || tex.kind == TexKind::Color8888;
     sceGuTexFunc(GU_TFX_MODULATE, opaque ? GU_TCC_RGB : GU_TCC_RGBA);
-    sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+    const int filter = tex.linear ? GU_LINEAR : GU_NEAREST;
+    sceGuTexFilter(filter, filter);
     sceGuTexWrap(GU_CLAMP, GU_CLAMP);
 }
 
@@ -396,7 +399,7 @@ public:
         index_.clear();
         used_ = 0;
     }
-    TexState tex() const { return {TexKind::Glyph4, memory_, 512, 512}; }
+    TexState tex(bool linear = false) const { return {TexKind::Glyph4, memory_, 512, 512, linear}; }
 
     Cell* find(uint32_t key, unsigned epoch) {
         const auto found = index_.find(key);
@@ -550,6 +553,20 @@ const GlyphAtlas::Cell* titleCell(uint32_t codepoint) {
     if (!cell) {
         geBarrier();
         cell = titleAtlas.insert(codepoint, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    }
+    return cell;
+}
+
+const GlyphAtlas::Cell* lyricCell(uint32_t codepoint) {
+    if (!titleAtlas.ensure(36, 44, 14, 9)) return nullptr;
+    const uint32_t key = codepoint | 0x80000000u;  // share the large glyph atlas with page titles
+    if (const auto* cell = titleAtlas.find(key, renderEpoch)) return cell;
+    const LyricGlyph* glyph = lyricGlyph(codepoint);
+    if (!glyph) return nullptr;
+    auto* cell = titleAtlas.insert(key, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
+    if (!cell) {
+        geBarrier();
+        cell = titleAtlas.insert(key, renderEpoch, glyph->advance, glyph->width, glyph->height, glyph->alpha);
     }
     return cell;
 }
@@ -1061,7 +1078,16 @@ void drawFooter(const pspapp::App& app) {
         statusUntil = nowTicks + 2000000;
     }
     const bool music = app.screen() == pspapp::Screen::Music;
-    fillRect(0, 258, kWidth, 14, music ? kMusicBg : kBackground);
+    if (music) {
+        const auto panel = app.musicPanel();
+        const auto hint = uiText(app, panel == pspapp::MusicPanel::Queue ? pspapp::TextId::hint_music_queue
+                                   : panel == pspapp::MusicPanel::Lyrics ? pspapp::TextId::hint_music_lyrics
+                                                                          : pspapp::TextId::hint_music,
+                                 {{"confirm", confirm}, {"back", back}});
+        drawText(28, 255, 0.46f, kMusicDim, hint, 428);
+        return;
+    }
+    fillRect(0, 258, kWidth, 14, kBackground);
     std::string hint;
     if (app.utilityPage()) {
         if (app.screen() == pspapp::Screen::Settings)
@@ -1098,12 +1124,6 @@ void drawFooter(const pspapp::App& app) {
         hint = uiText(app, pspapp::TextId::hint_navigation, {{"confirm", confirm}});
     } else if (app.focusArea() == pspapp::FocusArea::Categories) {
         hint = uiText(app, pspapp::TextId::hint_categories);
-    } else if (music) {
-        const auto panel = app.musicPanel();
-        hint = uiText(app, panel == pspapp::MusicPanel::Queue ? pspapp::TextId::hint_music_queue
-                           : panel == pspapp::MusicPanel::Lyrics ? pspapp::TextId::hint_music_lyrics
-                                                                  : pspapp::TextId::hint_music,
-                      {{"confirm", confirm}, {"back", back}});
     } else if (app.screen() == pspapp::Screen::Detail && !app.detailReady()) {
         hint = uiText(app, pspapp::TextId::hint_detail_loading, {{"back", back}});
     } else if (app.screen() == pspapp::Screen::Detail) {
@@ -1173,7 +1193,7 @@ void drawFooter(const pspapp::App& app) {
          app.playbackFailed()) &&
         !lastStatus.empty())
         hint = lastStatus;
-    drawText(12, 254, 0.46f, music ? kMusicDim : kTextDim, hint, 456);
+    drawText(12, 254, 0.46f, kTextDim, hint, 456);
     if (app.busy() && !app.pollingLogin()) {
         const unsigned total = transfer_total_kb;
         const unsigned now = transfer_kb;
@@ -2500,13 +2520,116 @@ void drawCardGrid(const pspapp::App& app) {
 }
 
 // ---- Music mode (Now Playing) ----------------------------------------------------------------
-// Flat design from the approved mockup, halved to the real 480x272 screen: cover on the left,
-// controls, lyrics or the queue on the right. Rounded shapes use cached alpha masks.
+constexpr int kLyricX = 196, kLyricWidth = 264;
 
-// Quarter-circle mask for one corner (0 TL, 1 TR, 2 BL, 3 BR). `inverse` keeps the outside of
-// the circle, which trims the corners off an image drawn underneath.
-const SpriteRef* cornerMask(int corner, int radius, bool inverse) {
-    const uint32_t key = (3u << 28) | (inverse ? 1u << 27 : 0u) | (static_cast<uint32_t>(corner) << 16) |
+float musicEase(float t) {
+    t = std::clamp(t, 0.f, 1.f);
+    return t * t * (3.f - 2.f * t);
+}
+
+float lyricSpring(float t) {
+    if (t <= 0.f) return 0.f;
+    if (t >= 1.f) return 1.f;
+    const float x = 7.5f * t;
+    return 1.f - std::exp(-x) * (std::cos(x) + std::sin(x));
+}
+
+struct MusicPalette { uint32_t top, bottom; };
+constexpr MusicPalette kMusicFallback{color(111, 47, 99), color(48, 64, 125)};
+
+MusicPalette musicPalette(const CoverSlot& slot) {
+    const auto* pixels = reinterpret_cast<const uint16_t*>(slot.texture.data);
+    unsigned sum[2][3]{}, weights[2]{};
+    for (int y = 4; y < slot.height; y += 8) {
+        const int half = y >= slot.height / 2;
+        for (int x = 4; x < slot.width; x += 8) {
+            const unsigned p = pixels[y * slot.texWidth + x];
+            const unsigned r = (p & 31) * 255 / 31, g = ((p >> 5) & 63) * 255 / 63;
+            const unsigned b = ((p >> 11) & 31) * 255 / 31;
+            const unsigned peak = std::max({r, g, b});
+            const unsigned weight = 1 + (peak - std::min({r, g, b})) / 16;
+            sum[half][0] += r * weight;
+            sum[half][1] += g * weight;
+            sum[half][2] += b * weight;
+            weights[half] += weight;
+        }
+    }
+    const auto average = [&](int half) {
+        const unsigned peak = std::max({sum[half][0], sum[half][1], sum[half][2]});
+        const unsigned divisor = std::max(1u, std::max(peak, weights[half] * 48));
+        return color(sum[half][0] * 180 / divisor, sum[half][1] * 180 / divisor, sum[half][2] * 180 / divisor);
+    };
+    return {average(0), average(1)};
+}
+
+void drawMusicBackground(uint64_t page, const CoverSlot* cover, bool coversEnabled, bool playing, int64_t now) {
+    static uint64_t lastPage = 0;
+    static unsigned ticket = 0;
+    static int64_t lastFrame = 0, blendStart = 0;
+    static float phase = 0.f;
+    static MusicPalette from = kMusicFallback, target = kMusicFallback;
+    if (page != lastPage) {
+        lastPage = page;
+        ticket = 0;
+        lastFrame = blendStart = now;
+        phase = 0.f;
+        from = target = kMusicFallback;
+    }
+    const auto amount = static_cast<unsigned>(256 * musicEase((now - blendStart) / 700.f));
+    const MusicPalette palette{shadeMix(from.top, target.top, amount), shadeMix(from.bottom, target.bottom, amount)};
+    if ((cover && cover->ticket != ticket) || (!coversEnabled && ticket != 0)) {
+        from = palette;
+        target = cover ? musicPalette(*cover) : kMusicFallback;
+        ticket = cover ? cover->ticket : 0;
+        blendStart = now;
+    }
+    if (playing) {
+        phase += std::clamp<int64_t>(now - lastFrame, 0, 50) * 0.00062f;
+        if (phase >= 6.283185f) phase -= 6.283185f;
+    }
+    lastFrame = now;
+
+    // A small Gouraud mesh lets the GE interpolate moving pools of colour in one draw.
+    constexpr int columns = 6, rows = 4, count = columns * rows * 6;
+    Vtx grid[rows + 1][columns + 1];
+    const float ax = 0.36f + 0.39f * std::sin(phase), ay = 0.24f + 0.21f * std::cos(phase);
+    const float bx = 0.58f - 0.41f * std::sin(phase), by = 0.78f + 0.30f * std::sin(phase + 0.8f);
+    for (int y = 0; y <= rows; ++y) for (int x = 0; x <= columns; ++x) {
+        const float u = x / static_cast<float>(columns), v = y / static_cast<float>(rows);
+        const float dx = u - ax, dy = v - ay, ex = u - bx, ey = v - by;
+        const float a = 148.f / (1.f + 15.f * dx * dx + 7.f * dy * dy);
+        const float b = 155.f / (1.f + 11.f * ex * ex + 9.f * ey * ey);
+        const float light = (1.f - 0.25f * u) * (1.f - 0.27f * v);
+        const uint32_t tint = shadeMix(palette.top, palette.bottom, static_cast<unsigned>(256.f * b / (a + b)));
+        const uint32_t shade = shadeMix(kMusicBg, tint, static_cast<unsigned>(std::min(182.f, (a + b) * light)));
+        grid[y][x] = {0, 0, shade, static_cast<int16_t>(x * kWidth / columns),
+                      static_cast<int16_t>(y * kHeight / rows), 0, 0};
+    }
+    geEmit();
+    constexpr size_t bytes = count * sizeof(Vtx);
+    if (listUsed + bytes + 512 > kListBudget) geRestartRaw();
+    geApplyTexture(TexState{});
+    auto* vertices = static_cast<Vtx*>(sceGuGetMemory(bytes));
+    for (int y = 0; y < rows; ++y) for (int x = 0; x < columns; ++x) {
+        *vertices++ = grid[y][x];
+        *vertices++ = grid[y + 1][x];
+        *vertices++ = grid[y][x + 1];
+        *vertices++ = grid[y][x + 1];
+        *vertices++ = grid[y + 1][x];
+        *vertices++ = grid[y + 1][x + 1];
+    }
+    sceGuShadeModel(GU_SMOOTH);
+    sceGuDrawArray(GU_TRIANGLES, GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
+                   count, nullptr, vertices - count);
+    listUsed += bytes + 512;
+#ifdef BILI_UI_FRAME_STATS
+    ++statBatches;
+#endif
+}
+
+// Quarter-circle mask for one corner (0 TL, 1 TR, 2 BL, 3 BR).
+const SpriteRef* cornerMask(int corner, int radius) {
+    const uint32_t key = (3u << 28) | (static_cast<uint32_t>(corner) << 16) |
                          static_cast<uint32_t>(radius);
     if (const SpriteRef* ref = maskSprite(key)) return ref;
     std::vector<uint8_t> alpha(static_cast<size_t>(radius) * radius);
@@ -2516,15 +2639,15 @@ const SpriteRef* cornerMask(int corner, int radius, bool inverse) {
         const float dx = px + 0.5f - cx, dy = py + 0.5f - cy;
         float inside = static_cast<float>(radius) - std::sqrt(dx * dx + dy * dy) + 0.5f;
         inside = inside < 0.f ? 0.f : inside > 1.f ? 1.f : inside;
-        alpha[static_cast<size_t>(py) * radius + px] = static_cast<uint8_t>(255.f * (inverse ? 1.f - inside : inside));
+        alpha[static_cast<size_t>(py) * radius + px] = static_cast<uint8_t>(255.f * inside);
     }
     return addMaskSprite(key, radius, radius, alpha.data());
 }
 
-void drawCorners(int x, int y, int w, int h, int r, uint32_t shade, bool inverse) {
+void drawCorners(int x, int y, int w, int h, int r, uint32_t shade) {
     const int xs[4] = {x, x + w - r, x, x + w - r}, ys[4] = {y, y, y + h - r, y + h - r};
     for (int corner = 0; corner < 4; ++corner)
-        if (const SpriteRef* ref = cornerMask(corner, r, inverse)) drawMask(*ref, xs[corner], ys[corner], shade);
+        if (const SpriteRef* ref = cornerMask(corner, r)) drawMask(*ref, xs[corner], ys[corner], shade);
 }
 
 void fillRounded(int x, int y, int w, int h, int r, uint32_t shade) {
@@ -2533,7 +2656,7 @@ void fillRounded(int x, int y, int w, int h, int r, uint32_t shade) {
     fillRect(x + r, y, w - 2 * r, h, shade);
     fillRect(x, y + r, r, h - 2 * r, shade);
     fillRect(x + w - r, y + r, r, h - 2 * r, shade);
-    drawCorners(x, y, w, h, r, shade, false);
+    drawCorners(x, y, w, h, r, shade);
 }
 
 void drawDisc(int cx, int cy, int r, uint32_t shade) {
@@ -2561,11 +2684,11 @@ void fillPlayGlyph(int x, int y, int w, int h, uint32_t shade) {
     }
 }
 
-void drawMusicBar(int x, int y, int w, int position, int duration, bool knob) {
+void drawMusicBar(int x, int y, int w, int64_t position, int64_t duration) {
     fillRounded(x, y, w, 4, 2, kMusicTrack);
-    const int filled = duration > 0 ? static_cast<int>(static_cast<int64_t>(w) * std::min(position, duration) / duration) : 0;
+    const int filled = duration > 0 ? static_cast<int>(w * std::clamp<int64_t>(position, 0, duration) / duration) : 0;
     if (filled > 0) fillRounded(x, y, std::max(filled, 2), 4, 2, kMusicText);
-    if (knob) drawDisc(x + filled, y + 2, 4, kMusicText);
+    drawDisc(x + filled, y + 2, 4, kMusicText);
 }
 
 void drawMusicChip(int right, int y, const std::string& label) {
@@ -2580,63 +2703,161 @@ std::string musicRepeatText(const pspapp::App& app, pspapp::RepeatMode mode) {
                                                          : pspapp::TextId::music_repeat_once);
 }
 
-void drawMusicCover(const std::string& bvid) {
-    constexpr int x = 28, y = 48, size = 176;
-    CoverSlot* slot = showCovers ? coverSlot(bvid) : nullptr;
-    if (slot && slot->texture.data) {
-        // Centre square of the 16:9 texture, scaled up by the GE.
+void drawMusicCover(const CoverSlot* slot, int x, int y, int size) {
+    if (slot) {
+        // Draw the rounded silhouette in strips so the moving background shows at the corners.
+        constexpr int insets[] = {5, 3, 2, 1, 1};
+        constexpr int radius = sizeof(insets) / sizeof(insets[0]);
         const int side = std::min(slot->width, slot->height);
-        geSprite(TexState{TexKind::Color5650, slot->texture.data, slot->texWidth, slot->texHeight}, x, y, size, size,
-                 (slot->width - side) / 2, 0, side, side, 0xffffffffu, 0, 0, kWidth, kHeight);
-        drawCorners(x, y, size, size, 8, kMusicBg, true);
+        const TexState tex{TexKind::Color5650, slot->texture.data, slot->texWidth, slot->texHeight, true};
+        const auto strip = [&](int top, int bottom, int inset) {
+            geSprite(tex, x, y, size, size, (slot->width - side) / 2, (slot->height - side) / 2,
+                     side, side, kMusicText, x + inset, top, x + size - inset, bottom);
+        };
+        strip(y + radius, y + size - radius, 0);
+        for (int i = 0; i < radius; ++i) {
+            strip(y + i, y + i + 1, insets[i]);
+            strip(y + size - i - 1, y + size - i, insets[i]);
+        }
     } else {
-        fillRounded(x, y, size, size, 8, color(104, 34, 66));
+        fillRounded(x, y, size, size, 6, color(79, 45, 82));
         drawLineIcon(IconNote, x + size / 2 - 20, y + size / 2 - 20, 40, kMusicText);
     }
 }
 
-void drawMusicLyrics(const pspapp::App& app, const pspapp::MusicView& view, const std::string& title) {
-    constexpr int rx = 232, rw = 220, top = 44, bottom = 204, pitch = 44;
-    drawText(rx, 16, 0.5f, kMusicText, title, 106);
-    const bool has = view.lyrics && !view.lyrics->empty();
-    if (!has) {
-        drawText(rx, 118, 0.7f, kMusicDim, uiText(app, pspapp::TextId::music_no_lyrics), rw, true);
+bool timedLyricCharacter(uint32_t cp) {
+    return cp > ' ' && cp != 0x00a0 && cp != 0x3000;
+}
+
+void drawLyricCue(std::string_view text, int centerY, float scale, float focus, float edge,
+                  int64_t elapsedMs, int64_t durationMs, int top, int bottom) {
+    constexpr int maxLines = 3;
+    constexpr int wrapWidth = kLyricWidth * 100 / 108;
+    constexpr float fallbackScale = kLyricFontSize / 16.f;
+    std::string_view lines[maxLines];
+    int count = 0, width = 0, characters = 0;
+    size_t start = 0, pos = 0;
+    // Wrap at the largest size. The text keeps its line breaks through the zoom.
+    while (pos < text.size()) {
+        const size_t offset = pos;
+        const uint32_t cp = bitmapNext(text, pos);
+        if (timedLyricCharacter(cp)) ++characters;
+        if (count == maxLines) continue;
+        int advance = lyricAdvance(cp);
+        if (!advance) advance = static_cast<int>(bitmapAdvance(cp, 16) * fallbackScale);
+        if (cp == '\n' || width + advance > wrapWidth) {
+            lines[count++] = text.substr(start, offset - start);
+            start = cp == '\n' ? pos : offset;
+            width = 0;
+        }
+        if (cp != '\n') width += advance;
+    }
+    if (count < maxLines && start < pos) lines[count++] = text.substr(start, pos - start);
+
+    const float characterMs = static_cast<float>(std::max<int64_t>(1, durationMs)) / std::max(1, characters);
+    const float head = elapsedMs / characterMs;
+    const int lineHeight = static_cast<int>(29.f * scale + 0.5f);
+    const int firstY = centerY - count * lineHeight / 2;
+    const auto alpha = static_cast<uint8_t>(255.f * edge * (0.38f + 0.20f * focus));
+    const uint32_t base = color(227, 217, 232, alpha);
+    const uint32_t lit = color(255, 253, 250, static_cast<uint8_t>(255.f * focus * edge));
+    int character = 0;
+    for (int i = 0; i < count; ++i) {
+        const int y = firstY + i * lineHeight;
+        int offset = 0;
+        for (size_t p = 0; p < lines[i].size();) {
+            const uint32_t cp = bitmapNext(lines[i], p);
+            const float fill = timedLyricCharacter(cp) ? head - character++ : 0.f;
+            if (y + lineHeight <= top - 2 || y >= bottom + 4) continue;
+            const auto* heavy = lyricAdvance(cp) ? lyricCell(cp) : nullptr;
+            const auto* glyph = heavy ? heavy : bodyCell(cp, 16);
+            if (!glyph) continue;
+            const float glyphScale = heavy ? scale : scale * fallbackScale;
+            const float stroke = std::clamp(fill, 0.f, 1.f);
+            const float emphasis = 0.18f * stroke * (1.f - stroke) * focus;
+            const float lift = 3.f * focus * musicEase(fill * characterMs / std::max(650.f, characterMs));
+            const int gx = kLyricX + static_cast<int>(offset * scale - glyph->width * glyphScale * emphasis / 2.f + 0.5f);
+            const int gy = y - static_cast<int>(lift + glyph->height * glyphScale * emphasis + 0.5f);
+            const int w = static_cast<int>(glyph->width * glyphScale * (1.f + emphasis) + 0.5f);
+            const int h = static_cast<int>(glyph->height * glyphScale * (1.f + emphasis) + 0.5f);
+            const int right = kLyricX + kLyricWidth;
+            const TexState tex = heavy ? titleAtlas.tex(true) : bodyAtlas.tex(true);
+            const auto draw = [&](uint32_t shade, int left, int end) {
+                geSprite(tex, gx, gy, w, h, glyph->u, glyph->v, glyph->width, glyph->height,
+                         shade, left, top, end, bottom);
+            };
+            if (fill >= 1.f && focus >= 1.f) {
+                draw(lit, kLyricX, right);
+            } else {
+                draw(base, kLyricX, right);
+                if (fill > 0.f && focus > 0.f) {
+                    // Only the leading character needs a soft edge. Completed glyphs are one draw.
+                    const int cutoff = static_cast<int>(w * stroke + 0.5f);
+                    const int soft = fill >= 1.f ? 0 : std::min(3, cutoff);
+                    draw(lit, gx, std::min(right, gx + cutoff - soft));
+                    for (int j = 0; j < soft; ++j) {
+                        const int x = gx + cutoff - soft + j;
+                        const unsigned opacity = (lit >> 24) * (soft - j) / (soft + 1);
+                        draw((lit & 0xffffffu) | (opacity << 24), x, std::min(right, x + 1));
+                    }
+                }
+            }
+            offset += heavy ? glyph->advance : static_cast<int>(glyph->advance * fallbackScale);
+        }
+    }
+}
+
+void drawMusicLyrics(const pspapp::App& app, const pspapp::MusicView& view, int64_t now) {
+    constexpr int top = 43, bottom = 247, centerY = 129, pitch = 70;
+    if (!view.lyrics || view.lyrics->empty()) {
+        drawText(kLyricX, 118, 0.7f, kMusicDim, uiText(app, pspapp::TextId::music_no_lyrics), kLyricWidth, true);
         return;
     }
     const size_t track = std::min(view.lyricTrack, view.lyrics->size() - 1);
     const auto& list = (*view.lyrics)[track];
     const auto& cues = list.cues;
-    drawText(rx, 30, 0.5f, kMusicAccent,
-             "CC · " + list.label + (view.lyrics->size() > 1
-                 ? " (" + std::to_string(track + 1) + "/" + std::to_string(view.lyrics->size()) + ")" : ""), rw);
+    drawText(kLyricX, 22, 0.5f, kMusicDim, "CC · " + list.label + (view.lyrics->size() > 1
+                 ? " (" + std::to_string(track + 1) + "/" + std::to_string(view.lyrics->size()) + ")" : ""), 131);
+
     const int current = pspapp::lyricIndexAt(cues, view.positionMs);
-    // Ease the scroll toward the current line; a long jump (seek, new part) snaps.
-    static float scroll = 0.f;
-    static const void* lastList = nullptr;
-    const float target = current < 0 ? -0.5f : static_cast<float>(current);
-    if (lastList != &cues || std::fabs(target - scroll) > 6.f) scroll = target;
-    lastList = &cues;
-    scroll += (target - scroll) * 0.22f;
-    if (std::fabs(target - scroll) < 0.01f) scroll = target;
-    const int centerY = (top + bottom) / 2;
-    const int first = std::max(0, static_cast<int>(std::floor(scroll)) - 3);
-    const int last = std::min(static_cast<int>(cues.size()) - 1, static_cast<int>(std::floor(scroll)) + 4);
-    for (int i = first; i <= last; ++i) {
-        const float distance = std::fabs(static_cast<float>(i) - scroll);
-        const unsigned alpha = i == current ? 256u : static_cast<unsigned>(std::max(60.f, 170.f - distance * 40.f));
-        const float scale = i == current ? 0.9f : 0.7f;
-        const auto lines = textLines(cues[i].text, fontSize(scale), rw);
-        const int count = std::min<int>(2, static_cast<int>(lines.size()));
-        const int itemTop = centerY - pitch / 2 + static_cast<int>((static_cast<float>(i) - scroll) * pitch);
-        const int y0 = itemTop + (pitch - count * 20) / 2;
-        const uint32_t shade = shadeMix(kMusicBg, kMusicText, alpha);
-        for (int line = 0; line < count; ++line)
-            drawText(rx, y0 + line * 20, scale, shade, lines[line], rw, false, top, bottom);
+    const int focus = std::max(current, 0);
+    static std::weak_ptr<const std::vector<pspapp::SubtitleTrack>> lastLyrics;
+    static size_t lastTrack = 0;
+    static uint64_t lastPage = 0;
+    static int previous = -1, active = -1;
+    static int64_t change = 0, lastFrame = 0, lastPosition = 0;
+    const bool snap = lastPage != app.pageKey() || lastLyrics.lock() != view.lyrics || lastTrack != track ||
+                      now - lastFrame > 250 || view.positionMs < lastPosition ||
+                      view.positionMs - lastPosition > 750 || std::abs(current - active) > 1;
+    if (snap || current != active) {
+        previous = snap ? current : active;
+        active = current;
+        change = now;
+        lastPage = app.pageKey();
+        lastLyrics = view.lyrics;
+        lastTrack = track;
     }
-    drawMusicBar(rx, 216, rw, static_cast<int>(view.positionMs / 1000), static_cast<int>(view.durationMs / 1000), false);
-    drawText(rx, 224, 0.5f, kMusicDim, formatDuration(static_cast<int>(view.positionMs / 1000)), 60);
-    const std::string remaining = "-" + formatDuration(static_cast<int>(std::max<int64_t>(0, view.durationMs - view.positionMs) / 1000));
-    drawText(rx + rw - bitmapMeasure(remaining, 12), 224, 0.5f, kMusicDim, remaining, 70);
+    lastFrame = now;
+    lastPosition = view.positionMs;
+    const int previousFocus = std::max(previous, 0);
+    const int first = std::max(0, std::min(previousFocus, focus) - 2);
+    const int last = std::min(static_cast<int>(cues.size()) - 1, std::max(previousFocus, focus) + 2);
+    const float settleMs = current >= 0 && current + 1 < static_cast<int>(cues.size())
+        ? static_cast<float>(std::clamp<int64_t>(cues[current + 1].startMs - cues[current].startMs - 130, 100, 520))
+        : 520.f;
+    for (int i = first; i <= last; ++i) {
+        const float delay = std::clamp(i - previousFocus + 1, 0, 3) * (settleMs / 12.f);
+        const float slide = lyricSpring((now - change - delay) / settleMs);
+        const float highlight = musicEase((now - change) / 230.f);
+        const float glow = (i == previous ? 1.f - highlight : 0.f) + (i == current ? highlight : 0.f);
+        const float scroll = previousFocus + (focus - previousFocus) * slide;
+        const int y = centerY + static_cast<int>((i - scroll) * pitch);
+        const float edge = musicEase((y - top + 12) / 32.f) * musicEase((bottom - y + 12) / 32.f);
+        if (edge <= 0.f) continue;
+        const auto& cue = cues[i];
+        drawLyricCue(cue.text, y, 0.86f + 0.22f * glow, glow, edge,
+                     view.positionMs - cue.startMs, cue.endMs - cue.startMs, top, bottom);
+    }
 }
 
 void drawMusicQueue(const pspapp::App& app, const pspapp::MusicView& view) {
@@ -2668,11 +2889,7 @@ void drawMusicQueue(const pspapp::App& app, const pspapp::MusicView& view) {
     }
 }
 
-void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, const std::string& title,
-                       const std::string& sub) {
-    constexpr int rx = 232, rw = 220;
-    const int lines = drawWrapped(rx, 52, 0.9f, kMusicText, title, rw, 2, 20);
-    (void)lines;
+std::string musicStatus(const pspapp::App& app, const pspapp::MusicView& view) {
     std::string status;
     switch (view.state) {
         case pspapp::MusicState::Opening: status = uiText(app, pspapp::TextId::music_loading); break;
@@ -2683,13 +2900,37 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
             status = uiText(app, pspapp::TextId::music_failed, {{"confirm", app.preferences().confirmButton()}}); break;
         default: break;
     }
-    drawText(rx, 96, 0.5f, status.empty() ? kMusicDim : kMusicAccent, status.empty() ? sub : status, rw);
+    return status;
+}
 
-    const int position = static_cast<int>(view.positionMs / 1000), duration = static_cast<int>(view.durationMs / 1000);
-    drawMusicBar(rx, 148, rw, position, duration, true);
-    drawText(rx, 158, 0.5f, kMusicDim, formatDuration(position), 60);
-    const std::string remaining = "-" + formatDuration(std::max(0, duration - position));
-    drawText(rx + rw - bitmapMeasure(remaining, 12), 158, 0.5f, kMusicDim, remaining, 70);
+void drawMusicProgress(int x, int y, int w, const pspapp::MusicView& view) {
+    drawMusicBar(x, y, w, view.positionMs, view.durationMs);
+    drawText(x, y + 9, 0.5f, kMusicDim, formatDuration(static_cast<int>(view.positionMs / 1000)), 60);
+    const std::string remaining = "-" + formatDuration(static_cast<int>(
+        std::max<int64_t>(0, view.durationMs - view.positionMs) / 1000));
+    drawText(x + w - bitmapMeasure(remaining, 12), y + 9, 0.5f, kMusicDim, remaining, 70);
+}
+
+void drawMusicPlay(const pspapp::MusicView& view, int x, int y, int radius) {
+    drawDisc(x, y, radius, kMusicText);
+    const bool showPlay = view.paused || view.state == pspapp::MusicState::Ended ||
+                          view.state == pspapp::MusicState::Failed;
+    const int h = radius / 2 - 2;
+    if (showPlay) {
+        fillPlayGlyph(x - h / 2, y - h, h * 2 - 1, h * 2, kMusicBg);
+    } else {
+        fillRect(x - h, y - h, 3, h * 2, kMusicBg);
+        fillRect(x + h - 3, y - h, 3, h * 2, kMusicBg);
+    }
+}
+
+void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, const std::string& title,
+                       const std::string& sub) {
+    constexpr int rx = 232, rw = 220;
+    drawWrapped(rx, 52, 0.9f, kMusicText, title, rw, 2, 20);
+    const std::string status = musicStatus(app, view);
+    drawText(rx, 96, 0.5f, status.empty() ? kMusicDim : kMusicAccent, status.empty() ? sub : status, rw);
+    drawMusicProgress(rx, 148, rw, view);
 
     // Transport: repeat, previous, play/pause, next, queue. Each key sits under its icon.
     constexpr int centerY = 196, step = 44;
@@ -2699,50 +2940,57 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
     drawLineIcon(repeatIcon, cx[0] - 13, centerY - 13, 26,
                  view.repeat == pspapp::RepeatMode::Once ? kMusicDim : kMusicAccent);
     drawLineIcon(IconPrev, cx[1] - 13, centerY - 13, 26, kMusicText);
-    drawDisc(cx[2], centerY, 18, kMusicText);
-    const bool showPlay = view.paused || view.state == pspapp::MusicState::Ended ||
-                          view.state == pspapp::MusicState::Failed;
-    if (showPlay) {
-        fillPlayGlyph(cx[2] - 5, centerY - 8, 13, 16, kMusicBg);
-    } else {
-        fillRect(cx[2] - 6, centerY - 7, 4, 14, kMusicBg);
-        fillRect(cx[2] + 2, centerY - 7, 4, 14, kMusicBg);
-    }
+    drawMusicPlay(view, cx[2], centerY, 18);
     drawLineIcon(IconNext, cx[3] - 13, centerY - 13, 26, kMusicText);
     drawLineIcon(IconList, cx[4] - 13, centerY - 13, 26, app.musicTracks().size() > 1 ? kMusicText : kMusicTrack);
     const std::string keys[5] = {"\xE2\x96\xB3", "L", app.preferences().confirmButton(), "R", "\xE2\x96\xA1"};
     for (int i = 0; i < 5; ++i) drawText(cx[i] - 14, 222, 0.5f, kMusicDim, keys[i], 28, true);
 }
 
-void drawMusic(const pspapp::App& app) {
-    fillRect(0, 0, kWidth, kHeight, kMusicBg);
-    if (!app.musicActive()) return;
+void drawMusic(const pspapp::App& app, int64_t now) {
+    if (!app.musicActive()) {
+        fillRect(0, 0, kWidth, kHeight, kMusicBg);
+        return;
+    }
     const pspapp::MusicView view = app.musicView();
     const auto& tracks = app.musicTracks();
     const size_t index = std::min(view.index, tracks.empty() ? size_t{0} : tracks.size() - 1);
-    drawMusicCover(app.detail().card.bvid);
+    const auto* cover = showCovers ? coverSlot(app.detail().card.bvid) : nullptr;
+    drawMusicBackground(app.pageKey(), cover, showCovers,
+                        view.state == pspapp::MusicState::Playing && !view.paused, now);
 
-    const std::string trackTitle = !tracks.empty() && !tracks[index].title.empty() ? tracks[index].title
-                                                                                  : app.detail().card.title;
-    std::string sub = app.detail().card.author;
-    if (app.detail().card.title != trackTitle && !app.detail().card.title.empty())
-        sub = app.detail().card.title + (sub.empty() ? "" : " · " + sub);
-
+    const std::string& title = !tracks.empty() && !tracks[index].title.empty() ? tracks[index].title
+                                                                             : app.detail().card.title;
     const auto panel = app.musicPanel();
     constexpr int rx = 232, rw = 220;
-    if (panel != pspapp::MusicPanel::Queue) {
-        drawText(rx, 16, 0.5f, kMusicDim,
-                 panel == pspapp::MusicPanel::Lyrics ? std::string()
-                     : uiText(app, pspapp::TextId::music_part,
-                              {{"n", std::to_string(index + 1)}, {"total", std::to_string(tracks.size())}}), 120);
-        if (view.lyrics && !view.lyrics->empty())
-            drawMusicChip(rx + rw, 12, std::string("SELECT ") +
-                uiText(app, panel == pspapp::MusicPanel::Lyrics ? pspapp::TextId::music_controls
-                                                                : pspapp::TextId::music_lyrics));
+    if (panel == pspapp::MusicPanel::Lyrics) {
+        constexpr int x = 28, w = 144;
+        drawMusicCover(cover, x, 16, w);
+        drawText(x, 168, 0.9f, kMusicText, title, w);
+        const std::string status = musicStatus(app, view);
+        drawText(x, 186, 0.5f, status.empty() ? kMusicDim : kMusicAccent,
+                 status.empty() ? app.detail().card.author : status, w);
+        drawMusicProgress(x, 204, w, view);
+        drawLineIcon(IconPrev, x + 29, 224, 22, kMusicText);
+        drawMusicPlay(view, x + w / 2, 235, 12);
+        drawLineIcon(IconNext, x + w - 51, 224, 22, kMusicText);
+        drawMusicLyrics(app, view, now);
+    } else {
+        drawMusicCover(cover, 28, 40, 176);
+        if (panel == pspapp::MusicPanel::Queue) {
+            drawMusicQueue(app, view);
+            return;
+        }
+        drawText(rx, 16, 0.5f, kMusicDim, uiText(app, pspapp::TextId::music_part,
+                 {{"n", std::to_string(index + 1)}, {"total", std::to_string(tracks.size())}}), 110);
+        std::string sub = app.detail().card.author;
+        if (app.detail().card.title != title && !app.detail().card.title.empty())
+            sub = app.detail().card.title + (sub.empty() ? "" : " · " + sub);
+        drawMusicControls(app, view, title, sub);
     }
-    if (panel == pspapp::MusicPanel::Queue) drawMusicQueue(app, view);
-    else if (panel == pspapp::MusicPanel::Lyrics) drawMusicLyrics(app, view, trackTitle);
-    else drawMusicControls(app, view, trackTitle, sub);
+    if (panel == pspapp::MusicPanel::Lyrics || (view.lyrics && !view.lyrics->empty()))
+        drawMusicChip(rx + rw, 16, std::string("SELECT ") + uiText(app, panel == pspapp::MusicPanel::Lyrics
+                      ? pspapp::TextId::music_controls : pspapp::TextId::music_lyrics));
 }
 
 void drawDetail(const pspapp::App& app) {
@@ -3373,6 +3621,7 @@ void ui_init() {
     draw_buffer = nullptr;
     bitmapFontInit(CLIENT_PATH("/wqy.bmf"));
     titleFontInit(CLIENT_PATH("/title.bmf"));
+    lyricFontInit(CLIENT_PATH("/lyrics.bmf"));
 }
 
 void ui_startup_status(const char *message) {
@@ -3392,6 +3641,7 @@ void ui_shutdown() {
     releaseRenderResources();
     bitmapFontShutdown();
     titleFontShutdown();
+    lyricFontShutdown();
     sceGuTerm();
 }
 
@@ -3499,7 +3749,7 @@ void ui_render(const pspapp::App& app) {
     } else if (app.screen() == pspapp::Screen::Comments) {
         drawCommentList(app);
     } else if (app.screen() == pspapp::Screen::Music) {
-        drawMusic(app);
+        drawMusic(app, nowMs);
     } else if (hub) {
         if (app.preferences().metro()) drawHub(app, nowMs); else drawHubTiles(app, nowMs);
     } else {

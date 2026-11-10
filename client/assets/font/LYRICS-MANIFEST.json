@@ -1,0 +1,9 @@
+{
+  "family": "Source Han Sans CN Heavy",
+  "source": "SourceHanSansCN-Heavy.otf",
+  "source_sha256": "88c749b0a54a0800124ded6544e399302ed224aa49992ea364b88769f825c54c",
+  "size": 24,
+  "glyphs": 9747,
+  "coverage": "GB2312 Hanzi, Big5 level 1, kana, Latin, Greek, Cyrillic and punctuation",
+  "bytes": 3333928
+}
