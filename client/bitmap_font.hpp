@@ -14,3 +14,14 @@ const BitmapGlyph* bitmapGlyph(uint32_t codepoint, int size);
 int bitmapAdvance(uint32_t codepoint, int size);
 uint32_t bitmapNext(std::string_view text, size_t& position);
 int bitmapMeasure(std::string_view text, int size);
+
+// Optional 24 px music font. Missing characters can use the body font.
+constexpr int kLyricFontSize = 24;
+struct LyricGlyph {
+    uint8_t advance, width, height;
+    unsigned char alpha[28 * 32 / 2];
+};
+bool lyricFontInit(const char* path);
+void lyricFontShutdown();
+const LyricGlyph* lyricGlyph(uint32_t codepoint);
+int lyricAdvance(uint32_t codepoint);

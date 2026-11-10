@@ -50,7 +50,7 @@ public:
     // Blocks until the worker has closed the engine and finished every source.
     void stop();
 
-    MusicView view() const;
+    MusicView view(bool livePosition = false) const;
     const std::vector<MusicTrack>& tracks() const { return tracks_; }  // fixed after construction
 
     // Non-blocking commands for the UI thread.

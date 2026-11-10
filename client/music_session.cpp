@@ -80,7 +80,7 @@ int MusicSession::entry(SceSize, void* arg) {
     return 0;
 }
 
-MusicView MusicSession::view() const {
+MusicView MusicSession::view(bool livePosition) const {
     std::lock_guard<std::mutex> lock(mutex_);
     MusicView out;
     out.state = state_;
@@ -92,6 +92,18 @@ MusicView MusicSession::view() const {
     out.error = error_;
     out.lyrics = lyrics_;
     out.lyricTrack = lyricTrack_;
+    // The worker's snapshot can be old during a network fetch. The live clock has no I/O.
+    // Preserve the preview target while a seek or a part change is pending.
+    if (livePosition && !hasStep_ && !seeking_ && pendingSeekMs_ < 0 &&
+        (state_ == MusicState::Playing || state_ == MusicState::Paused || state_ == MusicState::Buffering)) {
+        PspAudioStatus audio;
+        psp_audio_status(&audio);
+        if (audio.state == PSP_AUDIO_PLAYING || audio.state == PSP_AUDIO_PAUSED || audio.state == PSP_AUDIO_BUFFERING) {
+            out.positionMs = audio.position_ms;
+            out.state = audio.state == PSP_AUDIO_PAUSED ? MusicState::Paused
+                      : audio.state == PSP_AUDIO_BUFFERING ? MusicState::Buffering : MusicState::Playing;
+        }
+    }
     return out;
 }
 

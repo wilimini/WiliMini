@@ -180,7 +180,7 @@ public:
     void startMusic();
     void musicKey(MusicKey key);
     bool musicActive() const { return music_ != nullptr; }
-    MusicView musicView() const { return music_ ? music_->view() : MusicView{}; }
+    MusicView musicView() const { return music_ ? music_->view(true) : MusicView{}; }
     const std::vector<MusicTrack>& musicTracks() const;
     MusicPanel musicPanel() const { return navigation_.get<MusicRoute>().panel; }
     size_t musicQueueFocus() const { return navigation_.get<MusicRoute>().queueFocus; }
