@@ -9,8 +9,8 @@
 | 按键 | 控制面板 | 歌词面板 | 播放队列面板 |
 | --- | --- | --- | --- |
 | 确认 | 播放 / 暂停（结束或失败时重播） | 播放 / 暂停 | 播放所选分 P 并返回控制面板 |
-| L / R | 上一分 P / 下一分 P（播放超过 3 秒时 L 先回到本分 P 开头） | 上一分 P / 下一分 P | 上一分 P / 下一分 P |
-| 左 / 右 | 快退 / 快进 10 秒 | 快退 / 快进 10 秒 | — |
+| L / R | 上一分 P / 下一分 P（播放超过 3 秒时 L 先回到本分 P 开头，支持连点切歌） | 上一分 P / 下一分 P | 上一分 P / 下一分 P |
+| 左 / 右 | 快退 / 快进 10 秒（支持连点/长按累加，400 ms 合并跳转） | 快退 / 快进 10 秒（支持连点/长按累加，400 ms 合并跳转） | — |
 | 上 / 下 | — | 切换字幕轨道 | 移动队列焦点 |
 | △ | 切换循环模式（列表循环 / 单曲循环 / 顺序播放） | 切换循环模式 | 切换循环模式 |
 | □ | 打开播放队列（多 P 视频） | 打开播放队列（多 P 视频） | 返回控制面板 |
@@ -25,6 +25,6 @@
 
 ## 架构与线程生命周期
 
-- `decoder/include/psp_audio.h` 与 `decoder/src/audio_only.h`：复用 `player.c` 内的单实例 `audio` 引擎与缓冲，提供非阻塞的 `psp_audio_open`、`psp_audio_seek`、`psp_audio_pause`、`psp_audio_status`、`psp_audio_close` 与 `psp_audio_stop`。音频模式下预缓冲后的启动等待缩短为 100 ms。同一时刻不得与 `psp_video_play` 重叠运行。
+- `decoder/include/psp_audio.h` 与 `decoder/src/audio_only.h`：复用 `player.c` 内的单实例 `audio` 引擎与缓冲，提供 `psp_audio_open`、`psp_audio_seek`、`psp_audio_interrupt`、`psp_audio_pause`、`psp_audio_status`、`psp_audio_close` 与 `psp_audio_stop`。`psp_audio_seek` 在已打开的 `AVFormatContext` / `AVCodecContext` 上直接 `av_seek_frame` 并刷新解码器，无需重新探测容器头部或释放硬件音频通道；若跳转中途收到新的快进/快退指令，`psp_audio_interrupt` 立即中断当前预缓冲读取并切换至新目标位置。音频模式下预缓冲后的启动等待缩短为 100 ms。同一时刻不得与 `psp_video_play` 重叠运行。
 - `client/music_session.{hpp,cpp}`：单个 `music_session` 工作线程（带 `PSP_THREAD_ATTR_VFPU`）串行拥有 `psp_audio_*` 生命周期、Range 音频源、下一分 P 预取与字幕请求；UI 线程仅通过非阻塞命令与 `view()` 快照交互。退出详情页或应用关闭时，`stop()` 取消传输并等待工作线程回收全部解码、输出和下载线程。
 - `client/ui.cpp`（`drawMusic`）：使用固定深色背景（`480×272`），左侧显示居中裁剪的圆角方形封面（无封面时显示音符占位），右侧切换控制、歌词或播放队列面板；圆角遮罩、圆盘与线条图标均缓存在 GE 遮罩图集中。

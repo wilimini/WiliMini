@@ -507,6 +507,10 @@ bool App::atTabRoot() const {
 }
 
 void App::shoulder(int direction) {
+    if (screen() == Screen::Music) {
+        musicKey(direction > 0 ? MusicKey::Next : MusicKey::Previous);
+        return;
+    }
     if (atTabRoot()) switchTab(direction);
     else if (screen() == Screen::Browse) {
         if (direction > 0) browseMore();
@@ -1099,8 +1103,14 @@ void App::musicKey(MusicKey key) {
             route.panel = MusicPanel::Controls;
         } else music_->togglePause();
         break;
-    case MusicKey::Previous: music_->previous(); break;
-    case MusicKey::Next: music_->next(); break;
+    case MusicKey::Previous:
+        music_->previous();
+        if (route.panel == MusicPanel::Queue) route.queueFocus = music_->view().index;
+        break;
+    case MusicKey::Next:
+        music_->next();
+        if (route.panel == MusicPanel::Queue) route.queueFocus = music_->view().index;
+        break;
     case MusicKey::SeekBack:
         if (route.panel != MusicPanel::Queue) music_->seekBy(-10000);
         break;

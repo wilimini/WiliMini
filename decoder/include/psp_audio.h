@@ -42,10 +42,13 @@ typedef struct {
 /* Returns 0 once the first PCM is buffered, or a negative error. A failed open
  * leaves no session; the caller still owns the source. */
 int psp_audio_open(const PspAudioOptions *options);
-/* Reopens the same source at the target, like a video seek: the download is
- * kept, the decoder and output restart. A negative result leaves a session
- * that must be closed. */
+/* Re-targets the open audio stream without closing the demuxer, codec or
+ * underlying source download. A negative result leaves a session that may be
+ * retried or closed. */
 int psp_audio_seek(int64_t position_ms);
+/* Interrupts an in-flight psp_audio_seek without cancelling the source
+ * download, so a newer seek target can supersede it immediately. */
+void psp_audio_interrupt(void);
 void psp_audio_pause(int paused);
 void psp_audio_status(PspAudioStatus *status);
 /* drain != 0 lets the last submitted blocks finish (natural end); otherwise

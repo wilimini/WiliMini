@@ -246,12 +246,53 @@ static int audio_adopt_probe(const AVFormatContext *probed)
     return 1;
 }
 
+static int audio_start_workers(const char *run_path)
+{
+    int ret;
+    (void)run_path;
+    audio.space = sceKernelCreateSema("pcm_space", 0, AUDIO_BLOCKS, AUDIO_BLOCKS, NULL);
+    audio.ready = sceKernelCreateSema("pcm_ready", 0, 0, AUDIO_BLOCKS + 1, NULL);
+    audio.go = sceKernelCreateSema("pcm_start", 0, 0, 1, NULL);
+    if (audio.space < 0 || audio.ready < 0 || audio.go < 0) return -101;
+    audio.decoder_thread = sceKernelCreateThread("aac_decode", audio_decode_thread,
+                           0x18, 128 * 1024, PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
+    audio.output_thread = sceKernelCreateThread("pcm_output", audio_output_thread,
+                           0x10, 16 * 1024, PSP_THREAD_ATTR_USER, NULL);
+    if (audio.decoder_thread < 0 || audio.output_thread < 0) return -102;
+    source_memory("audio_workers_created");
+    ret = sceKernelStartThread(audio.decoder_thread, 0, NULL);
+    if (ret < 0) return ret;
+    ret = sceKernelStartThread(audio.output_thread, 0, NULL);
+    if (ret < 0) return ret;
+    while (audio.produced < AUDIO_PREFILL && !audio.eof && !audio.error && !audio.stop && !quit_requested)
+        sceKernelDelayThreadCB(10000);
+    source_memory("audio_prefill");
+    if (audio.error) return audio.error;
+    if (audio.stop || quit_requested || !audio.produced) return -103;
+#if PSP_AUDIO_VERIFY
+    if (run_path[0]) { /* empty when results are off */
+        char pcm_path[192];
+        snprintf(pcm_path, sizeof(pcm_path), "%s/audio-first.pcm", run_path);
+        FILE *pcm = fopen(pcm_path, "wb");
+        if (!pcm) return -106;
+        size_t count = 8 * AUDIO_SAMPLES * 2;
+        size_t written = fwrite(audio.pcm, sizeof(int16_t), count, pcm);
+        fclose(pcm);
+        if (written != count) return -107;
+    }
+#endif
+    audio.epoch_us = playback_now_us() + audio_start_delay_us;
+#if PSP_RGB_PACE
+    rgb_startup_ready = 1;
+#endif
+    return sceKernelSignalSema(audio.go, 1);
+}
+
 /* probed: the already-probed video context when audio shares its source,
  * otherwise NULL. */
 static int audio_open(const char *source, const PspVideoSource *stream,
                       const AVFormatContext *probed, const char *run_path)
 {
-    (void)run_path;
     memset(&audio, 0, sizeof(audio));
     audio.space = audio.ready = audio.go = -1;
     audio.decoder_thread = audio.output_thread = -1;
@@ -310,42 +351,7 @@ static int audio_open(const char *source, const PspVideoSource *stream,
     }
     if (ret < 0) return ret;
     audio.reserved = 1;
-    audio.space = sceKernelCreateSema("pcm_space", 0, AUDIO_BLOCKS, AUDIO_BLOCKS, NULL);
-    audio.ready = sceKernelCreateSema("pcm_ready", 0, 0, AUDIO_BLOCKS + 1, NULL);
-    audio.go = sceKernelCreateSema("pcm_start", 0, 0, 1, NULL);
-    if (audio.space < 0 || audio.ready < 0 || audio.go < 0) return -101;
-    audio.decoder_thread = sceKernelCreateThread("aac_decode", audio_decode_thread,
-                           0x18, 128 * 1024, PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU, NULL);
-    audio.output_thread = sceKernelCreateThread("pcm_output", audio_output_thread,
-                           0x10, 16 * 1024, PSP_THREAD_ATTR_USER, NULL);
-    if (audio.decoder_thread < 0 || audio.output_thread < 0) return -102;
-    source_memory("audio_workers_created");
-    ret = sceKernelStartThread(audio.decoder_thread, 0, NULL);
-    if (ret < 0) return ret;
-    ret = sceKernelStartThread(audio.output_thread, 0, NULL);
-    if (ret < 0) return ret;
-    while (audio.produced < AUDIO_PREFILL && !audio.eof && !audio.error && !quit_requested)
-        sceKernelDelayThreadCB(10000);
-    source_memory("audio_prefill");
-    if (audio.error) return audio.error;
-    if (quit_requested || !audio.produced) return -103;
-#if PSP_AUDIO_VERIFY
-    if (run_path[0]) { /* empty when results are off */
-        char pcm_path[192];
-        snprintf(pcm_path, sizeof(pcm_path), "%s/audio-first.pcm", run_path);
-        FILE *pcm = fopen(pcm_path, "wb");
-        if (!pcm) return -106;
-        size_t count = 8 * AUDIO_SAMPLES * 2;
-        size_t written = fwrite(audio.pcm, sizeof(int16_t), count, pcm);
-        fclose(pcm);
-        if (written != count) return -107;
-    }
-#endif
-    audio.epoch_us = playback_now_us() + audio_start_delay_us;
-#if PSP_RGB_PACE
-    rgb_startup_ready = 1;
-#endif
-    return sceKernelSignalSema(audio.go, 1);
+    return audio_start_workers(run_path);
 }
 
 static void audio_close(int drain)

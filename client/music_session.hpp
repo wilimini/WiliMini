@@ -66,6 +66,9 @@ private:
     static int entry(SceSize size, void* arg);
     void run();
     void post();
+    void queueStep(const MusicStep& step);
+    bool stepPending() const;
+    bool seekPending() const;
     void handleCommands();
     void pollEngine();
     void playStep(const MusicStep& step, bool drain = false);
@@ -95,9 +98,13 @@ private:
     bool hasStep_ = false;
     MusicStep pendingStep_;
     int64_t pendingSeekMs_ = -1;
+    uint64_t seekCommitAt_ = 0;
+    bool seeking_ = false;
+    bool lyricsPending_ = false;
 
     std::atomic<bool> stopping_{false};
     std::atomic<bool> prefetching_{false};
+    std::atomic<bool> loadingLyrics_{false};
     SceUID thread_ = -1;
     SceUID wake_ = -1;
 

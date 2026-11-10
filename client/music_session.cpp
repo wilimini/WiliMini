@@ -15,6 +15,7 @@ namespace pspapp {
 
 namespace {
 constexpr uint64_t kPollUs = 150000;
+constexpr uint64_t kSeekCoalesceUs = 400000;
 constexpr uint64_t kPowerTickUs = 5000000;
 constexpr uint64_t kPrefetchRetryUs = 10000000;
 constexpr uint64_t kRecoverWindowUs = 60000000;
@@ -95,9 +96,49 @@ MusicView MusicSession::view() const {
 }
 
 void MusicSession::post() {
-    // A prefetch can hold the worker for seconds; abort it so the command runs now.
-    if (prefetching_) transfer_cancel = 1;
+    // A prefetch or lyric fetch can hold the worker for seconds; abort it so the command runs now.
+    if (prefetching_ || loadingLyrics_) transfer_cancel = 1;
     if (wake_ >= 0) sceKernelSignalSema(wake_, 1);
+}
+
+void MusicSession::queueStep(const MusicStep& step) {
+    if (step.kind == MusicStep::None) return;
+    const bool sameTrack = step.kind == MusicStep::Replay && step.index == queue_.current() &&
+                           state_ != MusicState::Failed;
+    queue_.moveTo(step.index);
+    positionMs_ = 0;
+    durationMs_ = static_cast<int64_t>(tracks_[step.index].durationSec) * 1000;
+    error_.clear();
+    pendingSeekMs_ = -1;
+    seekCommitAt_ = 0;
+    if (!sameTrack) {
+        state_ = MusicState::Opening;
+        lyrics_.reset();
+        lyricTrack_ = 0;
+        lyricsPending_ = false;
+        pendingStep_ = {MusicStep::Play, step.index};
+        hasStep_ = true;
+        transfer_cancel = 1;
+        psp_audio_stop();
+    } else if (!hasStep_) {
+        pendingStep_ = step;
+        hasStep_ = true;
+        if (prefetching_ || loadingLyrics_) transfer_cancel = 1;
+        if (seeking_) psp_audio_interrupt();
+    } else {
+        pendingStep_ = {MusicStep::Play, step.index};
+    }
+    if (wake_ >= 0) sceKernelSignalSema(wake_, 1);
+}
+
+bool MusicSession::stepPending() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return hasStep_;
+}
+
+bool MusicSession::seekPending() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pendingSeekMs_ >= 0;
 }
 
 void MusicSession::togglePause() {
@@ -105,51 +146,46 @@ void MusicSession::togglePause() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (state_ == MusicState::Ended || state_ == MusicState::Failed) {
-            pendingStep_ = {MusicStep::Replay, queue_.current()};
-            hasStep_ = true;
+            queueStep({MusicStep::Replay, queue_.current()});
             restart = true;
         } else {
             wantPaused_ = !wantPaused_;
         }
     }
-    if (!restart) applyPause();
-    post();
+    if (!restart) {
+        applyPause();
+        if (wake_ >= 0) sceKernelSignalSema(wake_, 1);
+    }
 }
 
 void MusicSession::next() {
     std::lock_guard<std::mutex> lock(mutex_);
-    const MusicStep step = queue_.next();
-    if (step.kind == MusicStep::None) return;
-    pendingStep_ = step;
-    hasStep_ = true;
-    post();
+    queueStep(queue_.next());
 }
 
 void MusicSession::previous() {
     std::lock_guard<std::mutex> lock(mutex_);
-    const MusicStep step = queue_.previous(positionMs_);
-    if (step.kind == MusicStep::None) return;
-    pendingStep_ = step;
-    hasStep_ = true;
-    post();
+    queueStep(queue_.previous(positionMs_));
 }
 
 void MusicSession::jump(size_t index) {
     std::lock_guard<std::mutex> lock(mutex_);
-    const MusicStep step = queue_.jump(index);
-    if (step.kind == MusicStep::None) return;
-    pendingStep_ = step;
-    hasStep_ = true;
-    post();
+    queueStep(queue_.jump(index));
 }
 
 void MusicSession::seekBy(int64_t deltaMs) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ == MusicState::Opening || state_ == MusicState::Ended || state_ == MusicState::Failed) return;
+    if (state_ == MusicState::Ended || state_ == MusicState::Failed) return;
     int64_t target = (pendingSeekMs_ >= 0 ? pendingSeekMs_ : positionMs_) + deltaMs;
     if (target < 0) target = 0;
-    if (durationMs_ > 0 && target > durationMs_) target = durationMs_;
+    if (durationMs_ > 0) {
+        const int64_t maxSeek = durationMs_ > 1000 ? durationMs_ - 1000 : durationMs_;
+        if (target > maxSeek) target = maxSeek;
+    }
+    positionMs_ = target;
     pendingSeekMs_ = target;
+    seekCommitAt_ = nowUs() + kSeekCoalesceUs;
+    if (seeking_) psp_audio_interrupt();
     post();
 }
 
@@ -214,10 +250,23 @@ void MusicSession::run() {
     openTrack(first, 0, false);
     while (!stopping_) {
         SceUInt timeout = kPollUs;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (hasStep_) {
+                timeout = 1;
+            } else if (pendingSeekMs_ >= 0) {
+                const uint64_t now = nowUs();
+                timeout = now >= seekCommitAt_
+                              ? 1
+                              : static_cast<SceUInt>(std::min<uint64_t>(kPollUs, seekCommitAt_ - now));
+            } else if (lyricsPending_) {
+                timeout = 1;
+            }
+        }
         sceKernelWaitSema(wake_, 1, &timeout);
         if (stopping_) break;
         handleCommands();
-        if (!stopping_) pollEngine();
+        if (!stopping_ && !stepPending()) pollEngine();
     }
     psp_audio_close(0);
     releaseSource(current_);
@@ -225,20 +274,33 @@ void MusicSession::run() {
 }
 
 void MusicSession::handleCommands() {
+    while (sceKernelPollSema(wake_, 1) >= 0) {}
     MusicStep step;
     int64_t seek = -1;
-    bool hasStep;
+    bool hasStep = false;
+    size_t lyricsIndex = MusicQueue::npos;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        hasStep = hasStep_;
-        step = pendingStep_;
-        seek = pendingSeekMs_;
-        hasStep_ = false;
-        pendingSeekMs_ = -1;
+        if (hasStep_) {
+            hasStep = true;
+            step = pendingStep_;
+            hasStep_ = false;
+            pendingSeekMs_ = -1;
+            seekCommitAt_ = 0;
+        } else if (pendingSeekMs_ >= 0 && nowUs() >= seekCommitAt_) {
+            seek = pendingSeekMs_;
+            pendingSeekMs_ = -1;
+            seekCommitAt_ = 0;
+            seeking_ = true;
+        } else if (pendingSeekMs_ < 0 && lyricsPending_) {
+            lyricsPending_ = false;
+            lyricsIndex = queue_.current();
+        }
     }
-    if (prefetching_ == false) transfer_cancel = 0;
+    if (prefetching_ == false && loadingLyrics_ == false) transfer_cancel = 0;
     if (hasStep) playStep(step);
     else if (seek >= 0) seekTo(seek);
+    else if (lyricsIndex != MusicQueue::npos) loadLyrics(lyricsIndex);
 }
 
 void MusicSession::playStep(const MusicStep& step, bool drain) {
@@ -248,9 +310,16 @@ void MusicSession::playStep(const MusicStep& step, bool drain) {
         // after a failure the source is gone and the part is opened again.
         PspAudioStatus status;
         psp_audio_status(&status);
-        const bool live = status.state == PSP_AUDIO_PLAYING || status.state == PSP_AUDIO_BUFFERING ||
-                          status.state == PSP_AUDIO_PAUSED || status.state == PSP_AUDIO_ENDED;
-        if (live) { seekTo(0); return; }
+        const bool live = engineOpen_ && status.state != PSP_AUDIO_IDLE &&
+                          status.state != PSP_AUDIO_FAILED;
+        if (live) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                seeking_ = true;
+            }
+            seekTo(0);
+            return;
+        }
     }
     recoverAttempts_ = 0;  // an explicit request starts a fresh recovery budget
     openTrack(step.index, 0, drain);
@@ -262,17 +331,19 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.moveTo(index);
         state_ = MusicState::Opening;
-        positionMs_ = startMs;
+        if (pendingSeekMs_ < 0) positionMs_ = startMs;
         durationMs_ = static_cast<int64_t>(tracks_[index].durationSec) * 1000;
         error_.clear();
         lyrics_.reset();
         lyricTrack_ = 0;
+        lyricsPending_ = false;
         paused = wantPaused_;
     }
     psp_audio_close(drain);
     engineOpen_ = false;
     releaseSource(current_);
-    if (stopping_) return false;
+    if (stopping_ || stepPending()) return false;
+    transfer_cancel = 0;
     std::string error;
     if (nextReady_ && nextIndex_ == index) {
         current_ = next_;
@@ -283,9 +354,24 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
         discardNext();
         if (!prepare(index, current_, error)) {
             releaseSource(current_);
-            if (!stopping_) setFailed(error.empty() ? "audio_unavailable" : error);
+            if (!stopping_ && !stepPending()) setFailed(error.empty() ? "audio_unavailable" : error);
             return false;
         }
+    }
+    if (stopping_ || stepPending()) {
+        releaseSource(current_);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pendingSeekMs_ >= 0) {
+            startMs = pendingSeekMs_;
+            if (nowUs() >= seekCommitAt_) {
+                pendingSeekMs_ = -1;
+                seekCommitAt_ = 0;
+            }
+        }
+        paused = wantPaused_;
     }
     PspAudioOptions options{};
     options.source = bili_playback_audio_source(&current_);
@@ -295,27 +381,38 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
     const int ret = options.source ? psp_audio_open(&options) : -1;
     if (ret < 0) {
         releaseSource(current_);
-        if (!stopping_) setFailed("audio_open_failed:" + std::to_string(ret));
+        if (!stopping_ && !stepPending()) setFailed("audio_open_failed:" + std::to_string(ret));
         return false;
     }
     engineOpen_ = true;
     applyPause();  // a toggle during the open must not be lost
-    loadLyrics(index);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!hasStep_) {
+            state_ = wantPaused_ ? MusicState::Paused : MusicState::Playing;
+            lyricsPending_ = true;
+        }
+    }
     return true;
 }
 
 bool MusicSession::seekTo(int64_t ms) {
-    setState(MusicState::Opening);
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        positionMs_ = ms;
+        if (pendingSeekMs_ < 0) positionMs_ = ms;
+        if (state_ != MusicState::Paused) state_ = MusicState::Buffering;
     }
     const int ret = psp_audio_seek(ms);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        seeking_ = false;
+    }
     if (ret >= 0) {
         applyPause();
         return true;
     }
-    return !stopping_ && recover(ms);
+    if (stopping_ || stepPending() || seekPending()) return false;
+    return recover(ms);
 }
 
 // The source URL can expire or the connection can drop on a long session: prepare the
@@ -367,15 +464,23 @@ void MusicSession::maybePrefetch(int64_t positionMs, int64_t durationMs) {
 }
 
 void MusicSession::loadLyrics(size_t index) {
+    loadingLyrics_ = true;
+    transfer_cancel = 0;
     bool failed = false;
     auto tracks = subtitleTracks(source_.bvid, tracks_[index].cid, source_.aid, defaultHttpClient(), failed);
     if (tracks.size() > kMaxLyricTracks) tracks.resize(kMaxLyricTracks);
     for (auto& track : tracks) {
-        if (stopping_ || transfer_cancel) return;
+        if (stopping_ || transfer_cancel) break;
         auto response = defaultHttpClient().get(track.url, ErrorOperation::Request, false);
         if (response) track.cues = parseSubtitles(response.value.body);
     }
-    if (stopping_ || transfer_cancel) return;
+    loadingLyrics_ = false;
+    if (stopping_) return;
+    if (transfer_cancel) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!hasStep_ && queue_.current() == index) lyricsPending_ = true;
+        return;
+    }
     tracks.erase(std::remove_if(tracks.begin(), tracks.end(),
                                 [](const SubtitleTrack& track) { return track.cues.empty(); }),
                  tracks.end());
@@ -393,12 +498,13 @@ void MusicSession::pollEngine() {
     case PSP_AUDIO_OPENING:
         return;
     case PSP_AUDIO_FAILED:
-        recover(status.position_ms);
+        if (!seekPending() && !stepPending()) recover(status.position_ms);
         return;
     case PSP_AUDIO_ENDED: {
         MusicStep step;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            if (pendingSeekMs_ >= 0 || hasStep_) return;
             step = queue_.onEnded();
             positionMs_ = status.duration_ms > 0 ? status.duration_ms : status.position_ms;
         }
@@ -409,6 +515,10 @@ void MusicSession::pollEngine() {
             discardNext();
             setState(MusicState::Ended);
         } else {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                queue_.moveTo(step.index);
+            }
             playStep(step, true);
         }
         return;
@@ -418,7 +528,7 @@ void MusicSession::pollEngine() {
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        positionMs_ = status.position_ms;
+        if (pendingSeekMs_ < 0) positionMs_ = status.position_ms;
         if (status.duration_ms > 0) durationMs_ = status.duration_ms;
         state_ = status.state == PSP_AUDIO_PAUSED ? MusicState::Paused
                : status.state == PSP_AUDIO_BUFFERING ? MusicState::Buffering : MusicState::Playing;

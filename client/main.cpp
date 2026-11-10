@@ -331,6 +331,20 @@ int main(int argc, char** argv) {
             else if (pressed & PSP_CTRL_DOWN) app.tileMove(0, 1);
             else if (pressed & PSP_CTRL_LEFT) app.tileMove(-1, 0);
             else if (pressed & PSP_CTRL_RIGHT) app.tileMove(1, 0);
+        } else if (app.screen() == pspapp::Screen::Music) {
+            if (pressed & PSP_CTRL_START) break;
+            using Key = pspapp::App::MusicKey;
+            if (pressed & backButton) app.back();
+            else if (pressed & confirmButton) app.musicKey(Key::Confirm);
+            else if (pressed & PSP_CTRL_LTRIGGER) app.musicKey(Key::Previous);
+            else if (pressed & PSP_CTRL_RTRIGGER) app.musicKey(Key::Next);
+            else if (pressed & PSP_CTRL_TRIANGLE) app.musicKey(Key::Repeat);
+            else if (pressed & PSP_CTRL_SQUARE) app.musicKey(Key::Queue);
+            else if (pressed & PSP_CTRL_SELECT) app.musicKey(Key::Lyrics);
+            else if (pressed & PSP_CTRL_LEFT) app.musicKey(Key::SeekBack);
+            else if (pressed & PSP_CTRL_RIGHT) app.musicKey(Key::SeekForward);
+            else if (pressed & PSP_CTRL_UP) app.musicKey(Key::Up);
+            else if (pressed & PSP_CTRL_DOWN) app.musicKey(Key::Down);
         } else if (app.busy()) {
             if (pressed & backButton) app.back();
             else if (pressed & PSP_CTRL_RTRIGGER) {
@@ -367,19 +381,6 @@ int main(int argc, char** argv) {
                 else if (pressed & PSP_CTRL_RIGHT) app.browseMove(1, 0);
                 else if (pressed & PSP_CTRL_UP) ui_scroll_browse(app, -1);
                 else if (pressed & PSP_CTRL_DOWN) ui_scroll_browse(app, 1);
-            } else if (app.screen() == pspapp::Screen::Music) {
-                using Key = pspapp::App::MusicKey;
-                if (pressed & backButton) app.back();
-                else if (pressed & confirmButton) app.musicKey(Key::Confirm);
-                else if (pressed & PSP_CTRL_LTRIGGER) app.musicKey(Key::Previous);
-                else if (pressed & PSP_CTRL_RTRIGGER) app.musicKey(Key::Next);
-                else if (pressed & PSP_CTRL_TRIANGLE) app.musicKey(Key::Repeat);
-                else if (pressed & PSP_CTRL_SQUARE) app.musicKey(Key::Queue);
-                else if (pressed & PSP_CTRL_SELECT) app.musicKey(Key::Lyrics);
-                else if (pressed & PSP_CTRL_LEFT) app.musicKey(Key::SeekBack);
-                else if (pressed & PSP_CTRL_RIGHT) app.musicKey(Key::SeekForward);
-                else if (pressed & PSP_CTRL_UP) app.musicKey(Key::Up);
-                else if (pressed & PSP_CTRL_DOWN) app.musicKey(Key::Down);
             } else if (app.screen() == pspapp::Screen::Detail) {
                 if (pressed & backButton) app.back();
                 else if (pressed & confirmButton) app.requestPlayback();
