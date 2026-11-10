@@ -59,6 +59,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     overlayMessages_[2] = en ? "Subtitles unavailable" : "字幕加载失败";
     overlayMessages_[3] = en ? "Loading subtitles..." : "正在加载字幕…";
     overlayMessages_[4] = en ? "Subtitles loaded" : "字幕已加载";
+    overlayMessages_[5] = en ? "Login for subtitles" : "登录后可查看字幕";
     startupLabels_[0] = en ? "Connecting video..." : "正在连接视频源…";
     startupLabels_[1] = en ? "Preparing audio..." : "正在准备音频…";
     startupLabels_[2] = en ? "Buffering first frame..." : "正在缓冲首帧…";
@@ -139,6 +140,7 @@ void PlaybackOsd::receiveOverlays() {
     // All allocation, rasterization and font reads happened on the worker.
     if (comments) comments_.swap(prepared->comments_);
     else {
+        subtitleMetadataMessage_ = prepared->subtitleMetadataMessage_;
         subtitles_.swap(prepared->subtitles_);
         subtitleGlyphs_.swap(prepared->subtitleGlyphs_);
         std::memcpy(atlas_, prepared->atlas_, sizeof(atlas_));
@@ -189,11 +191,14 @@ void PlaybackOsd::loadOverlays() {
         sceKernelSignalSema(overlayLock_, 1);
     };
     // This thread starts only after the first frame has reached the presenter.
-    bool failed = false;
-    auto tracks = subtitleTracks(bvid_, cid_, aid_, http, failed);
+    auto metadataResult = subtitleTracks(bvid_, cid_, aid_, http);
     if (overlayStop_) return;
-    if (failed) message(2);
+    auto& tracks = metadataResult.value;
     auto* metadata = new PlaybackOsd(title_, preferences_, {}, tracks, false);
+    if (!metadataResult) {
+        metadata->subtitleMetadataMessage_ = metadataResult.error.kind == ErrorKind::LoginRequired ? 5 : 2;
+        message(metadata->subtitleMetadataMessage_);
+    }
     if (!publish(metadata, false)) return;
     auto response = http.get("https://api.bilibili.com/x/v1/dm/list.so?oid=" + std::to_string(cid_), ErrorOperation::Request, false);
     if (overlayStop_) return;
@@ -215,10 +220,9 @@ void PlaybackOsd::loadOverlays() {
             for (auto& track : tracks) track.cues.clear();
             if (result) tracks[selected - 1].cues = parseSubtitles(result.value.body);
             std::string().swap(result.value.body);
-            failed = !result || tracks[selected - 1].cues.empty();
             loaded = selected;
             auto* prepared = new PlaybackOsd(title_, preferences_, {}, tracks, false);
-            failed = failed || prepared->subtitles_[selected - 1].cues.empty();
+            const bool failed = !result || prepared->subtitles_[selected - 1].cues.empty();
             if (!publish(prepared, false)) return;
             message(failed ? 2 : 4);
         } else {
@@ -616,7 +620,10 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
             text(286, 100 + i * 25, label, selected ? pink : muted, danmakuMenu ? 382 : 436, 13);
             if (selected) rectangle(446, 107 + i * 25, 4, 4, pink);
         }
-        if (row == 4 && subtitles_.empty()) text(286, 132, overlayThread_ >= 0 && metadataCount_ < 0 ? overlayMessages_[3] : noSubtitles_, muted, 448, 12);
+        if (row == 4 && subtitles_.empty()) {
+            const int message = overlayThread_ >= 0 && metadataCount_ < 0 ? 3 : subtitleMetadataMessage_;
+            text(286, 132, message ? overlayMessages_[message] : noSubtitles_, muted, 448, 12);
+        }
     }
     sceGuFinish();
     sceGuSync(0, 0);

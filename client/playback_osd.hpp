@@ -29,9 +29,9 @@ private:
     bool overlayStarted_ = false, pendingComments_ = false;
     PlaybackOsd* pending_ = nullptr;
     int metadataCount_ = -1, requestedTrack_ = 0, overlayMessage_ = 0;
-    int shownMessage_ = 0;
+    int shownMessage_ = 0, subtitleMetadataMessage_ = 0;
     uint64_t messageUntil_ = 0;
-    std::string overlayMessages_[5], startupLabels_[3];
+    std::string overlayMessages_[6], startupLabels_[3];
     static int overlayEntry(SceSize size, void* arg);
     void loadOverlays();
     bool publish(PlaybackOsd* prepared, bool comments);

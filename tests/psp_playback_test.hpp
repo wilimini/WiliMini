@@ -153,15 +153,23 @@ int controlledPlaybackTest() {
                 if (config.value("async_overlays", false)) {
                     settings.subtitle_track = 1;
                     settings.subtitle_count = 2;
-                    osd->enableNetwork("fixture", 1, 0, [&](const std::string& url, pspapp::ErrorOperation op) {
-                        const bool metadata = url.find("/x/player/v2") != std::string::npos;
+                    osd->enableNetwork("fixture", 1, 1001, [&](const std::string& url, pspapp::ErrorOperation op) {
+                        const bool metadata = url == "https://api.bilibili.com/x/player/wbi/v2?cid=1&aid=1001";
                         const bool comments = url.find("/dm/list.so") != std::string::npos;
-                        overlayRequests.emplace_back(metadata ? "metadata" : comments ? "danmaku" : "selected_subtitle", sceKernelGetSystemTimeWide());
+                        const bool selected = url == "https://fixture.invalid/zh.json";
+                        overlayRequests.emplace_back(metadata ? "metadata" : comments ? "danmaku" :
+                            selected ? "selected_subtitle" : "unexpected", sceKernelGetSystemTimeWide());
                         sceKernelDelayThread(1200000); // Deliberately slow optional resources.
                         pspapp::HttpResponse r;
                         if (config.value("overlay_failure", false)) {
                             r.error = {pspapp::ErrorDomain::Network, pspapp::ErrorKind::Timeout, op, 28};
-                        } else if (metadata) r.body = R"({"code":0,"data":{"subtitle":{"subtitles":[{"lan_doc":"简体中文","subtitle_url":"https://fixture.invalid/zh.json"},{"lan_doc":"English","subtitle_url":"https://fixture.invalid/en.json"}]}}})";
+                        } else if (metadata && config.value("overlay_mismatch", false)) {
+                            r.body = R"({"code":0,"data":{"aid":1001,"bvid":"fixture","cid":2,"subtitle":{"subtitles":[{"subtitle_url":"//fixture.invalid/zh.json"}]}}})";
+                        } else if (metadata && config.value("overlay_login_required", false)) {
+                            r.body = R"({"code":0,"data":{"aid":1001,"bvid":"fixture","cid":1,"need_login_subtitle":true,"subtitle":{"subtitles":[]}}})";
+                        } else if (metadata) {
+                            r.body = R"({"code":0,"data":{"aid":1001,"bvid":"fixture","cid":1,"last_play_cid":2,"subtitle":{"subtitles":[null,{"subtitle_url":null},{"subtitle_url":""},{"lan_doc":"简体中文","subtitle_url":"//fixture.invalid/zh.json"},{"lan_doc":"English","subtitle_url":"https://fixture.invalid/en.json"}]}}})";
+                        }
                         else if (comments) r.body = "<i><d p=\"0,1,25,16777215,0\">后台弹幕测试</d></i>";
                         else r.body = R"({"body":[{"from":0,"to":8,"content":"字幕按需加载，不阻塞首帧。"}]})";
                         return r;

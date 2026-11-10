@@ -1,4 +1,5 @@
 #pragma once
+#include "app_error.hpp"
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -8,8 +9,7 @@ struct SubtitleCue { int64_t startMs, endMs; std::string text; };
 struct SubtitleTrack { std::string label; std::vector<SubtitleCue> cues; std::string url{}; };
 std::vector<SubtitleCue> parseSubtitles(std::string_view json);
 class HttpClient;
-std::vector<SubtitleTrack> subtitleTracks(const std::string& bvid, uint64_t cid, uint64_t aid, HttpClient& http, bool& failed);
-std::vector<SubtitleTrack> loadSubtitles(const std::string& bvid, uint64_t cid, uint64_t aid = 0);
+Result<std::vector<SubtitleTrack>> subtitleTracks(const std::string& bvid, uint64_t cid, uint64_t aid, HttpClient& http);
 // Latest starting active cue wins if the source contains overlapping intervals.
 int subtitleAt(const std::vector<SubtitleCue>& cues, int64_t positionMs);
 // Lyrics view: the last cue that has started, kept through gaps; -1 before the first.

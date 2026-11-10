@@ -270,7 +270,7 @@ private:
     void startDetail(const VideoCard &card);
     void startComments();
     void loadNextPage();
-    void startPlay(const VideoCard &card, uint64_t cid, int duration);
+    void startPlay(const VideoCard &card);
     void stopMusic();
     std::unique_ptr<MusicSession> music_;
     VideoCard selectedDetailCard() const;
@@ -390,8 +390,6 @@ private:
     PendingAction pendingAction_ = PendingAction::None;
     std::string jobQuery_;
     VideoCard jobCard_{};
-    uint64_t jobCid_ = 0;
-    int jobDuration_ = 0;
     int jobResult_ = -1;
     std::string jobError_;
     bool jobFinished_ = false;

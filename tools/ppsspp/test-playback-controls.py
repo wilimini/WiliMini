@@ -35,6 +35,8 @@ cases = {
     'async-overlays': ({'async_overlays': True, 'start_paused': True}, '9:0x2000:0.2,11:0x8:0.2', [3, 6, 8], 13),
     'overlay-cancel': ({'async_overlays': True, 'start_paused': True}, '2.3:0x2000:0.2,6:0x8:0.2', [2], 8),
     'overlay-failure': ({'async_overlays': True, 'overlay_failure': True}, '12:0x8:0.2', [4, 7], 14),
+    'overlay-mismatch': ({'async_overlays': True, 'overlay_mismatch': True}, '12:0x8:0.2', [4, 7], 14),
+    'overlay-login': ({'async_overlays': True, 'overlay_login_required': True}, '4:0x1000:0.15,4.3:0x80:0.15,4.6:0x4000:0.15,12:0x8:0.2', [5, 8], 14),
     'seek-cancel': ({}, '4:0x20:0.15,4.2:0x2000:0.15,7:0x2000:0.2,11:0x8:0.2', [4.1, 5], 13),
 }
 checks = {}
@@ -73,12 +75,14 @@ for name in sys.argv[1:] or cases:
         checks['menu_visible'] = any(x['menu'] for x in samples)
         checks['danmaku_toggle'] = any(not x['danmaku'] for x in samples)
         checks['density_and_opacity'] = any(x['density'] == 2 and x['opacity'] == 50 for x in samples)
-    elif name in ('async-overlays', 'overlay-failure', 'overlay-cancel'):
+    elif name in ('async-overlays', 'overlay-failure', 'overlay-cancel', 'overlay-mismatch', 'overlay-login'):
         requests = result['overlay_requests']
+        kinds = [x['kind'] for x in requests]
         checks[name+'_first_frame_before_network'] = all(x['time_us'] >= result['first_frame_us'] > 0 for x in requests)
-        checks[name+'_only_selected_track'] = sum(x['kind'] == 'selected_subtitle' for x in requests) == (1 if name == 'async-overlays' else 0)
+        checks[name+'_uses_current_part_endpoint'] = kinds.count('metadata') == 1 and 'unexpected' not in kinds
+        checks[name+'_only_selected_track'] = kinds.count('selected_subtitle') == (1 if name == 'async-overlays' else 0)
         if name == 'overlay-cancel': checks['overlay_cancel_joins'] = result['cancelled'] == 1 and len(requests) == 1
-        if name == 'overlay-failure': checks['overlay_failure_does_not_stop_video'] = result['eof'] == 1
+        if name in ('overlay-failure', 'overlay-mismatch', 'overlay-login'): checks[name+'_does_not_stop_video'] = result['eof'] == 1
     elif name == 'subtitles':
         checks['subtitle_tracks_selectable'] = {1, 2}.issubset({x['subtitle'] for x in samples})
         checks['subtitle_seek_retained'] = result['seek_count'] == 1 and len(result['plays']) == 1

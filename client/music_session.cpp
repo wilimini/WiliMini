@@ -478,8 +478,8 @@ void MusicSession::maybePrefetch(int64_t positionMs, int64_t durationMs) {
 void MusicSession::loadLyrics(size_t index) {
     loadingLyrics_ = true;
     transfer_cancel = 0;
-    bool failed = false;
-    auto tracks = subtitleTracks(source_.bvid, tracks_[index].cid, source_.aid, defaultHttpClient(), failed);
+    auto result = subtitleTracks(source_.bvid, tracks_[index].cid, source_.aid, defaultHttpClient());
+    auto& tracks = result.value;
     if (tracks.size() > kMaxLyricTracks) tracks.resize(kMaxLyricTracks);
     for (auto& track : tracks) {
         if (stopping_ || transfer_cancel) break;

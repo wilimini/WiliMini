@@ -438,7 +438,7 @@ void App::refresh() {
 
 void App::retry() {
     if (navigation_.current().playbackFailed) {
-        if (screen() == Screen::Detail) startPlay(jobCard_, jobCid_, jobDuration_);
+        if (screen() == Screen::Detail) startJob(Job::Play);
         else startJob(Job::CommunityPlay);
         return;
     }
@@ -1143,7 +1143,7 @@ void App::requestPlayback(bool fromStart) {
     playbackPaused_ = false;
     VideoCard card = selectedDetailCard();
     if (fromStart || (card.duration > 0 && card.startMs >= card.duration * 1000LL)) card.startMs = 0;
-    startPlay(card, card.cid, card.duration);
+    startPlay(card);
 }
 
 void App::rememberHistory(const VideoCard& card) {
@@ -1308,10 +1308,8 @@ void App::startComments() {
     startJob(Job::Comments);
 }
 
-void App::startPlay(const VideoCard& card, uint64_t cid, int duration) {
+void App::startPlay(const VideoCard& card) {
     jobCard_ = card;
-    jobCid_ = cid;
-    jobDuration_ = duration;
     startJob(Job::Play);
 }
 
@@ -1705,8 +1703,6 @@ void App::commitJob() {
     } else if (job_ == Job::Play || job_ == Job::CommunityPlay) {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;
-            playbackCard_.cid = jobCid_;
-            playbackCard_.duration = jobDuration_;
             playbackEpisode_ = playbackSeason_ = 0;
         } else {
             playbackCard_ = {};
@@ -2012,8 +2008,8 @@ void App::runJob() {
         std::snprintf(video.title, sizeof(video.title), "%s", jobCard_.title.c_str());
         std::snprintf(video.author, sizeof(video.author), "%s", jobCard_.author.c_str());
         std::snprintf(video.picture, sizeof(video.picture), "%s", jobCard_.picture.c_str());
-        video.cid = static_cast<long long>(jobCid_ ? jobCid_ : jobCard_.cid);
-        video.duration = jobDuration_;
+        video.cid = static_cast<long long>(jobCard_.cid);
+        video.duration = jobCard_.duration;
         std::string playbackError;
         const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_);
         if (result < 0) {
@@ -2038,7 +2034,7 @@ void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
         jobMedia_.startMs = playbackCard_.startMs;
         startJob(Job::CommunityPlay);
     } else {
-        startPlay(playbackCard_, playbackCard_.cid, playbackCard_.duration);
+        startPlay(playbackCard_);
     }
 }
 
