@@ -67,7 +67,8 @@ for name, config in cases.items():
         subprocess.run(['sh', str(root/'tools/ppsspp/run-client-headless.sh')], env=env, check=True,
                        stdout=log, stderr=subprocess.STDOUT)
     result = json.loads((game/'playback-test-result.json').read_text())
-    summaries = [json.loads(p.read_text()) for p in sorted((game/'results').glob('run-*/summary.json'))]
+    runs = sorted((game/'results').glob('run-*/summary.json'))
+    summaries = [json.loads(p.read_text()) for p in runs]
     summary = summaries[0]
     (out/(name+'.json')).write_text(json.dumps(dict(result=result, summary=summary, memstick=str(memstick)), indent=2))
     checks[name+'_decode'] = result['code'] == 0 and result['frames'] > 0 and summary['audio_error'] == 0
@@ -76,6 +77,11 @@ for name, config in cases.items():
         checks[name+'_me_jobs'] = all(s.get('me_render') == 2 and
             s.get('me_submitted', 0) > 0 and s.get('me_completed') == s.get('me_submitted')
             for s in summaries)
+        checks[name+'_diagnostic_csvs'] = all(
+            len(p.with_name('frames.csv').read_text().splitlines()) == min(s['frames'], 6000) + 1 and
+            len(p.with_name('presentation.csv').read_text().splitlines()) == min(s['me_completed'], 6000) + 1 and
+            not p.with_name('packets.csv').exists()
+            for p, s in zip(runs, summaries))
     checks[name+'_present'] = summary.get('rgb_presented', result['frames']) > 0 and summary['audio_submitted_samples'] > 0
     if config['start_ms']:
         checks[name+'_resume'] = 3_000_000 <= summary['first_video_us'] < 3_100_000 and 3_000_000 <= summary['audio_first_pts_us'] < 3_100_000

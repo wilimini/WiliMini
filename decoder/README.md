@@ -14,6 +14,8 @@ PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 `git clone --recurse-submodules`），初始化两个 ME 依赖。
 再运行 `make dependencies` 和 `make package`。FFmpeg 由 CMake 下载固定版本的
 源码包到 `build/ffmpeg-source`，校验 SHA-256 并自动应用 PSP 补丁，无需手动打补丁。
+默认依赖只构建客户端使用的 H.264 和浮点 AAC 解码器。使用预构建 FFmpeg 的环境
+需要重建依赖才能获得这项内存节省。
 
 ```c
 #include "psp_video.h"
@@ -135,6 +137,8 @@ Custom Core 使用固定版本上游的 `me-core.h` 启动代码和 `me-lib.c` �
 原生 ME 播放每次在 `results/run-XXX/diagnostics.txt` 保存诊断节点。
 设置页“日志与结果写入文件”默认关闭；关闭时不创建 `results/`，也不写 `diagnostics.txt`。开启后，两种后端的每次播放还会在同一目录持续写入 `log.txt`（本次播放期间的日志）。`results/` 默认只保留最近 20 次运行，
 诊断分析（profile）运行不会被清理，详见 [调试文档](../docs/debug.md#playback-result-folders)。
+原生播放器只在写入结果时分配帧和呈现记录缓冲，逐包记录只在 profile 模式分配。
+记录缓冲分配失败时，相应 CSV 可能只有表头。播放器会记录警告并继续尝试播放。
 文件记录软件 Git 版本（含 dirty 标记）、构建配置时间（UTC）、构建类型、
 ME 桥自身的构建标识、设备本地时间、机型 ID、基础固件 devkit 版本、
 进程内尝试次数、系统运行时间和可用内存。机型 ID 使用 SDK 原始值

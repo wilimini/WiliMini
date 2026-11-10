@@ -210,10 +210,10 @@ PspProfileStage psp_profile_stages[PSP_PROFILE_STAGES];
 static int profile_requested;
 static unsigned timer_pair_us;
 typedef struct { int64_t pts, dts; unsigned us; int result; } PacketRecord;
-static PacketRecord packet_records[MAX_RECORDS];
+static PacketRecord *packet_records;
 static unsigned packet_record_count;
 static unsigned packet_records_truncated;
-static FrameRecord records[MAX_RECORDS];
+static FrameRecord *records;
 #if PSP_AUDIO_VERIFY
 static struct { int64_t pts; uint8_t luma[144]; } visual_records[512];
 static unsigned visual_count;
@@ -670,7 +670,7 @@ static void save_results(const char *path, const RunStats *s, int render,
     FILE *present = fopen(file, "w");
     if (present) {
         fputs("output_index,pts_us,audio_us,wall_us,dropped,target_us\n", present);
-        for (unsigned i = 0; diagnostic_audio_valid && i < rgb_consumed && i < 6000; ++i)
+        for (unsigned i = 0; diagnostic_audio_valid && i < rgb_record_count; ++i)
             fprintf(present, "%u,%lld,%lld,%llu,%d,%lld\n", i,
                     (long long)rgb_records[i].pts, (long long)rgb_records[i].audio,
                     (unsigned long long)rgb_records[i].wall, rgb_records[i].dropped,
@@ -682,7 +682,7 @@ static void save_results(const char *path, const RunStats *s, int render,
     FILE *out = fopen(file, "w");
     if (out) {
         fputs("output_index,pts,receive_us,render_us\n", out);
-        for (unsigned i = 0; i < s->frames && i < MAX_RECORDS; ++i)
+        for (unsigned i = 0; records && i < s->frames && i < MAX_RECORDS; ++i)
             fprintf(out, "%u,%lld,%u,%u\n", i, (long long)records[i].pts,
                     records[i].receive_us, records[i].render_us);
         fclose(out);
@@ -899,12 +899,12 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
                 s->media_us = av_rescale_q(frame->best_effort_timestamp -
                                            s->media_boundary_pts,
                                            s->media_time_base, AV_TIME_BASE_Q);
-            if (s->frames < MAX_RECORDS) {
-                records[s->frames].pts = frame->best_effort_timestamp;
-                records[s->frames].receive_us = elapsed;
-                records[s->frames].render_us = render_us;
-            } else {
-                s->log_truncated = 1;
+            if (records) {
+                if (s->frames < MAX_RECORDS) {
+                    records[s->frames] = (FrameRecord){frame->best_effort_timestamp, elapsed, render_us};
+                } else {
+                    s->log_truncated = 1;
+                }
             }
             ++s->frames;
             s->render_us += render_us;
@@ -975,6 +975,26 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     video_stage = PSP_VIDEO_STAGE_LOG;
     if (select_run_dir(run_path, path_size) < 0)
         return -2;
+    if (run_path[0]) {
+        records = malloc(MAX_RECORDS * sizeof(*records));
+        if (!records) {
+            stats->log_truncated = 1;
+            WLOG_W(WLC_MEM, "frame diagnostics allocation failed");
+        }
+        if (profile_requested) {
+            packet_records = malloc(MAX_RECORDS * sizeof(*packet_records));
+            if (!packet_records) {
+                packet_records_truncated = 1;
+                WLOG_W(WLC_MEM, "packet diagnostics allocation failed");
+            }
+        }
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
+        if (render) {
+            rgb_records = malloc(RGB_RECORD_LIMIT * sizeof(*rgb_records));
+            if (!rgb_records) WLOG_W(WLC_MEM, "presentation diagnostics allocation failed");
+        }
+#endif
+    }
     playback_diagnostic_begin(run_path);
 #if PSP_ME_DECODE
     video_stage = PSP_VIDEO_STAGE_ME_INIT;
@@ -1127,7 +1147,7 @@ decode_again:
         elapsed = tick_us() - begin;
         if (output_count >= WARMUP_FRAMES)
             stats->decode_us += elapsed;
-        if (profile_requested && output_count >= WARMUP_FRAMES) {
+        if (packet_records && output_count >= WARMUP_FRAMES) {
             if (packet_record_count < MAX_RECORDS) {
                 PacketRecord *record = &packet_records[packet_record_count++];
                 *record = (PacketRecord){packet->pts, packet->dts, elapsed, ret};
@@ -1240,6 +1260,16 @@ done:
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
     playback_diagnostic(psp_video_stage_name(video_stage), ret);
     save_results(run_path, stats, render, full, ret);
+    free(records);
+    records = NULL;
+    free(packet_records);
+    packet_records = NULL;
+#if PSP_AUDIO && PSP_RGB_PACE
+    /* The presentation worker has joined, independently of ME shutdown. */
+    free(rgb_records);
+    rgb_records = NULL;
+    rgb_record_count = 0;
+#endif
     return ret;
 }
 

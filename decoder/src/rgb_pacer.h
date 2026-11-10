@@ -23,7 +23,9 @@ static volatile int rgb_startup_ready;
 static volatile int rgb_seek_preview;
 static unsigned rgb_generation;
 typedef struct { int64_t pts, audio, target; uint64_t wall; int dropped; } RgbRecord;
-static RgbRecord rgb_records[6000];
+#define RGB_RECORD_LIMIT 6000
+static RgbRecord *rgb_records;
+static unsigned rgb_record_count;
 
 static void *rgb_slot_pixels(unsigned slot)
 {
@@ -86,9 +88,9 @@ static int rgb_worker(SceSize size, void *arg)
             }
         } else ++rgb_dropped;
         rgb_last_us = sceKernelGetSystemTimeWide();
-        if (rgb_consumed < 6000)
-            rgb_records[rgb_consumed] = (RgbRecord){rgb_pts[slot], playback_seeking ? 0 : audio_clock_us(), target, rgb_last_us,
-                                                   drop || quit_requested || rgb_error};
+        if (rgb_records && rgb_record_count < RGB_RECORD_LIMIT)
+            rgb_records[rgb_record_count++] = (RgbRecord){rgb_pts[slot], playback_seeking ? 0 : audio_clock_us(), target, rgb_last_us,
+                                                         drop || quit_requested || rgb_error};
         previous_pts = rgb_pts[slot];
         ++rgb_consumed;
         if (rgb_consumed == WARMUP_FRAMES) rgb_warmup_us = rgb_last_us;
