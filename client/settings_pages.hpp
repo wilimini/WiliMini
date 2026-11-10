@@ -6,6 +6,7 @@ struct LicenseEntry { const char* title; const char* file; };
 inline constexpr LicenseEntry settingsLicenses[] = {
     {"文泉驿微米黑 · 版权", "wqy.txt"},
     {"文泉驿微米黑 · Apache 2.0", "wqy-apache-2.0.txt"},
+    {"思源黑体 Heavy · OFL", "source-han-sans-ofl.txt"},
     {"Wiliwili · GPL", "wiliwili.txt"},
     {"Wiliwili 素材 · GPL", "wiliwili-assets.txt"},
     {"FFmpeg · LGPL", "ffmpeg.txt"},

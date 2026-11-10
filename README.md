@@ -402,7 +402,9 @@ WiliMini 采用 GNU General Public License v3 协议开源。第三方依赖及�
 | [PSP Media Engine MIST](https://github.com/mcidclan/psp-media-engine-mist) | Media Engine 集成 | MIT |
 | [PSP Media Engine Custom Core](https://github.com/mcidclan/psp-media-engine-custom-core) | Media Engine core mapper 与辅助库 | MIT |
 | [Wiliwili](https://github.com/xfangfang/wiliwili) | Bilibili API/result 代码及界面资源 | GPL-3.0-only |
-| [WenQuanYi Micro Hei](https://sourceforge.net/projects/wqy/) | 客户端字体 | Apache-2.0 |
+| [WenQuanYi Micro Hei](https://sourceforge.net/projects/wqy/) | 客户端正文与标题字体 | Apache-2.0 |
+| [Source Han Sans](https://github.com/adobe-fonts/source-han-sans) | 音乐播放器歌词字体（Heavy 字重） | OFL-1.1 |
+| [rime-ice](https://github.com/iDvel/rime-ice) | 拼音输入法词库 | GPL-3.0-only |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON 解析 | MIT |
 | [QR Code generator](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/c) | 登录二维码生成 | MIT |
 | [PSPSDK](https://github.com/pspdev/pspsdk) | PSP SDK 兼容代码 | BSD-3-Clause |
