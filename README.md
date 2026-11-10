@@ -20,6 +20,8 @@ WiliMini
 
 - - -
 
+> 如果喜欢本项目，可以点个免费的 Start 🌟
+
 [![GitHub release](https://img.shields.io/github/v/release/wilimini/WiliMini)](https://github.com/wilimini/WiliMini/releases)
 [![GitHub license](https://img.shields.io/github/license/wilimini/WiliMini)](LICENSE)
 ![PSP](https://img.shields.io/badge/PlayStation-Portable-003791?style=flat&logo=PlayStation)
