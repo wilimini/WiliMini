@@ -871,6 +871,11 @@ void App::openHub() {
     navigation_.current().focus = FocusArea::Content;
 }
 
+void App::openUserContent() {
+    if (busy() || playbackReady_ || tileLaunching()) return;
+    openBrowse({BrowseKind::DynamicFeed});
+}
+
 void App::tileMove(int dx, int dy) {
     hubSelection_ = tileNeighbor(hubSelection_, dx, dy);
 }

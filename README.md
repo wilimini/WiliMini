@@ -214,7 +214,7 @@ PPSSPP 运行需要支持 Media Engine 执行，并启用 `EmulateMediaEngine`�
 | □ | 打开搜索；在详情页切换稍后观看 |
 | L / R | 切换主标签页；在详情页打开评论 |
 | SELECT | 重新打开 PSP Wi-Fi 设置 |
-| START | 退出客户端 |
+| START | 首页打开动态（用户在线内容）；其他页面同 × 确认 |
 
 播放时 START 暂停/继续，L/R 跳转 10 秒，左右细调并预览进度，△ 选择弹幕、字幕与画质入口，□ 切换弹幕。
 详见 [播放控制与弹幕](docs/playback-controls.md)。

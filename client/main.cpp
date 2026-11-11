@@ -273,12 +273,14 @@ int main(int argc, char** argv) {
         const unsigned backButton = app.preferences().confirmWithCircle ? PSP_CTRL_CROSS : PSP_CTRL_CIRCLE;
         if (app.noticeVisible()) {
             // The update message waits for a button; everything else is ignored meanwhile.
-            if (pressed & (confirmButton | backButton)) app.dismissUpdateNotice();
-            pressed &= PSP_CTRL_START;
+            if (pressed & (confirmButton | backButton | PSP_CTRL_START)) app.dismissUpdateNotice();
+            pressed = 0;
         }
+        // START never exits the client. On the main screen it opens the user's online content
+        // (below); everywhere else it acts as confirm.
+        if ((pressed & PSP_CTRL_START) && !app.atMainScreen()) pressed = (pressed & ~PSP_CTRL_START) | confirmButton;
 
         if (app.utilityPage() && !app.busy()) {
-            if (pressed & PSP_CTRL_START) break;
             if (pressed & backButton) app.back();
             else if (pressed & confirmButton) {
                 if (app.screen() == pspapp::Screen::Settings &&
@@ -298,8 +300,6 @@ int main(int argc, char** argv) {
             } else if (pressed & PSP_CTRL_LEFT) app.moveSelection(-1, 0);
             else if (pressed & PSP_CTRL_RIGHT) app.moveSelection(1, 0);
         } else if (app.screen() == pspapp::Screen::Login) {
-            if (pressed & PSP_CTRL_START)
-                break;
             if (pressed & backButton)
                 app.back();
             else if (pressed & PSP_CTRL_TRIANGLE)
@@ -320,8 +320,8 @@ int main(int argc, char** argv) {
         } else if (app.tileHubVisible()) {
             // Tile home: the d-pad moves the focus ring and confirm opens a tile. Moving works
             // while a background load is running; input is ignored during the launch animation.
-            if (pressed & PSP_CTRL_START) break;
-            if (app.tileLaunching()) {
+            if (pressed & PSP_CTRL_START) app.openUserContent();
+            else if (app.tileLaunching()) {
             } else if (pressed & PSP_CTRL_SELECT) {
                 networkDialog();
                 app.refresh();
@@ -332,7 +332,6 @@ int main(int argc, char** argv) {
             else if (pressed & PSP_CTRL_LEFT) app.tileMove(-1, 0);
             else if (pressed & PSP_CTRL_RIGHT) app.tileMove(1, 0);
         } else if (app.screen() == pspapp::Screen::Music) {
-            if (pressed & PSP_CTRL_START) break;
             using Key = pspapp::App::MusicKey;
             if (pressed & backButton) app.back();
             else if (pressed & confirmButton) app.musicKey(Key::Confirm);
@@ -350,10 +349,9 @@ int main(int argc, char** argv) {
             else if (pressed & PSP_CTRL_RTRIGGER) {
                 app.shoulder(1);
             }
-            if (pressed & PSP_CTRL_START) break;
         } else {
-            if (pressed & PSP_CTRL_START) break;
-            if (app.playbackFailed() && (pressed & (confirmButton | PSP_CTRL_TRIANGLE))) app.retry();
+            if (pressed & PSP_CTRL_START) app.openUserContent();
+            else if (app.playbackFailed() && (pressed & (confirmButton | PSP_CTRL_TRIANGLE))) app.retry();
             else if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
             else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);
             else if (app.commentPage()) {
