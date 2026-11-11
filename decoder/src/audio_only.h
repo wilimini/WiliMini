@@ -130,6 +130,7 @@ int psp_audio_seek(int64_t position_ms) {
         avcodec_flush_buffers(audio.codec);
         audio.stop = audio.eof = audio.input_eof = audio.error = 0;
         audio.produced = audio.consumed = audio.fill = audio.blocks = 0;
+        audio_decimator_init(&audio.decimator, audio.decimator.factor);
         audio.first_pts_us = AV_NOPTS_VALUE;
         audio.epoch_us = 0;
         audio.min_buffer_blocks = AUDIO_BLOCKS;

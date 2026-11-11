@@ -2058,9 +2058,14 @@ void App::setLosslessAudio(bool enabled) {
 void App::retryWithoutLossless(int64_t positionMs, bool paused, int error) {
     WLOG_W(WLC_CLIENT, "lossless audio rejected by the decoder error=%d, retrying with AAC", error);
     losslessAudio_ = false;
-    playbackNotice_ = (preferences_.locale == Locale::EnUs ? "Lossless audio failed, using AAC ("
-                                                           : "无损音轨无法播放，已改用 AAC (") +
-                      std::to_string(error) + ")";
+    // -22: rate/channels the decoder cannot play; -88: sample format; a large negative
+    // number is FFmpeg's "decoder not found".
+    const bool en = preferences_.locale == Locale::EnUs;
+    const char* reason = error == -22 ? (en ? "unsupported format" : "格式不受支持")
+                       : error == -88 ? (en ? "unsupported sample format" : "采样格式不受支持")
+                       : error < -1000000 ? (en ? "decoder missing" : "缺少解码器") : "";
+    playbackNotice_ = std::string(en ? "Lossless audio failed, using AAC" : "无损音轨无法播放，已改用 AAC") +
+                      " (" + reason + (*reason ? ", " : "") + std::to_string(error) + ")";
     seekPlayback(positionMs, paused);
 }
 
