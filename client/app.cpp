@@ -1079,7 +1079,7 @@ void App::startMusic() {
     source.aid = page.detail.card.aid;
     music_ = std::make_unique<MusicSession>(std::move(source), std::move(tracks), start,
                                             static_cast<RepeatMode>(preferences_.musicRepeat),
-                                            preferences_.losslessAudio);
+                                            losslessAudio_);
     if (!music_->start()) {
         music_.reset();
         status_ = "无法启动音乐模式";
@@ -1129,7 +1129,7 @@ void App::musicKey(MusicKey key) {
     case MusicKey::Up:
         if (route.panel == MusicPanel::Queue) { if (route.queueFocus > 0) --route.queueFocus; }
         else if (route.panel == MusicPanel::Lyrics) music_->cycleLyricTrack();
-        else if (view.losslessAvailable) setLosslessAudio(!preferences_.losslessAudio);  // reopens the part in place
+        else if (view.losslessAvailable) setLosslessAudio(!view.lossless);  // reopens the part in place
         break;
     case MusicKey::Down:
         if (route.panel == MusicPanel::Queue) { if (route.queueFocus + 1 < count) ++route.queueFocus; }
@@ -1745,7 +1745,7 @@ void App::runJob() {
             std::snprintf(video.title, sizeof(video.title), "%s", jobMedia_.title.c_str());
             video.cid = static_cast<long long>(jobMedia_.cid); video.duration = jobMedia_.duration;
             jobResult_ = prepareEpisodePlayback(video,jobMedia_.epId,stagedPlayback_,jobError_,playbackQuality_, &jobTypedError_,
-                                                preferences_.losslessAudio && !losslessRejected_);
+                                                losslessAudio_);
         }
     } else if (job_ == Job::Browse) {
         const BrowseRequest &request = prefetch_ ? pfBrowse_ : jobBrowse_;
@@ -2023,7 +2023,7 @@ void App::runJob() {
         video.duration = jobCard_.duration;
         std::string playbackError;
         const int result = preparePlayback(video, stagedPlayback_, playbackError, playbackQuality_, &jobTypedError_,
-                                           preferences_.losslessAudio && !losslessRejected_);
+                                           losslessAudio_);
         if (result < 0) {
             jobError_ = playbackError.empty() ? "无法准备视频流" : playbackError;
             jobResult_ = result;
@@ -2051,25 +2051,21 @@ void App::seekPlayback(int64_t positionMs, bool paused, int quality) {
 }
 
 void App::setLosslessAudio(bool enabled) {
-    if (enabled == preferences_.losslessAudio) return;
-    Preferences next = preferences_;
-    next.losslessAudio = enabled;
-    // Keep the choice for this run even when the Memory Stick write fails.
-    savePreferences(CLIENT_PATH("/settings.json"), next);
-    preferences_ = next;
-    losslessRejected_ = false;
+    losslessAudio_ = enabled;
     if (music_) music_->setLossless(enabled);
 }
 
-void App::retryWithoutLossless(int64_t positionMs, bool paused) {
-    WLOG_W(WLC_CLIENT, "lossless audio rejected by the decoder, retrying with AAC");
-    losslessRejected_ = true;
+void App::retryWithoutLossless(int64_t positionMs, bool paused, int error) {
+    WLOG_W(WLC_CLIENT, "lossless audio rejected by the decoder error=%d, retrying with AAC", error);
+    losslessAudio_ = false;
+    playbackNotice_ = (preferences_.locale == Locale::EnUs ? "Lossless audio failed, using AAC ("
+                                                           : "无损音轨无法播放，已改用 AAC (") +
+                      std::to_string(error) + ")";
     seekPlayback(positionMs, paused);
 }
 
 void App::finishPlayback(int error, unsigned frames, int eof, int cancelled, PspVideoStage stage, int64_t positionMs) {
     playbackPaused_ = false;
-    losslessRejected_ = false;
     playbackOverlayCid_ = 0;
     const int cacheResult = bili_finish_playback(&playback_);
     playbackReady_ = false;

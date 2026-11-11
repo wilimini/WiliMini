@@ -93,7 +93,7 @@ MusicView MusicSession::view(bool livePosition) const {
     out.error = error_;
     out.lyrics = lyrics_;
     out.lyricTrack = lyricTrack_;
-    out.lossless = wantLossless_;
+    out.lossless = losslessActive_;
     out.losslessAvailable = losslessAvailable_;
     // The worker's snapshot can be old during a network fetch. The live clock has no I/O.
     // Preserve the preview target while a seek or a part change is pending.
@@ -216,8 +216,9 @@ void MusicSession::cycleLyricTrack() {
 
 void MusicSession::setLossless(bool enabled) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (wantLossless_ == enabled) return;
+    if (wantLossless_ == enabled && losslessActive_ == enabled) return;
     wantLossless_ = enabled;
+    losslessActive_ = enabled;  // shown at once; the reopened part sets what really plays
     reloadPending_ = true;
     if (seeking_) psp_audio_interrupt();
     post();
@@ -441,7 +442,8 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
     applyPause();  // a toggle during the open must not be lost
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        losslessAvailable_ = current_.lossless_available != 0 && !losslessRejected_;
+        losslessActive_ = current_.lossless != 0;
+        losslessAvailable_ = current_.lossless_available != 0;
         if (!hasStep_) {
             state_ = wantPaused_ ? MusicState::Paused : MusicState::Playing;
             lyricsPending_ = true;

@@ -234,10 +234,13 @@ int main(int argc, char** argv) {
             settings.quality = app.playback().quality;
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
-            settings.lossless_audio = app.preferences().losslessAudio;
-            // Offered only when this video has a FLAC track the decoder has not rejected.
-            settings.lossless_available = app.playback().lossless_available && !app.losslessRejected();
+            // The menu row exists only for a video with a FLAC track, and it shows the
+            // track that is really playing.
+            settings.lossless_audio = app.playback().lossless;
+            settings.lossless_available = app.playback().lossless_available;
             const bool losslessStream = app.playback().lossless != 0;
+            const std::string notice = app.takePlaybackNotice();
+            if (!notice.empty()) osd->notice(notice);
             options.settings = &settings;
             PspVideoResult result{};
             playbackActive = 1;
@@ -247,13 +250,14 @@ int main(int argc, char** argv) {
             ui_resume();
             osd.reset();
             app.setPlayerSettings(result.settings);
-            // Only a menu choice carries the toggle; early failures return zeroed settings.
-            if (result.quality_requested) app.setLosslessAudio(result.settings.lossless_audio != 0);
+            // Only a menu choice on a video with a FLAC track carries the toggle.
+            if (result.quality_requested && result.settings.lossless_available)
+                app.setLosslessAudio(result.settings.lossless_audio != 0);
             // A FLAC track the decoder cannot open (an unsupported sample rate or
             // channel layout) falls back to AAC instead of failing the playback.
             if (error < 0 && losslessStream && !exiting && !result.cancelled &&
                 result.error_stage == PSP_VIDEO_STAGE_AUDIO_INIT)
-                app.retryWithoutLossless(app.playbackStartMs(), options.start_paused != 0);
+                app.retryWithoutLossless(app.playbackStartMs(), options.start_paused != 0, error);
             else if (result.quality_requested && !exiting && error >= 0)
                 app.seekPlayback(result.position_ms, result.seek_paused != 0, result.quality_requested);
             else if (result.seek_requested && !exiting && error >= 0)

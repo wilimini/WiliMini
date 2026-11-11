@@ -147,14 +147,6 @@ int main(int argc, char** argv) {
     }
     std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"music_repeat":9})";
     assert(pspapp::loadPreferences(path, value) && value.musicRepeat == 0);
-    // Lossless audio is off unless saved, and a non-boolean value is rejected.
-    assert(!value.losslessAudio);
-    value.losslessAudio = true;
-    assert(pspapp::savePreferences(path, value));
-    pspapp::Preferences losslessRestored;
-    assert(pspapp::loadPreferences(path, losslessRestored) && losslessRestored.losslessAudio);
-    std::ofstream(path) << R"({"version":1,"dark_theme":false,"body_size":14,"show_covers":true,"slow_repeat":false,"lossless_audio":1})";
-    assert(!pspapp::loadPreferences(path, value));
     std::remove(path);
     std::puts("Preference migration, round trips, invalid buffers and log settings: passed");
 }

@@ -85,7 +85,6 @@ void App::changeSetting() {
                 : next.playbackPixelFormat == PlaybackPixelFormat::Rgb565
                     ? PlaybackPixelFormat::Rgba8888 : PlaybackPixelFormat::Auto;
             break;
-        case SettingItem::LosslessAudio: next.losslessAudio = !next.losslessAudio; break;
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;

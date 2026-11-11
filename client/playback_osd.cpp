@@ -51,7 +51,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     qualityNames_[2] = en ? "720P" : "720P 高清";
     for (const auto& label : qualityNames_) cache(label);
     cache("P");
-    cache(losslessLabel_);
+    cache(losslessLabel_); cache("FLAC");
     cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
     for (const auto& label : menuLabels_) cache(label);
     for (const auto& label : density_) cache(label);
@@ -155,6 +155,12 @@ void PlaybackOsd::receiveOverlays() {
         sceKernelSignalSema(overlayLock_, 1);
     }
     delete prepared;
+}
+void PlaybackOsd::notice(const std::string& message) {
+    overlayMessages_[6] = message;
+    cache(message);
+    shownMessage_ = 6;
+    messageUntil_ = sceKernelGetSystemTimeWide() + 8000000;
 }
 void PlaybackOsd::updateSettings(PspVideoSettings& settings) {
     if (overlayLock_ < 0) return;
@@ -558,6 +564,8 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
         }
         icon(16, 236, status.paused ? 0 : 1);
         text(46, 239, times, white, 235, 12);
+        // Lossless playback is named in the control bar so it is visible at a glance.
+        if (status.settings.lossless_audio) text(238, 239, "FLAC", pink, 274, 12);
         const int categories[] = {1, 4, 0};
         for (int i = 0; i < 3; ++i) {
             const int x = 276 + i * 64;
