@@ -596,7 +596,10 @@ void App::moveSelection(int dx, int dy) {
             }
             return;
         }
-        if (dx < 0 && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
+        // Tiles style: the Mine grid handles LEFT itself (right column to left column), so only
+        // its left edge falls through here.
+        const bool mineGrid = screen() == Screen::Mine && preferences_.homeStyle == HomeStyle::Tiles;
+        if (dx < 0 && !mineGrid && (screen() == Screen::Mine || root().tab == Tab::Search || root().selection % kGridColumns == 0)) {
             if (preferences_.tileHome()) return;  // the tile theme has no sidebar; back returns to the tiles
             navigation_.current().focus = FocusArea::Navigation;
             root().navigationSelection = root().tab == Tab::Mine ? 2 : 0;
