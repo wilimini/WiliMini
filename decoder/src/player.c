@@ -141,10 +141,9 @@ static int video_cancel_thread(SceSize size, void *arg) {
             sceKernelWaitSema(controls_lock, 1, NULL);
             if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
-            /* The lossless row keeps the video quality; the toggle travels in settings. */
-            if (action == PC_QUALITY)
-                quality_requested = controls.quality_index < controls.settings.quality_count
-                    ? controls.settings.qualities[controls.quality_index] : controls.settings.quality;
+            /* A lossless toggle keeps the video quality: quality_index still names the
+             * playing one, and the toggle itself travels in the settings. */
+            if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
             if (action == PC_SEEK) {
                 seek_target_ms = controls.preview_ms;
                 seek_paused = controls.paused;
@@ -254,10 +253,7 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
     PspVideoStatus status = {controls.position_ms, controls.duration_ms, controls.preview_ms,
         controls.paused, controls.visible, controls.seeking, controls.seekable, playback_seeking,
         controls.menu_open, controls.menu_row,
-        /* -1: the lossless-audio row below the qualities has the focus. */
-        controls.quality_index < controls.settings.quality_count
-            ? controls.settings.qualities[controls.quality_index]
-            : controls.settings.quality_count > 0 || controls.settings.lossless_available ? -1 : 0,
+        controls.settings.quality_count > 0 ? controls.settings.qualities[controls.quality_index] : 0,
         controls.settings, video_stage, controls.menu_value};
     sceKernelSignalSema(controls_lock, 1);
     return presenter->present(presenter->opaque, pixels, format, &status);

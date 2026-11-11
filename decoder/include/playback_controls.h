@@ -64,14 +64,17 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
         s->visible = 1; s->hide_at = now + 3000000;
     }
     if (s->menu_open == 1) {
-        // Footer order: danmaku, subtitles, quality. Never seek while focused.
-        int index = s->menu_row == 0 ? 2 : s->menu_row == 4 ? 1 : 0;
-        if (pressed & PC_LEFT) index = (index + 2) % 3;
-        if (pressed & PC_RIGHT) index = (index + 1) % 3;
-        s->menu_row = index == 2 ? 0 : index == 1 ? 4 : 1;
+        // Footer order: danmaku, subtitles, quality and, only for a video that has a
+        // lossless track, lossless audio (row 5). Never seek while focused.
+        static const int footer_rows[4] = {1, 4, 0, 5};
+        const int entries = s->settings.lossless_available ? 4 : 3;
+        int index = s->menu_row == 0 ? 2 : s->menu_row == 4 ? 1 : s->menu_row == 5 && entries == 4 ? 3 : 0;
+        if (pressed & PC_LEFT) index = (index + entries - 1) % entries;
+        if (pressed & PC_RIGHT) index = (index + 1) % entries;
+        s->menu_row = footer_rows[index];
         if (pressed & PC_CONFIRM) {
             s->menu_open = PC_MENU;
-            s->menu_value = s->settings.subtitle_track;
+            s->menu_value = s->menu_row == 5 ? (s->settings.lossless_audio ? 0 : 1) : s->settings.subtitle_track;
             s->quality_index = 0;
             for (int i = 0; i < s->settings.quality_count; ++i)
                 if (s->settings.qualities[i] == s->settings.quality) s->quality_index = i;
@@ -90,24 +93,24 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
                 s->menu_open = PC_MENU;
             }
         } else if (s->menu_row == 0) {
-            /* Shown highest quality first, so the list position runs against the
-             * index. When the video offers a lossless track, one extra row below
-             * the qualities (quality_index == count) toggles it; like a quality
-             * change it reopens the streams. */
             const int count = s->settings.quality_count;
-            const int rows = count + (s->settings.lossless_available ? 1 : 0);
-            if (rows > 0) {
-                int position = s->quality_index >= count ? count : count - 1 - s->quality_index;
-                position = (position + step + rows) % rows;
-                s->quality_index = position == count ? count : count - 1 - position;
-            }
+            if (count > 0) s->quality_index = (s->quality_index - step + count) % count;
             if (pressed & PC_CONFIRM) {
-                if (rows > count && s->quality_index >= count) {
-                    s->settings.lossless_audio = !s->settings.lossless_audio;
-                    return PC_QUALITY;
-                }
                 if (count > 0 && s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
                 s->menu_open = PC_FOOTER;
+            }
+        } else if (s->menu_row == 5) {
+            /* Lossless audio, independent of the video quality: 0 is on, 1 is off.
+             * A change swaps the audio stream, so it reopens the streams in place
+             * like a quality change (quality_index still names the playing quality). */
+            s->menu_value = (s->menu_value + step + 2) % 2;
+            if (pressed & PC_CONFIRM) {
+                const int want = s->menu_value == 0;
+                s->menu_open = PC_FOOTER;
+                if (want != !!s->settings.lossless_audio) {
+                    s->settings.lossless_audio = want;
+                    return PC_QUALITY;
+                }
             }
         } else if (s->menu_row == 4) {
             const int count = s->settings.subtitle_count + 1;
