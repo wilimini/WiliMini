@@ -53,7 +53,10 @@ void fillQuality(BiliPlayback& playback, const bilibili::VideoUrlResult& result,
         }
     }
 }
-const bilibili::DashMedia* selectAudio(const bilibili::VideoUrlResult& result) {
+// The FLAC track is only present for accounts and videos that have it; anything else
+// plays the best AAC track.
+const bilibili::DashMedia* selectAudio(const bilibili::VideoUrlResult& result, bool lossless) {
+    if (lossless && result.dash.has_flac) return &result.dash.flac_audio;
     static constexpr int preference[] = {30280, 30232, 30216};
     for (int id : preference) {
         for (const auto& item : result.dash.audio) {
@@ -75,7 +78,7 @@ void fillMediaUrl(BiliMediaUrl& target, const bilibili::DashMedia& source) {
 
 }  // namespace
 
-int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
+int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, int quality, AppError* typedError, bool lossless) {
     liveLog("prepare bvid=%s cid=%lld", video.bvid, video.cid);
     if (transfer_cancel) {
         error = "Cancelled";
@@ -102,7 +105,7 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
     }
     {
         const bilibili::DashMedia* videoMedia = selectVideo(result, quality);
-        const bilibili::DashMedia* audioMedia = selectAudio(result);
+        const bilibili::DashMedia* audioMedia = selectAudio(result, lossless);
         liveLog("dash videos=%zu audios=%zu selected_video=%d selected_audio=%d",
                 result.dash.video.size(), result.dash.audio.size(),
                 videoMedia ? videoMedia->id : 0, audioMedia ? audioMedia->id : 0);
@@ -117,7 +120,11 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
             const int rangeResult = bili_prepare_range_playback(&video, &videoUrl, &audioUrl, &playback);
             liveLog("range result=%d", rangeResult);
             if (rangeResult == 0) {
-                if (!transfer_cancel) { fillQuality(playback, result, videoMedia->id); return 0; }
+                if (!transfer_cancel) {
+                    fillQuality(playback, result, videoMedia->id);
+                    playback.lossless = audioMedia == &result.dash.flac_audio;
+                    return 0;
+                }
                 bili_finish_playback(&playback);
                 error = "Cancelled";
                 return -1;
@@ -138,7 +145,7 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
     return -1;
 }
 
-int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, AppError* typedError) {
+int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::string& error, AppError* typedError, bool lossless) {
     if (transfer_cancel) { error = "Cancelled"; return -1; }
     auto response = BilibiliApi{}.get(bilibili::Api::PlayUrl2,
         {{"bvid", video.bvid}, {"cid", std::to_string(video.cid)}, {"qn", "16"},
@@ -160,10 +167,11 @@ int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::st
         error = "播放地址响应无法识别";
         return -1;
     }
-    if (const auto* audioMedia = selectAudio(result)) {
+    if (const auto* audioMedia = selectAudio(result, lossless)) {
         BiliMediaUrl audioUrl{};
         fillMediaUrl(audioUrl, *audioMedia);
         if (bili_prepare_audio_playback(&audioUrl, &playback) == 0) {
+            playback.lossless = audioMedia == &result.dash.flac_audio;
             if (!transfer_cancel) return 0;
             bili_finish_playback(&playback);
             error = "Cancelled";
@@ -178,7 +186,7 @@ int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::st
     return -1;
 }
 
-int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError) {
+int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlayback& playback, std::string& error, int quality, AppError* typedError, bool lossless) {
     (void)episode;
     auto response = BilibiliApi{}.get(bilibili::Api::SeasonUrl2,
         {{"cid",std::to_string(video.cid)},{"qn",std::to_string(quality)},{"gaia_source",""},{"from_client","PC_APP"},
@@ -189,12 +197,16 @@ int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlaybac
     try {
         const auto& info = response.value.data.at("video_info");
         auto result = info.get<bilibili::VideoUrlResult>();
-        const auto *videoMedia = selectVideo(result, quality), *audioMedia = selectAudio(result);
+        const auto *videoMedia = selectVideo(result, quality), *audioMedia = selectAudio(result, lossless);
         if (videoMedia && audioMedia) {
             BiliMediaUrl videoUrl{}, audioUrl{};
             fillMediaUrl(videoUrl,*videoMedia); fillMediaUrl(audioUrl,*audioMedia);
             const int code = bili_prepare_range_playback(&video,&videoUrl,&audioUrl,&playback);
-            if (code == 0) { fillQuality(playback, result, videoMedia->id); return 0; }
+            if (code == 0) {
+                fillQuality(playback, result, videoMedia->id);
+                playback.lossless = audioMedia == &result.dash.flac_audio;
+                return 0;
+            }
         }
         error = network_error[0] ? network_error : "没有可播放的 H.264 / AAC 视频流";
     } catch (const std::exception&) { error = "服务器响应无法识别"; }

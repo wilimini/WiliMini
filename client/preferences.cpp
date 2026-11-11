@@ -69,6 +69,11 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.slowRepeat = root.at("slow_repeat").get<bool>();
         loaded.musicRepeat = root.value("music_repeat", 0);
         if (loaded.musicRepeat < 0 || loaded.musicRepeat > 2) loaded.musicRepeat = 0;
+        const auto lossless = root.find("lossless_audio");
+        if (lossless != root.end()) {
+            if (!lossless->is_boolean()) return false;
+            loaded.losslessAudio = lossless->get<bool>();
+        }
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
         const std::string pixelFormat = root.value("playback_pixel_format", std::string("auto"));
         if (pixelFormat == "auto") loaded.playbackPixelFormat = PlaybackPixelFormat::Auto;
@@ -157,6 +162,7 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"dark_theme", preferences.darkTheme}, {"body_size", preferences.bodySize},
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
         {"music_repeat", preferences.musicRepeat},
+        {"lossless_audio", preferences.losslessAudio},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
         {"playback_pixel_format", preferences.playbackPixelFormat == PlaybackPixelFormat::Auto ? "auto" :
              preferences.playbackPixelFormat == PlaybackPixelFormat::Rgb565 ? "rgb565" : "rgba8888"},

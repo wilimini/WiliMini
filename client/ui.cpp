@@ -2930,6 +2930,15 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
     drawWrapped(rx, 52, 0.9f, kMusicText, title, rw, 2, 20);
     const std::string status = musicStatus(app, view);
     drawText(rx, 96, 0.5f, status.empty() ? kMusicDim : kMusicAccent, status.empty() ? sub : status, rw);
+    // Audio quality, toggled with Up: the FLAC track when the video and account offer one.
+    const std::string quality = std::string("\xE2\x86\x91 ") + uiText(app,
+        !view.lossless ? pspapp::TextId::music_quality_standard
+        : view.losslessActive || view.state == pspapp::MusicState::Opening
+            ? pspapp::TextId::music_quality_lossless : pspapp::TextId::music_quality_unavailable);
+    const int qualityWidth = bitmapMeasure(quality, 12) + 18;
+    fillRounded(rx, 116, qualityWidth, 20, 10, kMusicChip);
+    drawText(rx + 9, 120, 0.5f, view.lossless && view.losslessActive ? kMusicAccent : kMusicText, quality,
+             qualityWidth - 12);
     drawMusicProgress(rx, 148, rw, view);
 
     // Transport: repeat, previous, play/pause, next, queue. Each key sits under its icon.
@@ -3204,6 +3213,7 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer, pspapp::TextId::settings_playback_pixel_format,
+            pspapp::TextId::settings_lossless_audio,
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
             pspapp::TextId::settings_log_level,
@@ -3236,6 +3246,8 @@ void drawUtility(const pspapp::App& app) {
                                                        : pspapp::TextId::value_pixel_auto_rgba8888)
                 : preferences.playbackPixelFormat == pspapp::PlaybackPixelFormat::Rgb565
                     ? pspapp::TextId::value_pixel_565 : pspapp::TextId::value_pixel_rgba8888, locale),
+            pspapp::text(preferences.losslessAudio ? pspapp::TextId::value_lossless_on
+                                                  : pspapp::TextId::value_off, locale),
             meRestart ? pspapp::formatText(pspapp::TextId::value_me_restart, locale, {{"backend", meBackend}})
                       : meBackend,
             pspapp::formatText(pspapp::TextId::value_confirm, locale,

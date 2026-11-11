@@ -13,6 +13,7 @@ enum class SettingItem : std::size_t {
     SlowRepeat,
     PlaybackBufferFrames,
     PlaybackPixelFormat,
+    LosslessAudio,
     MeBackend,
     ConfirmWithCircle,
     Language,
@@ -56,6 +57,9 @@ struct Preferences {
     bool slowRepeat = false;
     // Music mode repeat: 0 all, 1 one, 2 once (MusicQueue's RepeatMode order).
     int musicRepeat = 0;
+    // Prefer the FLAC audio track in video and music playback when one is offered.
+    // Off by default: it costs more bandwidth and CPU than AAC.
+    bool losslessAudio = false;
     int playbackBufferFrames = defaultPlaybackBufferFrames();
     PlaybackPixelFormat playbackPixelFormat = PlaybackPixelFormat::Auto;
     MeBackend meBackend = MeBackend::CustomCore;

@@ -72,6 +72,7 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
         if (pressed & PC_CONFIRM) {
             s->menu_open = PC_MENU;
             s->menu_value = s->settings.subtitle_track;
+            s->quality_index = 0;
             for (int i = 0; i < s->settings.quality_count; ++i)
                 if (s->settings.qualities[i] == s->settings.quality) s->quality_index = i;
         }
@@ -89,10 +90,19 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
                 s->menu_open = PC_MENU;
             }
         } else if (s->menu_row == 0) {
+            /* Shown highest quality first, so the list position runs against the
+             * index. One extra row below the qualities (quality_index == count)
+             * toggles lossless audio; like a quality change it reopens the streams. */
             const int count = s->settings.quality_count;
-            if (count > 0) s->quality_index = (s->quality_index - step + count) % count;
+            int position = s->quality_index >= count ? count : count - 1 - s->quality_index;
+            position = (position + step + count + 1) % (count + 1);
+            s->quality_index = position == count ? count : count - 1 - position;
             if (pressed & PC_CONFIRM) {
-                if (count > 0 && s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
+                if (s->quality_index >= count) {
+                    s->settings.lossless_audio = !s->settings.lossless_audio;
+                    return PC_QUALITY;
+                }
+                if (s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
                 s->menu_open = PC_FOOTER;
             }
         } else if (s->menu_row == 4) {

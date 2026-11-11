@@ -25,8 +25,9 @@ constexpr size_t kMaxLyricTracks = 3;
 uint64_t nowUs() { return sceKernelGetSystemTimeWide(); }
 }  // namespace
 
-MusicSession::MusicSession(Source source, std::vector<MusicTrack> tracks, size_t start, RepeatMode repeat)
-    : source_(std::move(source)), tracks_(std::move(tracks)) {
+MusicSession::MusicSession(Source source, std::vector<MusicTrack> tracks, size_t start, RepeatMode repeat,
+                           bool lossless)
+    : source_(std::move(source)), tracks_(std::move(tracks)), wantLossless_(lossless) {
     queue_.reset(tracks_, start);
     queue_.setRepeat(repeat);
 }
@@ -92,6 +93,8 @@ MusicView MusicSession::view(bool livePosition) const {
     out.error = error_;
     out.lyrics = lyrics_;
     out.lyricTrack = lyricTrack_;
+    out.lossless = wantLossless_;
+    out.losslessActive = losslessActive_;
     // The worker's snapshot can be old during a network fetch. The live clock has no I/O.
     // Preserve the preview target while a seek or a part change is pending.
     if (livePosition && !hasStep_ && !seeking_ && pendingSeekMs_ < 0 &&
@@ -211,6 +214,15 @@ void MusicSession::cycleLyricTrack() {
     if (lyrics_ && !lyrics_->empty()) lyricTrack_ = (lyricTrack_ + 1) % lyrics_->size();
 }
 
+void MusicSession::setLossless(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (wantLossless_ == enabled) return;
+    wantLossless_ = enabled;
+    reloadPending_ = true;
+    if (seeking_) psp_audio_interrupt();
+    post();
+}
+
 void MusicSession::applyPause() {
     bool paused;
     {
@@ -249,8 +261,13 @@ bool MusicSession::prepare(size_t index, BiliPlayback& out, std::string& error) 
     video.cid = static_cast<long long>(tracks_[index].cid);
     video.duration = tracks_[index].durationSec;
     out = BiliPlayback{};
+    bool lossless;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        lossless = wantLossless_ && !losslessRejected_;
+    }
     AppError typed;
-    return prepareAudioPlayback(video, out, error, &typed) == 0;
+    return prepareAudioPlayback(video, out, error, &typed, lossless) == 0;
 }
 
 void MusicSession::run() {
@@ -264,7 +281,7 @@ void MusicSession::run() {
         SceUInt timeout = kPollUs;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (hasStep_) {
+            if (hasStep_ || reloadPending_) {
                 timeout = 1;
             } else if (pendingSeekMs_ >= 0) {
                 const uint64_t now = nowUs();
@@ -289,14 +306,25 @@ void MusicSession::handleCommands() {
     while (sceKernelPollSema(wake_, 1) >= 0) {}
     MusicStep step;
     int64_t seek = -1;
-    bool hasStep = false;
+    bool hasStep = false, reload = false;
+    int64_t reloadMs = -1;
+    size_t reloadIndex = 0;
     size_t lyricsIndex = MusicQueue::npos;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        reload = reloadPending_;
+        reloadPending_ = false;
         if (hasStep_) {
             hasStep = true;
             step = pendingStep_;
             hasStep_ = false;
+            pendingSeekMs_ = -1;
+            seekCommitAt_ = 0;
+        } else if (reload && state_ != MusicState::Ended && state_ != MusicState::Failed) {
+            // The audio quality changed: reopen this part where it is (or where a
+            // pending seek was heading). A finished or failed part picks it up on replay.
+            reloadIndex = queue_.current();
+            reloadMs = pendingSeekMs_ >= 0 ? pendingSeekMs_ : positionMs_;
             pendingSeekMs_ = -1;
             seekCommitAt_ = 0;
         } else if (pendingSeekMs_ >= 0 && nowUs() >= seekCommitAt_) {
@@ -310,7 +338,13 @@ void MusicSession::handleCommands() {
         }
     }
     if (prefetching_ == false && loadingLyrics_ == false) transfer_cancel = 0;
+    if (reload) {
+        discardNext();  // prefetched with the other quality
+        losslessRejected_ = false;
+    }
+    if (hasStep && reload && step.kind == MusicStep::Replay) step.kind = MusicStep::Play;  // reopen, not rewind
     if (hasStep) playStep(step);
+    else if (reloadMs >= 0) openTrack(reloadIndex, reloadMs, false);
     else if (seek >= 0) seekTo(seek);
     else if (lyricsIndex != MusicQueue::npos) loadLyrics(lyricsIndex);
 }
@@ -392,14 +426,22 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
     options.duration_hint_ms = static_cast<int64_t>(tracks_[index].durationSec) * 1000;
     const int ret = options.source ? psp_audio_open(&options) : -1;
     if (ret < 0) {
+        const bool lossless = current_.lossless != 0;
         releaseSource(current_);
-        if (!stopping_ && !stepPending()) setFailed("audio_open_failed:" + std::to_string(ret));
+        if (stopping_ || stepPending()) return false;
+        if (lossless && !losslessRejected_) {
+            // A FLAC track the decoder cannot play (unsupported rate or layout): use AAC.
+            losslessRejected_ = true;
+            return openTrack(index, startMs, false);
+        }
+        setFailed("audio_open_failed:" + std::to_string(ret));
         return false;
     }
     engineOpen_ = true;
     applyPause();  // a toggle during the open must not be lost
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        losslessActive_ = current_.lossless != 0;
         if (!hasStep_) {
             state_ = wantPaused_ ? MusicState::Paused : MusicState::Playing;
             lyricsPending_ = true;

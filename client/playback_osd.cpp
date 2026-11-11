@@ -39,6 +39,8 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     density_[1] = en ? "Medium" : "适中";
     density_[2] = en ? "High" : "密集";
     on_ = en ? "On" : "开"; off_ = en ? "Off" : "关";
+    losslessLabel_ = en ? "Lossless audio" : "无损音质";
+    losslessUnavailable_ = en ? "N/A" : "不可用";
     for (unsigned i = 0; i < 4; ++i) {
         unsigned u = i * 20;
         glyphs_[count_++] = {0xf000 + i, static_cast<unsigned short>(u), 0, 20, 20, 20};
@@ -50,6 +52,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     qualityNames_[2] = en ? "720P" : "720P 高清";
     for (const auto& label : qualityNames_) cache(label);
     cache("P");
+    cache(losslessLabel_); cache(losslessUnavailable_);
     cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
     for (const auto& label : menuLabels_) cache(label);
     for (const auto& label : density_) cache(label);
@@ -582,7 +585,7 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
         text(286, 66, menuLabels_[danmakuMenu ? 1 : status.menu_row], white, 448, 14);
         rectangle(286, 91, 166, 1, 0x55ffffff);
         const int row = status.menu_row;
-        const int count = danmakuMenu ? 3 : row == 0 ? status.settings.quality_count : row == 1 ? 2 : row == 4 ? static_cast<int>(subtitles_.size()) + 1 : 3;
+        const int count = danmakuMenu ? 3 : row == 0 ? status.settings.quality_count + 1 : row == 1 ? 2 : row == 4 ? static_cast<int>(subtitles_.size()) + 1 : 3;
         for (int i = 0; i < count; ++i) {
             bool selected;
             std::string_view label;
@@ -597,9 +600,17 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
                     std::snprintf(opacity, sizeof(opacity), "%d%%", status.settings.danmaku_opacity);
                     text(388, 100 + i * 25, opacity, muted, 439, 12);
                 }
+            } else if (row == 0 && i == count - 1) {
+                // Last row: lossless (FLAC) audio. "N/A" when it is on but this video
+                // or account has no FLAC track and AAC is playing instead.
+                selected = status.quality_preview < 0;
+                label = losslessLabel_;
+                text(388, 100 + i * 25, !status.settings.lossless_audio ? std::string_view(off_) :
+                     status.settings.lossless_active ? std::string_view(on_) : std::string_view(losslessUnavailable_),
+                     muted, 439, 12);
             } else if (row == 0) {
                 // Display highest quality first; input still cycles through available streams.
-                const int quality = status.settings.qualities[count - i - 1];
+                const int quality = status.settings.qualities[count - i - 2];
                 selected = quality == status.quality_preview;
                 label = qualityNames_[quality == 64 ? 2 : quality == 32 ? 1 : 0];
             } else if (row == 1) {
@@ -617,7 +628,7 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
                 std::snprintf(opacity, sizeof(opacity), "%d%%", value);
                 label = opacity;
             }
-            text(286, 100 + i * 25, label, selected ? pink : muted, danmakuMenu ? 382 : 436, 13);
+            text(286, 100 + i * 25, label, selected ? pink : muted, danmakuMenu || (row == 0 && i == count - 1) ? 382 : 436, 13);
             if (selected) rectangle(446, 107 + i * 25, 4, 4, pink);
         }
         if (row == 4 && subtitles_.empty()) {

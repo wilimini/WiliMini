@@ -234,6 +234,9 @@ int main(int argc, char** argv) {
             settings.quality = app.playback().quality;
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
+            settings.lossless_audio = app.preferences().losslessAudio;
+            settings.lossless_active = app.playback().lossless;
+            const bool losslessStream = app.playback().lossless != 0;
             options.settings = &settings;
             PspVideoResult result{};
             playbackActive = 1;
@@ -243,7 +246,14 @@ int main(int argc, char** argv) {
             ui_resume();
             osd.reset();
             app.setPlayerSettings(result.settings);
-            if (result.quality_requested && !exiting && error >= 0)
+            // Only a menu choice carries the toggle; early failures return zeroed settings.
+            if (result.quality_requested) app.setLosslessAudio(result.settings.lossless_audio != 0);
+            // A FLAC track the decoder cannot open (an unsupported sample rate or
+            // channel layout) falls back to AAC instead of failing the playback.
+            if (error < 0 && losslessStream && !exiting && !result.cancelled &&
+                result.error_stage == PSP_VIDEO_STAGE_AUDIO_INIT)
+                app.retryWithoutLossless(app.playbackStartMs(), options.start_paused != 0);
+            else if (result.quality_requested && !exiting && error >= 0)
                 app.seekPlayback(result.position_ms, result.seek_paused != 0, result.quality_requested);
             else if (result.seek_requested && !exiting && error >= 0)
                 app.seekPlayback(result.seek_ms, result.seek_paused != 0);

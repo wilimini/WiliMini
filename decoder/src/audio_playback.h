@@ -99,6 +99,10 @@ static int audio_convert(const AVFrame *frame)
                     sample = ((const int32_t *)frame->extended_data[source_ch])[i + j] >> 16;
                 } else if (frame->format == AV_SAMPLE_FMT_S16P) {
                     sample = ((const int16_t *)frame->extended_data[source_ch])[i + j];
+                } else if (frame->format == AV_SAMPLE_FMT_S32) {
+                    sample = ((const int32_t *)frame->extended_data[0])[(i + j) * audio.channels + source_ch] >> 16;
+                } else if (frame->format == AV_SAMPLE_FMT_S16) {
+                    sample = ((const int16_t *)frame->extended_data[0])[(i + j) * audio.channels + source_ch];
                 } else return AVERROR(ENOSYS);
                 dst[j * 2 + ch] = sample;
             }
@@ -323,7 +327,10 @@ static int audio_open(const char *source, const PspVideoSource *stream,
     if (ret < 0) return ret;
     for (unsigned i = 0; i < audio.format->nb_streams; ++i)
         if ((int)i != audio.stream) audio.format->streams[i]->discard = AVDISCARD_ALL;
-    const AVCodec *decoder = avcodec_find_decoder_by_name(PSP_AUDIO_FIXED ? "aac_fixed" : "aac");
+    /* The lossless DASH track is FLAC in fragmented MP4; every other source is AAC. */
+    const int lossless = audio.format->streams[audio.stream]->codecpar->codec_id == AV_CODEC_ID_FLAC;
+    const AVCodec *decoder = lossless ? avcodec_find_decoder(AV_CODEC_ID_FLAC)
+        : avcodec_find_decoder_by_name(PSP_AUDIO_FIXED ? "aac_fixed" : "aac");
     if (!decoder) return AVERROR_DECODER_NOT_FOUND;
     audio.codec = avcodec_alloc_context3(decoder);
     if (!audio.codec) return AVERROR(ENOMEM);
@@ -331,6 +338,9 @@ static int audio_open(const char *source, const PspVideoSource *stream,
     if (ret < 0) return ret;
     audio.codec->pkt_timebase = audio.format->streams[audio.stream]->time_base;
     audio.codec->thread_count = 1;
+    /* Planar output shares the AAC conversion path: 16-bit sources decode to S16P,
+     * deeper ones to S32P, which is truncated to the 16-bit hardware output. */
+    if (lossless) audio.codec->request_sample_fmt = AV_SAMPLE_FMT_S16P;
     ret = avcodec_open2(audio.codec, decoder, NULL);
     if (ret < 0) return ret;
     source_memory("audio_codec");

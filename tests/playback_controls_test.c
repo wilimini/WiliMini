@@ -48,6 +48,19 @@ int main(void) {
     pc_input(&s, PC_BACK, 1500000); pc_input(&s, PC_CONFIRM, 1600000);
     assert(s.quality_index == 0); // Cancel discards preview.
     pc_input(&s, PC_UP, 1700000); assert(pc_input(&s, PC_CONFIRM, 1800000) == PC_QUALITY);
+    // The row below the qualities toggles lossless audio and reopens the streams.
+    init(&s); s.settings.quality_count = 3; s.settings.qualities[1] = 32; s.settings.qualities[2] = 64;
+    pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_CONFIRM, 1200000);
+    pc_input(&s, PC_DOWN, 1300000); assert(s.quality_index == 3 && !s.settings.lossless_audio);
+    pc_input(&s, 0, 1350000);
+    pc_input(&s, PC_DOWN, 1400000); assert(s.quality_index == 2); // wraps to the top row (720P)
+    pc_input(&s, PC_UP, 1500000); assert(s.quality_index == 3);
+    assert(pc_input(&s, PC_CONFIRM, 1600000) == PC_QUALITY && s.settings.lossless_audio == 1);
+    assert(s.settings.quality == 16);
+    init(&s); s.settings.lossless_audio = 1; // a single quality still offers the toggle
+    pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_CONFIRM, 1200000);
+    assert(s.quality_index == 0 && pc_input(&s, PC_DOWN, 1300000) == PC_NONE && s.quality_index == 1);
+    assert(pc_input(&s, PC_CONFIRM, 1400000) == PC_QUALITY && !s.settings.lossless_audio);
     init(&s); s.settings.subtitle_count = 2;
     pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_LEFT, 1200000);
     pc_input(&s, PC_CONFIRM, 1300000); pc_input(&s, PC_DOWN, 1400000);
