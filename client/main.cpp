@@ -235,7 +235,8 @@ int main(int argc, char** argv) {
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
             settings.lossless_audio = app.preferences().losslessAudio;
-            settings.lossless_active = app.playback().lossless;
+            // Offered only when this video has a FLAC track the decoder has not rejected.
+            settings.lossless_available = app.playback().lossless_available && !app.losslessRejected();
             const bool losslessStream = app.playback().lossless != 0;
             options.settings = &settings;
             PspVideoResult result{};

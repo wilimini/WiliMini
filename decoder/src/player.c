@@ -256,7 +256,8 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
         controls.menu_open, controls.menu_row,
         /* -1: the lossless-audio row below the qualities has the focus. */
         controls.quality_index < controls.settings.quality_count
-            ? controls.settings.qualities[controls.quality_index] : -1,
+            ? controls.settings.qualities[controls.quality_index]
+            : controls.settings.quality_count > 0 || controls.settings.lossless_available ? -1 : 0,
         controls.settings, video_stage, controls.menu_value};
     sceKernelSignalSema(controls_lock, 1);
     return presenter->present(presenter->opaque, pixels, format, &status);

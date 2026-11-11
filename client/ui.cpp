@@ -2930,15 +2930,14 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
     drawWrapped(rx, 52, 0.9f, kMusicText, title, rw, 2, 20);
     const std::string status = musicStatus(app, view);
     drawText(rx, 96, 0.5f, status.empty() ? kMusicDim : kMusicAccent, status.empty() ? sub : status, rw);
-    // Audio quality, toggled with Up: the FLAC track when the video and account offer one.
-    const std::string quality = std::string("\xE2\x86\x91 ") + uiText(app,
-        !view.lossless ? pspapp::TextId::music_quality_standard
-        : view.losslessActive || view.state == pspapp::MusicState::Opening
-            ? pspapp::TextId::music_quality_lossless : pspapp::TextId::music_quality_unavailable);
-    const int qualityWidth = bitmapMeasure(quality, 12) + 18;
-    fillRounded(rx, 116, qualityWidth, 20, 10, kMusicChip);
-    drawText(rx + 9, 120, 0.5f, view.lossless && view.losslessActive ? kMusicAccent : kMusicText, quality,
-             qualityWidth - 12);
+    // Audio quality, toggled with Up. Shown only when this part offers a FLAC track.
+    if (view.losslessAvailable) {
+        const std::string quality = std::string("\xE2\x86\x91 ") + uiText(app,
+            view.lossless ? pspapp::TextId::music_quality_lossless : pspapp::TextId::music_quality_standard);
+        const int qualityWidth = bitmapMeasure(quality, 12) + 18;
+        fillRounded(rx, 116, qualityWidth, 20, 10, kMusicChip);
+        drawText(rx + 9, 120, 0.5f, view.lossless ? kMusicAccent : kMusicText, quality, qualityWidth - 12);
+    }
     drawMusicProgress(rx, 148, rw, view);
 
     // Transport: repeat, previous, play/pause, next, queue. Each key sits under its icon.

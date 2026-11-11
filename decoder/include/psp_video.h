@@ -34,14 +34,14 @@ typedef struct {
     int quality, quality_count, qualities[3];
     int danmaku_enabled, danmaku_density, danmaku_opacity;
     int subtitle_track, subtitle_count; /* 0 is off; tracks are 1-based. */
-    /* lossless_audio: the viewer asked for the FLAC track. lossless_active: the
-     * running stream is FLAC (the caller falls back to AAC when none is offered). */
-    int lossless_audio, lossless_active;
+    /* lossless_audio: the viewer asked for the FLAC track. lossless_available:
+     * this video offers one; the menu shows the toggle only then. */
+    int lossless_audio, lossless_available;
 } PspVideoSettings;
 typedef struct {
     int64_t position_ms, duration_ms, preview_ms;
     int paused, controls_visible, seeking, seekable, buffering;
-    int menu_open, menu_row, quality_preview; /* -1 focuses the lossless-audio row */
+    int menu_open, menu_row, quality_preview; /* -1: the lossless-audio row has the focus */
     PspVideoSettings settings;
     int startup_stage;
     int menu_value; /* Preview only; settings retain applied values until confirmation. */

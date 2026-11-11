@@ -28,8 +28,8 @@ struct MusicView {
     // Subtitle tracks of the current part, loaded after audio starts. Null until ready.
     std::shared_ptr<const std::vector<SubtitleTrack>> lyrics;
     size_t lyricTrack = 0;
-    bool lossless = false;        // the FLAC track was asked for
-    bool losslessActive = false;  // the part that is open is FLAC
+    bool lossless = false;           // the FLAC track was asked for
+    bool losslessAvailable = false;  // the open part offers a FLAC track that plays
 };
 
 // Music mode for the parts of one video. A single worker thread owns the audio
@@ -99,7 +99,7 @@ private:
     std::string error_;
     std::shared_ptr<const std::vector<SubtitleTrack>> lyrics_;
     size_t lyricTrack_ = 0;
-    bool wantLossless_ = false, losslessActive_ = false, reloadPending_ = false;
+    bool wantLossless_ = false, losslessAvailable_ = false, reloadPending_ = false;
     bool wantPaused_ = false;
     bool hasStep_ = false;
     MusicStep pendingStep_;

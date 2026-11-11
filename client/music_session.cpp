@@ -94,7 +94,7 @@ MusicView MusicSession::view(bool livePosition) const {
     out.lyrics = lyrics_;
     out.lyricTrack = lyricTrack_;
     out.lossless = wantLossless_;
-    out.losslessActive = losslessActive_;
+    out.losslessAvailable = losslessAvailable_;
     // The worker's snapshot can be old during a network fetch. The live clock has no I/O.
     // Preserve the preview target while a seek or a part change is pending.
     if (livePosition && !hasStep_ && !seeking_ && pendingSeekMs_ < 0 &&
@@ -441,7 +441,7 @@ bool MusicSession::openTrack(size_t index, int64_t startMs, bool drain) {
     applyPause();  // a toggle during the open must not be lost
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        losslessActive_ = current_.lossless != 0;
+        losslessAvailable_ = current_.lossless_available != 0 && !losslessRejected_;
         if (!hasStep_) {
             state_ = wantPaused_ ? MusicState::Paused : MusicState::Playing;
             lyricsPending_ = true;

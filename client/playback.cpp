@@ -123,6 +123,7 @@ int preparePlayback(const BiliVideo& video, BiliPlayback& playback, std::string&
                 if (!transfer_cancel) {
                     fillQuality(playback, result, videoMedia->id);
                     playback.lossless = audioMedia == &result.dash.flac_audio;
+                    playback.lossless_available = result.dash.has_flac;
                     return 0;
                 }
                 bili_finish_playback(&playback);
@@ -172,6 +173,7 @@ int prepareAudioPlayback(const BiliVideo& video, BiliPlayback& playback, std::st
         fillMediaUrl(audioUrl, *audioMedia);
         if (bili_prepare_audio_playback(&audioUrl, &playback) == 0) {
             playback.lossless = audioMedia == &result.dash.flac_audio;
+            playback.lossless_available = result.dash.has_flac;
             if (!transfer_cancel) return 0;
             bili_finish_playback(&playback);
             error = "Cancelled";
@@ -205,6 +207,7 @@ int prepareEpisodePlayback(const BiliVideo& video, uint64_t episode, BiliPlaybac
             if (code == 0) {
                 fillQuality(playback, result, videoMedia->id);
                 playback.lossless = audioMedia == &result.dash.flac_audio;
+                playback.lossless_available = result.dash.has_flac;
                 return 0;
             }
         }

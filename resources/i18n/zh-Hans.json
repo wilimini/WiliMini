@@ -110,7 +110,6 @@
   "music_failed": "播放失败 · {confirm} 重试",
   "music_quality_standard": "标准音质",
   "music_quality_lossless": "无损 FLAC",
-  "music_quality_unavailable": "无损不可用",
   "music_no_lyrics": "暂无歌词",
   "hint_browse_root": "↑↓ 选择  {confirm} 打开  L/R 切换标签  {back} 首页",
   "hint_browse_text": "↑↓ 滚动全文  {back} 返回",

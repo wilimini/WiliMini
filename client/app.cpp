@@ -1129,7 +1129,7 @@ void App::musicKey(MusicKey key) {
     case MusicKey::Up:
         if (route.panel == MusicPanel::Queue) { if (route.queueFocus > 0) --route.queueFocus; }
         else if (route.panel == MusicPanel::Lyrics) music_->cycleLyricTrack();
-        else setLosslessAudio(!preferences_.losslessAudio);  // reopens the part at its position
+        else if (view.losslessAvailable) setLosslessAudio(!preferences_.losslessAudio);  // reopens the part in place
         break;
     case MusicKey::Down:
         if (route.panel == MusicPanel::Queue) { if (route.queueFocus + 1 < count) ++route.queueFocus; }

@@ -91,18 +91,22 @@ static inline int pc_input(PlaybackControls *s, unsigned buttons, int64_t now) {
             }
         } else if (s->menu_row == 0) {
             /* Shown highest quality first, so the list position runs against the
-             * index. One extra row below the qualities (quality_index == count)
-             * toggles lossless audio; like a quality change it reopens the streams. */
+             * index. When the video offers a lossless track, one extra row below
+             * the qualities (quality_index == count) toggles it; like a quality
+             * change it reopens the streams. */
             const int count = s->settings.quality_count;
-            int position = s->quality_index >= count ? count : count - 1 - s->quality_index;
-            position = (position + step + count + 1) % (count + 1);
-            s->quality_index = position == count ? count : count - 1 - position;
+            const int rows = count + (s->settings.lossless_available ? 1 : 0);
+            if (rows > 0) {
+                int position = s->quality_index >= count ? count : count - 1 - s->quality_index;
+                position = (position + step + rows) % rows;
+                s->quality_index = position == count ? count : count - 1 - position;
+            }
             if (pressed & PC_CONFIRM) {
-                if (s->quality_index >= count) {
+                if (rows > count && s->quality_index >= count) {
                     s->settings.lossless_audio = !s->settings.lossless_audio;
                     return PC_QUALITY;
                 }
-                if (s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
+                if (count > 0 && s->settings.qualities[s->quality_index] != s->settings.quality) return PC_QUALITY;
                 s->menu_open = PC_FOOTER;
             }
         } else if (s->menu_row == 4) {

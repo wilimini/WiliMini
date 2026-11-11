@@ -199,6 +199,7 @@ public:
     void setLosslessAudio(bool enabled);
     // The decoder rejected the FLAC track: reopen this playback with AAC.
     void retryWithoutLossless(int64_t positionMs, bool paused);
+    bool losslessRejected() const { return losslessRejected_; }
     const VideoCard& playbackCard() const { return playbackCard_; }
     PspVideoSettings playerSettings() const { return playerSettings_; }
     void setPlayerSettings(const PspVideoSettings& settings) { playerSettings_ = settings; }
