@@ -320,7 +320,7 @@ int main(int argc, char** argv) {
         } else if (app.tileHubVisible()) {
             // Tile home: the d-pad moves the focus ring and confirm opens a tile. Moving works
             // while a background load is running; input is ignored during the launch animation.
-            if (pressed & PSP_CTRL_START) app.openUserContent();
+            if (pressed & PSP_CTRL_START) app.openCloudContent();
             else if (app.tileLaunching()) {
             } else if (pressed & PSP_CTRL_SELECT) {
                 networkDialog();
@@ -350,7 +350,7 @@ int main(int argc, char** argv) {
                 app.shoulder(1);
             }
         } else {
-            if (pressed & PSP_CTRL_START) app.openUserContent();
+            if (pressed & PSP_CTRL_START) app.openCloudContent();
             else if (app.playbackFailed() && (pressed & (confirmButton | PSP_CTRL_TRIANGLE))) app.retry();
             else if (pressed & PSP_CTRL_LTRIGGER) app.shoulder(-1);
             else if (pressed & PSP_CTRL_RTRIGGER) app.shoulder(1);

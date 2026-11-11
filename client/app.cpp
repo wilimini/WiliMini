@@ -874,9 +874,9 @@ void App::openHub() {
     navigation_.current().focus = FocusArea::Content;
 }
 
-void App::openUserContent() {
+void App::openCloudContent() {
     if (busy() || playbackReady_ || tileLaunching()) return;
-    openBrowse({BrowseKind::DynamicFeed});
+    openBrowse({BrowseKind::Personal});
 }
 
 void App::tileMove(int dx, int dy) {

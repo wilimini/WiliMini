@@ -65,12 +65,12 @@ public:
     }
     void tileMove(int dx, int dy);
     void tileActivate();
-    // Main screen = the root view (tile hub or a tab root). START opens the user's online
-    // dynamic feed there instead of exiting the client.
+    // Main screen = the root view (tile hub or a tab root). START opens the cloud content
+    // page (我的 / 云端内容) there instead of exiting the client.
     bool atMainScreen() const {
         return navigation_.size() == 1 && (screen() == Screen::Home || screen() == Screen::Mine);
     }
-    void openUserContent();
+    void openCloudContent();
     // Confirm starts a short launch animation; the destination opens when it ends (see poll()).
     bool tileLaunching() const { return hubLaunchAt_ != 0; }
     int tileLaunchMs() const;
