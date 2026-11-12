@@ -101,7 +101,7 @@ ExternalProject_Add(psp_ffmpeg
             --disable-programs --disable-doc --disable-debug --disable-network
             --disable-avdevice --disable-avfilter --disable-postproc
             --disable-swscale --disable-swresample --disable-pthreads
-            --disable-everything --enable-decoder=h264,aac --enable-parser=h264
+            --disable-everything --enable-decoder=h264,aac,flac --enable-parser=h264
             --enable-demuxer=mov,flv --enable-protocol=file
             "--extra-cflags=-O3 -G0 -Wno-error=incompatible-pointer-types -DPSP_CABAC_MOVN=${_psp_cabac_movn}"
             --extra-ldflags=-G0 --pkg-config=/usr/bin/false

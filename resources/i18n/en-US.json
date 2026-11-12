@@ -106,6 +106,8 @@
   "music_buffering": "Buffering…",
   "music_ended": "Finished · {confirm} to replay",
   "music_failed": "Playback failed · {confirm} to retry",
+  "music_quality_standard": "Standard",
+  "music_quality_lossless": "Lossless",
   "music_no_lyrics": "No lyrics",
   "hint_browse_root": "↑↓ Select  {confirm} Open  L/R Switch tabs  {back} Home",
   "hint_browse_text": "↑↓ Scroll text  {back} Back",

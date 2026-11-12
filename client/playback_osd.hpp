@@ -17,6 +17,8 @@ public:
     PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments = {}, const std::vector<SubtitleTrack>& subtitles = {}, bool initializeDisplay = true);
     ~PlaybackOsd();
     void enableNetwork(const std::string& bvid, uint64_t cid, uint64_t aid, HttpClient::Transport transport = {});
+    // Shows a short message under the title for a few seconds. Call before playback starts.
+    void notice(const std::string& message);
     int subtitleCount() const { return static_cast<int>(subtitles_.size()); }
     const PspVideoPresenter* presenter() const { return &presenter_; }
 private:
@@ -31,7 +33,7 @@ private:
     int metadataCount_ = -1, requestedTrack_ = 0, overlayMessage_ = 0;
     int shownMessage_ = 0, subtitleMetadataMessage_ = 0;
     uint64_t messageUntil_ = 0;
-    std::string overlayMessages_[6], startupLabels_[3];
+    std::string overlayMessages_[7], startupLabels_[3];
     static int overlayEntry(SceSize size, void* arg);
     void loadOverlays();
     bool publish(PlaybackOsd* prepared, bool comments);
@@ -64,7 +66,7 @@ private:
     uint64_t lastDraw_ = 0;
     bool haveFrame_ = false, stagedRgb565_ = false;
     std::string title_, seeking_, buffering_, qualityNames_[3];
-    std::string menuLabels_[5], density_[3], on_, off_, noSubtitles_, display_;
+    std::string menuLabels_[6], density_[3], on_, off_, noSubtitles_, display_;
     void icon(int x, int y, unsigned id);
     PspVideoPresenter presenter_{};
     void cache(const std::string& text);

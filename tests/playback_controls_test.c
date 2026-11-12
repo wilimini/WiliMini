@@ -48,6 +48,36 @@ int main(void) {
     pc_input(&s, PC_BACK, 1500000); pc_input(&s, PC_CONFIRM, 1600000);
     assert(s.quality_index == 0); // Cancel discards preview.
     pc_input(&s, PC_UP, 1700000); assert(pc_input(&s, PC_CONFIRM, 1800000) == PC_QUALITY);
+    // Lossless audio is its own footer entry after quality, present only when the video has
+    // the track, and is independent of the video quality.
+    init(&s); s.settings.quality_count = 3; s.settings.qualities[1] = 32; s.settings.qualities[2] = 64;
+    s.settings.quality = 32; s.settings.lossless_available = 1;
+    pc_input(&s, PC_PANEL, 1100000); assert(s.menu_open == PC_FOOTER && s.menu_row == 0);
+    pc_input(&s, PC_RIGHT, 1200000); assert(s.menu_row == 5);
+    pc_input(&s, 0, 1250000);
+    pc_input(&s, PC_RIGHT, 1300000); assert(s.menu_row == 1); // wraps to danmaku
+    pc_input(&s, 0, 1350000);
+    pc_input(&s, PC_LEFT, 1400000); assert(s.menu_row == 5);
+    pc_input(&s, 0, 1450000);
+    pc_input(&s, PC_CONFIRM, 1500000); assert(s.menu_open == PC_MENU && s.menu_value == 1); // off
+    pc_input(&s, 0, 1550000);
+    pc_input(&s, PC_CONFIRM, 1600000); // no change: back to the footer, streams untouched
+    assert(s.menu_open == PC_FOOTER && !s.settings.lossless_audio);
+    pc_input(&s, 0, 1650000);
+    pc_input(&s, PC_CONFIRM, 1700000); pc_input(&s, 0, 1750000);
+    pc_input(&s, PC_UP, 1800000); assert(s.menu_value == 0);
+    pc_input(&s, 0, 1850000);
+    assert(pc_input(&s, PC_CONFIRM, 1900000) == PC_QUALITY && s.settings.lossless_audio == 1);
+    assert(s.settings.qualities[s.quality_index] == 32 && s.settings.quality == 32); // quality kept
+    // Turning it back off from the on state.
+    pc_input(&s, 0, 1950000);
+    pc_input(&s, PC_CONFIRM, 2100000); assert(s.menu_open == PC_MENU && s.menu_value == 0);
+    pc_input(&s, 0, 2150000); pc_input(&s, PC_DOWN, 2200000); pc_input(&s, 0, 2250000);
+    assert(pc_input(&s, PC_CONFIRM, 2300000) == PC_QUALITY && !s.settings.lossless_audio);
+    // Without a lossless track there is no such entry: the footer wraps over three entries.
+    init(&s);
+    pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_RIGHT, 1200000); assert(s.menu_row == 1);
+    pc_input(&s, 0, 1250000); pc_input(&s, PC_LEFT, 1300000); assert(s.menu_row == 0);
     init(&s); s.settings.subtitle_count = 2;
     pc_input(&s, PC_PANEL, 1100000); pc_input(&s, PC_LEFT, 1200000);
     pc_input(&s, PC_CONFIRM, 1300000); pc_input(&s, PC_DOWN, 1400000);

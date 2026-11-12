@@ -28,6 +28,8 @@ struct MusicView {
     // Subtitle tracks of the current part, loaded after audio starts. Null until ready.
     std::shared_ptr<const std::vector<SubtitleTrack>> lyrics;
     size_t lyricTrack = 0;
+    bool lossless = false;           // the FLAC track is the one playing (or being opened)
+    bool losslessAvailable = false;  // the open part offers a FLAC track
 };
 
 // Music mode for the parts of one video. A single worker thread owns the audio
@@ -41,7 +43,8 @@ public:
         uint64_t aid = 0;
     };
 
-    MusicSession(Source source, std::vector<MusicTrack> tracks, size_t start, RepeatMode repeat);
+    MusicSession(Source source, std::vector<MusicTrack> tracks, size_t start, RepeatMode repeat,
+                 bool lossless = false);
     ~MusicSession();
     MusicSession(const MusicSession&) = delete;
     MusicSession& operator=(const MusicSession&) = delete;
@@ -61,6 +64,8 @@ public:
     void seekBy(int64_t deltaMs);
     void cycleRepeat();
     void cycleLyricTrack();
+    // Prefer the FLAC track. A change reopens the current part where it is playing.
+    void setLossless(bool enabled);
 
 private:
     static int entry(SceSize size, void* arg);
@@ -94,6 +99,7 @@ private:
     std::string error_;
     std::shared_ptr<const std::vector<SubtitleTrack>> lyrics_;
     size_t lyricTrack_ = 0;
+    bool wantLossless_ = false, losslessActive_ = false, losslessAvailable_ = false, reloadPending_ = false;
     bool wantPaused_ = false;
     bool hasStep_ = false;
     MusicStep pendingStep_;
@@ -115,6 +121,8 @@ private:
     bool engineOpen_ = false;
     uint64_t prefetchRetryAt_ = 0, lastPowerTick_ = 0, recoverWindowStart_ = 0;
     int recoverAttempts_ = 0;
+    // A FLAC part the decoder could not open: the session stays on AAC until asked again.
+    bool losslessRejected_ = false;
 };
 
 }  // namespace pspapp

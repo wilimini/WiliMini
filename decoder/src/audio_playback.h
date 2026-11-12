@@ -3,6 +3,7 @@
 #if PSP_AUDIO
 #include <pspaudio.h>
 #include <libavutil/samplefmt.h>
+#include "audio_decimate.h"
 
 /* The decoder owns FFmpeg objects. Only immutable PCM crosses to the output
  * thread; neither thread touches ME state or the video decoder's buffers. */
@@ -23,6 +24,10 @@ static struct {
     AVFrame *frame;
     AVPacket *packet;
     int stream, rate, channels, reserved;
+    /* rate is what the hardware plays; source_rate is what the stream decodes to
+     * (a multiple of it for hi-res lossless, brought down by decimator). */
+    int source_rate;
+    AudioDecimator decimator;
     SceUID space, ready, go, decoder_thread, output_thread;
     volatile int stop, eof, input_eof, error;
     volatile unsigned produced, consumed;
@@ -64,10 +69,32 @@ static int audio_publish(void)
     return 0;
 }
 
+/* One sample of one channel as signed 16-bit. The caller has checked frame->format. */
+static inline int audio_sample_at(const AVFrame *frame, unsigned ch, int index)
+{
+    switch (frame->format) {
+    case AV_SAMPLE_FMT_FLTP: {
+        float value = ((const float *)frame->extended_data[ch])[index] * 32768.0f;
+        return value >= 32767.0f ? 32767 : value <= -32768.0f ? -32768 : (int)value;
+    }
+    case AV_SAMPLE_FMT_S32P: return ((const int32_t *)frame->extended_data[ch])[index] >> 16;
+    case AV_SAMPLE_FMT_S16P: return ((const int16_t *)frame->extended_data[ch])[index];
+    case AV_SAMPLE_FMT_S32: return ((const int32_t *)frame->extended_data[0])[index * audio.channels + ch] >> 16;
+    default: return ((const int16_t *)frame->extended_data[0])[index * audio.channels + ch];
+    }
+}
+
 static int audio_convert(const AVFrame *frame)
 {
-    if (frame->sample_rate != audio.rate || frame->ch_layout.nb_channels != audio.channels)
+    if (frame->sample_rate != audio.source_rate || frame->ch_layout.nb_channels != audio.channels)
         return AVERROR(EINVAL);
+    switch (frame->format) {
+    case AV_SAMPLE_FMT_FLTP: case AV_SAMPLE_FMT_S32P: case AV_SAMPLE_FMT_S16P:
+    case AV_SAMPLE_FMT_S32: case AV_SAMPLE_FMT_S16: break;
+    default:
+        WLOG_E(WLC_PLAYER, "AUDIO unsupported sample format %d", (int)frame->format);
+        return AVERROR(ENOSYS);
+    }
     const int64_t pts_us = frame->best_effort_timestamp == AV_NOPTS_VALUE ? AV_NOPTS_VALUE :
         av_rescale_q(frame->best_effort_timestamp,
                      audio.format->streams[audio.stream]->time_base, AV_TIME_BASE_Q);
@@ -75,38 +102,28 @@ static int audio_convert(const AVFrame *frame)
     if (pts_us != AV_NOPTS_VALUE && playback_start_ms > 0) {
         const int64_t delta = playback_start_ms * 1000 + source_origin_us(audio.format) - pts_us;
         if (delta > 0) {
-            int64_t samples = (delta * audio.rate + 999999) / 1000000;
+            int64_t samples = (delta * audio.source_rate + 999999) / 1000000;
             if (samples >= frame->nb_samples) return 0;
             skip = (int)samples;
         }
     }
     if (audio.first_pts_us == AV_NOPTS_VALUE)
-        audio.first_pts_us = (pts_us == AV_NOPTS_VALUE ? 0 : pts_us) + (int64_t)skip * 1000000 / audio.rate;
+        audio.first_pts_us = (pts_us == AV_NOPTS_VALUE ? 0 : pts_us) + (int64_t)skip * 1000000 / audio.source_rate;
     for (int i = skip; i < frame->nb_samples; ) {
         if (!audio.fill && audio_wait(audio.space) < 0) return -1;
-        unsigned count = AUDIO_SAMPLES - audio.fill;
-        if (count > (unsigned)(frame->nb_samples - i)) count = frame->nb_samples - i;
+        const unsigned room = AUDIO_SAMPLES - audio.fill;
         int16_t *dst = audio.pcm[audio.produced % AUDIO_BLOCKS] + audio.fill * 2;
         uint64_t start = sceKernelGetSystemTimeWide();
-        for (unsigned j = 0; j < count; ++j) {
-            for (unsigned ch = 0; ch < 2; ++ch) {
-                const unsigned source_ch = audio.channels == 1 ? 0 : ch;
-                int sample;
-                if (frame->format == AV_SAMPLE_FMT_FLTP) {
-                    float value = ((const float *)frame->extended_data[source_ch])[i + j] * 32768.0f;
-                    sample = value >= 32767.0f ? 32767 : value <= -32768.0f ? -32768 : (int)value;
-                } else if (frame->format == AV_SAMPLE_FMT_S32P) {
-                    sample = ((const int32_t *)frame->extended_data[source_ch])[i + j] >> 16;
-                } else if (frame->format == AV_SAMPLE_FMT_S16P) {
-                    sample = ((const int16_t *)frame->extended_data[source_ch])[i + j];
-                } else return AVERROR(ENOSYS);
-                dst[j * 2 + ch] = sample;
-            }
+        unsigned made = 0;
+        /* With decimation a group of source samples makes one output sample. */
+        for (; i < frame->nb_samples && made < room; ++i) {
+            const int left = audio_sample_at(frame, 0, i);
+            const int right = audio_sample_at(frame, audio.channels == 1 ? 0 : 1, i);
+            if (audio_decimator_push(&audio.decimator, left, right, dst + made * 2)) ++made;
         }
         audio.convert_us += sceKernelGetSystemTimeWide() - start;
-        audio.fill += count;
-        audio.source_samples += count;
-        i += count;
+        audio.fill += made;
+        audio.source_samples += made;
         if (audio.fill == AUDIO_SAMPLES) audio_publish();
     }
     return 0;
@@ -323,23 +340,40 @@ static int audio_open(const char *source, const PspVideoSource *stream,
     if (ret < 0) return ret;
     for (unsigned i = 0; i < audio.format->nb_streams; ++i)
         if ((int)i != audio.stream) audio.format->streams[i]->discard = AVDISCARD_ALL;
-    const AVCodec *decoder = avcodec_find_decoder_by_name(PSP_AUDIO_FIXED ? "aac_fixed" : "aac");
-    if (!decoder) return AVERROR_DECODER_NOT_FOUND;
+    /* The lossless DASH track is FLAC in fragmented MP4; every other source is AAC. */
+    const int lossless = audio.format->streams[audio.stream]->codecpar->codec_id == AV_CODEC_ID_FLAC;
+    const AVCodec *decoder = lossless ? avcodec_find_decoder(AV_CODEC_ID_FLAC)
+        : avcodec_find_decoder_by_name(PSP_AUDIO_FIXED ? "aac_fixed" : "aac");
+    if (!decoder) {
+        WLOG_E(WLC_PLAYER, "AUDIO decoder missing codec_id=%d (FFmpeg built without it?)",
+               (int)audio.format->streams[audio.stream]->codecpar->codec_id);
+        return AVERROR_DECODER_NOT_FOUND;
+    }
     audio.codec = avcodec_alloc_context3(decoder);
     if (!audio.codec) return AVERROR(ENOMEM);
     ret = avcodec_parameters_to_context(audio.codec, audio.format->streams[audio.stream]->codecpar);
     if (ret < 0) return ret;
     audio.codec->pkt_timebase = audio.format->streams[audio.stream]->time_base;
     audio.codec->thread_count = 1;
+    /* Planar output shares the AAC conversion path: 16-bit sources decode to S16P,
+     * deeper ones to S32P, which is truncated to the 16-bit hardware output. */
+    if (lossless) audio.codec->request_sample_fmt = AV_SAMPLE_FMT_S16P;
     ret = avcodec_open2(audio.codec, decoder, NULL);
     if (ret < 0) return ret;
     source_memory("audio_codec");
-    audio.rate = audio.codec->sample_rate;
+    audio.source_rate = audio.codec->sample_rate;
     audio.channels = audio.codec->ch_layout.nb_channels;
-    WLOG_I(WLC_PLAYER, "AUDIO codec=%s rate=%d channels=%d output_channels=2",
-           decoder->name, audio.rate, audio.channels);
-    if ((audio.rate != 48000 && audio.rate != 44100) ||
-        (audio.channels != 1 && audio.channels != 2)) return AVERROR(EINVAL);
+    const int decimation = audio_decimation_factor(audio.source_rate);
+    WLOG_I(WLC_PLAYER, "AUDIO codec=%s rate=%d channels=%d fmt=%d bits=%d decimate=%d output_channels=2",
+           decoder->name, audio.source_rate, audio.channels, (int)audio.codec->sample_fmt,
+           audio.codec->bits_per_raw_sample, decimation);
+    if (!decimation || (audio.channels != 1 && audio.channels != 2)) {
+        WLOG_E(WLC_PLAYER, "AUDIO rejected codec=%s rate=%d channels=%d: need 1 or 2 channels at "
+               "44.1/48 kHz (or 2x or 4x those)", decoder->name, audio.source_rate, audio.channels);
+        return AVERROR(EINVAL);
+    }
+    audio.rate = audio.source_rate / decimation;
+    audio_decimator_init(&audio.decimator, decimation);
     audio.frame = av_frame_alloc();
     audio.packet = av_packet_alloc();
     if (!audio.frame || !audio.packet) return AVERROR(ENOMEM);

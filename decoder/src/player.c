@@ -141,6 +141,8 @@ static int video_cancel_thread(SceSize size, void *arg) {
             sceKernelWaitSema(controls_lock, 1, NULL);
             if (presenter && presenter->update_settings) presenter->update_settings(presenter->opaque, &controls.settings);
             int action = pc_input(&controls, keys, sceKernelGetSystemTimeWide());
+            /* A lossless toggle keeps the video quality: quality_index still names the
+             * playing one, and the toggle itself travels in the settings. */
             if (action == PC_QUALITY) quality_requested = controls.settings.qualities[controls.quality_index];
             if (action == PC_SEEK) {
                 seek_target_ms = controls.preview_ms;

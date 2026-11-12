@@ -195,6 +195,13 @@ public:
     void finishPlayback(int error, unsigned frames, int eof, int cancelled,
                         PspVideoStage stage = PSP_VIDEO_STAGE_NONE, int64_t positionMs = 0);
     void seekPlayback(int64_t positionMs, bool paused, int quality = 0);
+    // Lossless (FLAC) audio is chosen in the player and in music mode, never in
+    // Settings, and lasts until the application exits. Streams opened afterwards follow it.
+    void setLosslessAudio(bool enabled);
+    // The decoder rejected the FLAC track: turn lossless off and reopen with AAC.
+    void retryWithoutLossless(int64_t positionMs, bool paused, int error);
+    // One-shot message for the next player start; empty when there is none.
+    std::string takePlaybackNotice() { std::string notice; notice.swap(playbackNotice_); return notice; }
     const VideoCard& playbackCard() const { return playbackCard_; }
     PspVideoSettings playerSettings() const { return playerSettings_; }
     void setPlayerSettings(const PspVideoSettings& settings) { playerSettings_ = settings; }
@@ -382,6 +389,8 @@ private:
     bool playbackReady_ = false;
     bool playbackPaused_ = false;
     int playbackQuality_ = 16;
+    bool losslessAudio_ = false;
+    std::string playbackNotice_;
     uint64_t playbackOverlayCid_ = 0;
     PspVideoSettings playerSettings_{16, 1, {16, 0, 0}, 1, 1, 75, 0, 0};
 

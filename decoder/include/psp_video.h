@@ -34,6 +34,9 @@ typedef struct {
     int quality, quality_count, qualities[3];
     int danmaku_enabled, danmaku_density, danmaku_opacity;
     int subtitle_track, subtitle_count; /* 0 is off; tracks are 1-based. */
+    /* lossless_audio: the FLAC track is playing; its own control-bar entry toggles it.
+     * lossless_available: this video offers one; the entry is shown only then. */
+    int lossless_audio, lossless_available;
 } PspVideoSettings;
 typedef struct {
     int64_t position_ms, duration_ms, preview_ms;
