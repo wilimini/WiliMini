@@ -60,13 +60,14 @@ uint32_t kTextDim = color(117, 123, 134);
 uint32_t kPink = color(204, 65, 113);
 constexpr uint32_t kBlue = color(0, 174, 236);
 constexpr uint32_t kBlack = color(0, 0, 0);
-// Music mode uses its own dark palette, whatever the theme.
+// Music mode is monochrome over its cover-tinted backdrop, whatever the theme. Content is white at
+// three strengths, drawn with the *Argb helpers so the alpha is kept and the text takes the tint of
+// the backdrop; glass shapes brighten the backdrop itself (see Blend). No fixed accent colour.
 constexpr uint32_t kMusicBg = color(14, 12, 24);
-constexpr uint32_t kMusicText = color(255, 255, 255);
-constexpr uint32_t kMusicDim = color(217, 198, 206);
-constexpr uint32_t kMusicAccent = color(255, 125, 151);
-constexpr uint32_t kMusicTrack = color(88, 56, 72);
-constexpr uint32_t kMusicChip = color(76, 44, 62);
+constexpr uint32_t kMusicText = color(255, 255, 255);            // primary: title, transport
+constexpr uint32_t kMusicSecondary = color(255, 255, 255, 150);  // artist, times, key hints
+constexpr uint32_t kMusicTertiary = color(255, 255, 255, 80);    // unavailable controls
+constexpr uint32_t kMusicKnockout = color(0, 0, 0, 190);         // symbol on a selected (light) glass fill
 int bodySize = 14;
 // Text-entry settings, refreshed with every UI frame so a dialog sees the current values.
 pspapp::InputMethod inputMethodPreference = pspapp::InputMethod::Pinyin;
@@ -216,10 +217,26 @@ size_t statListBytes = 0;
 unsigned statCoverLockMisses = 0;  // lookups that showed a placeholder because the decoder held the lock
 #endif
 
+// Blend modes. Normal is ordinary alpha blending. The two glass modes build Apple-style vibrancy
+// from the colour already on screen, so a glass shape takes the hue of whatever is behind it:
+// Vibrant  result = dst * src + dst  (GU_OTHER_COLOR as the source factor is the destination
+//          colour): the backdrop is brightened by (1 + src) per channel, keeping its hue.
+// Lift     result = src * srcAlpha + dst: an additive lift so glass still shows on dark areas.
+enum class Blend : uint8_t { Normal, Vibrant, Lift };
+Blend blendMode = Blend::Normal;
+
+void geApplyBlend() {
+    switch (blendMode) {
+    case Blend::Vibrant: sceGuBlendFunc(GU_ADD, GU_OTHER_COLOR, GU_FIX, 0, 0xffffff); break;
+    case Blend::Lift: sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, 0xffffff); break;
+    default: sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0); break;
+    }
+}
+
 void geResetState() {
     sceGuDisable(GU_DEPTH_TEST);
     sceGuEnable(GU_BLEND);
-    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    geApplyBlend();  // a list restart mid-frame keeps the current mode for the sprites still queued
     sceGuScissor(0, 0, kWidth, kHeight);
 }
 
@@ -305,6 +322,14 @@ void geEmit() {
     ++statBatches;
 #endif
     pendingCount = 0;
+}
+
+// Switches the blend mode. Sprites already queued are drawn first, under the mode they were queued in.
+void geSetBlend(Blend mode) {
+    if (mode == blendMode) return;
+    geEmit();
+    blendMode = mode;
+    geApplyBlend();
 }
 
 // Draws everything queued so far and waits for the GE: afterwards no sprite is pending, so atlas
@@ -586,9 +611,11 @@ const SpriteRef* addMaskSprite(uint32_t key, int w, int h, const uint8_t* alpha)
 }
 
 // Draws a cached alpha mask 1:1, tinted with `shade`.
-void drawMask(const SpriteRef& ref, int x, int y, uint32_t shade) {
-    geSprite(maskAtlas.tex(TexKind::Mask8), x, y, ref.w, ref.h, ref.u, ref.v, shade | 0xff000000u);
+// `argb` keeps its alpha (for translucent tints); drawMask is the opaque form.
+void drawMaskArgb(const SpriteRef& ref, int x, int y, uint32_t argb) {
+    geSprite(maskAtlas.tex(TexKind::Mask8), x, y, ref.w, ref.h, ref.u, ref.v, argb);
 }
+void drawMask(const SpriteRef& ref, int x, int y, uint32_t shade) { drawMaskArgb(ref, x, y, shade | 0xff000000u); }
 
 // The sidebar icons are 22x22 ARGB4444 bitmaps. They are scaled to `size` once, with the same
 // nearest-neighbour mapping the CPU renderer used, and cached either as an alpha mask (tinted when
@@ -627,6 +654,10 @@ void drawSidebarIcon(int icon, int x, int y, int size, bool tinted, uint32_t tin
 void fillRect(int x, int y, int width, int height, uint32_t shade) {
     geSprite(TexState{}, x, y, width, height, 0, 0, shade | 0xff000000u);
 }
+// Untextured fill that keeps `argb` as given (alpha, or the blend factor in the glass modes).
+void fillRectArgb(int x, int y, int width, int height, uint32_t argb) {
+    geSprite(TexState{}, x, y, width, height, 0, 0, argb);
+}
 
 void beginFrame() {
     ++coverFrame;
@@ -634,6 +665,7 @@ void beginFrame() {
     pendingCount = 0;
     pendingTex = TexState{};
     listUsed = 0;
+    blendMode = Blend::Normal;
     sceGuStart(GU_DIRECT, commands);
     geResetState();
 }
@@ -660,20 +692,25 @@ uint32_t shadeMix(uint32_t d, uint32_t s, unsigned a) {
     return 0xff000000u | rb | g;
 }
 
-void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
-              bool centered = false, int clipTop = 0, int clipBottom = kHeight) {
+// Text whose colour keeps its alpha, so translucent white takes on the tint of what is behind it.
+void drawTextArgb(int x, int y, float scale, uint32_t argb, std::string_view text, int maxWidth,
+                  bool centered = false, int clipTop = 0, int clipBottom = kHeight) {
     const int size = fontSize(scale);
     const int right = std::min(kWidth, x + maxWidth);
     if (centered) x += std::max(0, (maxWidth - bitmapMeasure(text, size)) / 2);
     const int top = std::max(0, clipTop), bottom = std::min(kHeight, clipBottom);
-    const uint32_t solid = shade | 0xff000000u;
     for (size_t pos = 0; pos < text.size();) {
         const auto* cell = bodyCell(bitmapNext(text, pos), size);
         if (!cell) continue;
         if (x + cell->advance > right) break;
-        drawGlyphCell(bodyAtlas.tex(), *cell, x, y, 1, solid, 0, top, right, bottom);
+        drawGlyphCell(bodyAtlas.tex(), *cell, x, y, 1, argb, 0, top, right, bottom);
         x += cell->advance;
     }
+}
+
+void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, int maxWidth,
+              bool centered = false, int clipTop = 0, int clipBottom = kHeight) {
+    drawTextArgb(x, y, scale, shade | 0xff000000u, text, maxWidth, centered, clipTop, clipBottom);
 }
 
 std::vector<std::string> textLines(std::string_view text, int size, int maxWidth) {
@@ -1084,7 +1121,7 @@ void drawFooter(const pspapp::App& app) {
                                    : panel == pspapp::MusicPanel::Lyrics ? pspapp::TextId::hint_music_lyrics
                                                                           : pspapp::TextId::hint_music,
                                  {{"confirm", confirm}, {"back", back}});
-        drawText(28, 255, 0.46f, kMusicDim, hint, 428);
+        drawTextArgb(28, 255, 0.46f, kMusicSecondary, hint, 428);
         return;
     }
     fillRect(0, 258, kWidth, 14, kBackground);
@@ -1384,7 +1421,7 @@ const std::vector<uint8_t>& iconBitmap(int id, int size) {
     return bitmap;
 }
 
-void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
+void drawLineIconArgb(int id, int x, int y, int size, uint32_t argb) {
     if (id < 0 || id >= IconCount) return;
     const uint32_t key = (2u << 28) | (static_cast<uint32_t>(id) << 8) | static_cast<uint32_t>(size);
     const SpriteRef* ref = maskSprite(key);
@@ -1393,7 +1430,10 @@ void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
         if (bitmap.empty()) return;
         ref = addMaskSprite(key, size, size, bitmap.data());
     }
-    if (ref) drawMask(*ref, x, y, shade);
+    if (ref) drawMaskArgb(*ref, x, y, argb);
+}
+void drawLineIcon(int id, int x, int y, int size, uint32_t shade) {
+    drawLineIconArgb(id, x, y, size, shade | 0xff000000u);
 }
 
 // Top status strip: clock and battery on the right.
@@ -2684,17 +2724,49 @@ void fillPlayGlyph(int x, int y, int w, int h, uint32_t shade) {
     }
 }
 
+// Rounded rectangle drawn in one-pixel rows, inset at the corners. Rows never overlap, so a
+// translucent or glass fill reaches each pixel exactly once.
+void roundedRows(int x, int y, int w, int h, int r, uint32_t argb) {
+    r = std::min(r, std::min(w, h) / 2);
+    for (int row = 0; row < h; ++row) {
+        int inset = 0;
+        const int fromEdge = std::min(row, h - 1 - row);
+        if (fromEdge < r) {
+            const float dy = r - fromEdge - 0.5f;
+            inset = r - static_cast<int>(std::sqrt(static_cast<float>(r * r) - dy * dy) + 0.5f);
+        }
+        fillRectArgb(x + inset, y + row, w - 2 * inset, 1, argb);
+    }
+}
+
+// Glass, after Apple Music's material: the backdrop under the shape is brightened with its hue
+// kept (red glass over red is a richer, lighter red, not grey), then lifted a little so the shape
+// also shows over dark areas. Plain glass is for idle buttons; the selected level is a light fill
+// for a toggle that is on, with its symbol in kMusicKnockout so the tint shows through it.
+struct Glass { uint8_t boost, lift; };  // boost 0..255 = backdrop x1..x2; lift = added white
+// Levels chosen on a host mockup of the music backdrop (red and blue covers), not yet on hardware.
+constexpr Glass kGlass{110, 34}, kGlassSelected{200, 118};
+
+void drawGlass(int x, int y, int w, int h, int r, Glass glass) {
+    geSetBlend(Blend::Vibrant);
+    roundedRows(x, y, w, h, r, color(glass.boost, glass.boost, glass.boost));
+    geSetBlend(Blend::Lift);
+    roundedRows(x, y, w, h, r, color(255, 255, 255, glass.lift));
+    geSetBlend(Blend::Normal);
+}
+
+// Thin translucent track; the played part is brighter white, the knob solid.
 void drawMusicBar(int x, int y, int w, int64_t position, int64_t duration) {
-    fillRounded(x, y, w, 4, 2, kMusicTrack);
+    roundedRows(x, y, w, 4, 2, kMusicTertiary);
     const int filled = duration > 0 ? static_cast<int>(w * std::clamp<int64_t>(position, 0, duration) / duration) : 0;
-    if (filled > 0) fillRounded(x, y, std::max(filled, 2), 4, 2, kMusicText);
+    if (filled > 0) roundedRows(x, y, std::max(filled, 2), 4, 2, color(255, 255, 255, 200));
     drawDisc(x + filled, y + 2, 4, kMusicText);
 }
 
-void drawMusicChip(int right, int y, const std::string& label) {
+void drawMusicChip(int right, int y, const std::string& label, bool selected = false) {
     const int w = bitmapMeasure(label, 12) + 18;
-    fillRounded(right - w, y, w, 20, 10, kMusicChip);
-    drawText(right - w + 9, y + 4, 0.5f, kMusicText, label, w - 12);
+    drawGlass(right - w, y, w, 20, 10, selected ? kGlassSelected : kGlass);
+    drawTextArgb(right - w + 9, y + 4, 0.5f, selected ? kMusicKnockout : kMusicText, label, w - 12);
 }
 
 std::string musicRepeatText(const pspapp::App& app, pspapp::RepeatMode mode) {
@@ -2810,13 +2882,13 @@ void drawLyricCue(std::string_view text, int centerY, float scale, float focus, 
 void drawMusicLyrics(const pspapp::App& app, const pspapp::MusicView& view, int64_t now) {
     constexpr int top = 43, bottom = 247, centerY = 129, pitch = 70;
     if (!view.lyrics || view.lyrics->empty()) {
-        drawText(kLyricX, 118, 0.7f, kMusicDim, uiText(app, pspapp::TextId::music_no_lyrics), kLyricWidth, true);
+        drawTextArgb(kLyricX, 118, 0.7f, kMusicSecondary, uiText(app, pspapp::TextId::music_no_lyrics), kLyricWidth, true);
         return;
     }
     const size_t track = std::min(view.lyricTrack, view.lyrics->size() - 1);
     const auto& list = (*view.lyrics)[track];
     const auto& cues = list.cues;
-    drawText(kLyricX, 22, 0.5f, kMusicDim, "CC · " + list.label + (view.lyrics->size() > 1
+    drawTextArgb(kLyricX, 22, 0.5f, kMusicSecondary, "CC · " + list.label + (view.lyrics->size() > 1
                  ? " (" + std::to_string(track + 1) + "/" + std::to_string(view.lyrics->size()) + ")" : ""), 131);
 
     const int current = pspapp::lyricIndexAt(cues, view.positionMs);
@@ -2863,7 +2935,8 @@ void drawMusicLyrics(const pspapp::App& app, const pspapp::MusicView& view, int6
 void drawMusicQueue(const pspapp::App& app, const pspapp::MusicView& view) {
     constexpr int rx = 232, rw = 220, top = 40, pitch = 32, rows = 5;
     drawText(rx, 12, 0.9f, kMusicText, uiText(app, pspapp::TextId::music_queue_title), 120);
-    drawMusicChip(rx + rw, 12, "\xE2\x96\xB3 " + musicRepeatText(app, view.repeat));
+    drawMusicChip(rx + rw, 12, "\xE2\x96\xB3 " + musicRepeatText(app, view.repeat),
+                  view.repeat != pspapp::RepeatMode::Once);
     const auto& tracks = app.musicTracks();
     const size_t focus = std::min(app.musicQueueFocus(), tracks.empty() ? size_t{0} : tracks.size() - 1);
     const size_t first = tracks.size() <= static_cast<size_t>(rows) ? 0
@@ -2872,19 +2945,19 @@ void drawMusicQueue(const pspapp::App& app, const pspapp::MusicView& view) {
         const size_t index = first + row;
         const int y = top + static_cast<int>(row) * pitch;
         const bool playing = index == view.index;
-        if (index == focus) fillRounded(rx - 4, y, rw + 8, 28, 6, kMusicChip);
-        const uint32_t shade = playing ? kMusicAccent : kMusicText;
+        if (index == focus) drawGlass(rx - 4, y, rw + 8, 28, 6, kGlass);
+        // The playing part is marked by its level bars, not by colour.
         if (playing) {
-            fillRect(rx + 3, y + 14, 3, 7, shade);
-            fillRect(rx + 8, y + 8, 3, 13, shade);
-            fillRect(rx + 13, y + 11, 3, 10, shade);
+            fillRect(rx + 3, y + 14, 3, 7, kMusicText);
+            fillRect(rx + 8, y + 8, 3, 13, kMusicText);
+            fillRect(rx + 13, y + 11, 3, 10, kMusicText);
         } else {
-            drawText(rx + 3, y + 7, 0.5f, kMusicDim, std::to_string(index + 1), 20);
+            drawTextArgb(rx + 3, y + 7, 0.5f, kMusicSecondary, std::to_string(index + 1), 20);
         }
         const std::string duration = formatDuration(tracks[index].durationSec);
         const int durationWidth = bitmapMeasure(duration, 12);
-        drawText(rx + rw - durationWidth, y + 8, 0.5f, kMusicDim, duration, durationWidth + 4);
-        drawText(rx + 26, y + 6, 0.7f, shade, "P" + std::to_string(index + 1) + "  " + tracks[index].title,
+        drawTextArgb(rx + rw - durationWidth, y + 8, 0.5f, kMusicSecondary, duration, durationWidth + 4);
+        drawText(rx + 26, y + 6, 0.7f, kMusicText, "P" + std::to_string(index + 1) + "  " + tracks[index].title,
                  rw - 34 - durationWidth);
     }
 }
@@ -2905,23 +2978,60 @@ std::string musicStatus(const pspapp::App& app, const pspapp::MusicView& view) {
 
 void drawMusicProgress(int x, int y, int w, const pspapp::MusicView& view) {
     drawMusicBar(x, y, w, view.positionMs, view.durationMs);
-    drawText(x, y + 9, 0.5f, kMusicDim, formatDuration(static_cast<int>(view.positionMs / 1000)), 60);
+    drawTextArgb(x, y + 9, 0.5f, kMusicSecondary, formatDuration(static_cast<int>(view.positionMs / 1000)), 60);
     const std::string remaining = "-" + formatDuration(static_cast<int>(
         std::max<int64_t>(0, view.durationMs - view.positionMs) / 1000));
-    drawText(x + w - bitmapMeasure(remaining, 12), y + 9, 0.5f, kMusicDim, remaining, 70);
+    drawTextArgb(x + w - bitmapMeasure(remaining, 12), y + 9, 0.5f, kMusicSecondary, remaining, 70);
 }
 
+// Play/pause as a plain white glyph sized by `radius`, with no disc: idle controls carry no
+// background, as in Apple Music.
 void drawMusicPlay(const pspapp::MusicView& view, int x, int y, int radius) {
-    drawDisc(x, y, radius, kMusicText);
     const bool showPlay = view.paused || view.state == pspapp::MusicState::Ended ||
                           view.state == pspapp::MusicState::Failed;
-    const int h = radius / 2 - 2;
+    const int h = radius * 2 / 3;  // half the glyph height
     if (showPlay) {
-        fillPlayGlyph(x - h / 2, y - h, h * 2 - 1, h * 2, kMusicBg);
+        fillPlayGlyph(x - h * 3 / 4 + 2, y - h, h * 3 / 2, h * 2, kMusicText);
     } else {
-        fillRect(x - h, y - h, 3, h * 2, kMusicBg);
-        fillRect(x + h - 3, y - h, 3, h * 2, kMusicBg);
+        const int bar = std::max(3, radius / 4);
+        fillRect(x - bar - 2, y - h, bar, h * 2, kMusicText);
+        fillRect(x + 2, y - h, bar, h * 2, kMusicText);
     }
+}
+
+// Original lossless mark (not a copy of any brand's logo): three sine strands, each one pixel
+// wide and offset by a quarter period, so they cross like the strands of a signal. White like the
+// rest of the content: the middle strand full, the outer two at secondary strength.
+constexpr int kLosslessGlyphW = 16, kLosslessGlyphH = 14;
+void drawLosslessGlyph(int x, int y) {
+    constexpr float kTwoPi = 6.2831853f;
+    for (int strand = 0; strand < 3; ++strand) {
+        const float shift = (strand - 1) * kLosslessGlyphW / 4.f;
+        const uint32_t shade = strand == 1 ? kMusicText : kMusicSecondary;
+        int prev = -1;
+        for (int cx = 0; cx < kLosslessGlyphW; ++cx) {
+            const float angle = (cx - shift) / kLosslessGlyphW * kTwoPi;
+            const int cy = kLosslessGlyphH / 2 - static_cast<int>(std::sin(angle) * (kLosslessGlyphH / 2 - 1.f) + 0.5f);
+            // Join each column to the previous one so the strand stays continuous on steep slopes.
+            const int top = prev < 0 ? cy : std::min(prev, cy), bottom = prev < 0 ? cy : std::max(prev, cy);
+            fillRectArgb(x + cx, y + top, 1, bottom - top + 1, shade);
+            prev = cy;
+        }
+    }
+}
+
+// A small glass "Lossless" badge under the cover. It only appears while the lossless track plays,
+// so standard audio shows nothing.
+void drawMusicQuality(const pspapp::App& app, const pspapp::MusicView& view, int x, int y, int w) {
+    if (!view.lossless) return;
+    const std::string label = uiText(app, pspapp::TextId::music_quality_lossless);
+    const int textWidth = bitmapMeasure(label, 12);
+    constexpr int height = 18, pad = 8, glyphWidth = kLosslessGlyphW, gap = 6;
+    const int badgeWidth = pad + glyphWidth + gap + textWidth + pad;
+    const int bx = x + (w - badgeWidth) / 2;
+    drawGlass(bx, y, badgeWidth, height, height / 2, kGlass);
+    drawLosslessGlyph(bx + pad, y + (height - kLosslessGlyphH) / 2);
+    drawText(bx + pad + glyphWidth + gap, y + 3, 0.5f, kMusicText, label, textWidth + 4);
 }
 
 void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, const std::string& title,
@@ -2929,15 +3039,8 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
     constexpr int rx = 232, rw = 220;
     drawWrapped(rx, 52, 0.9f, kMusicText, title, rw, 2, 20);
     const std::string status = musicStatus(app, view);
-    drawText(rx, 96, 0.5f, status.empty() ? kMusicDim : kMusicAccent, status.empty() ? sub : status, rw);
-    // Audio quality, toggled with Up. Shown only when this part offers a FLAC track.
-    if (view.losslessAvailable) {
-        const std::string quality = std::string("\xE2\x86\x91 ") + uiText(app,
-            view.lossless ? pspapp::TextId::music_quality_lossless : pspapp::TextId::music_quality_standard);
-        const int qualityWidth = bitmapMeasure(quality, 12) + 18;
-        fillRounded(rx, 116, qualityWidth, 20, 10, kMusicChip);
-        drawText(rx + 9, 120, 0.5f, view.lossless ? kMusicAccent : kMusicText, quality, qualityWidth - 12);
-    }
+    // A status message (buffering, failed) stands out by strength, not colour.
+    drawTextArgb(rx, 96, 0.5f, status.empty() ? kMusicSecondary : kMusicText, status.empty() ? sub : status, rw);
     drawMusicProgress(rx, 148, rw, view);
 
     // Transport: repeat, previous, play/pause, next, queue. Each key sits under its icon.
@@ -2945,14 +3048,17 @@ void drawMusicControls(const pspapp::App& app, const pspapp::MusicView& view, co
     const int cx[5] = {rx + 22, rx + 22 + step, rx + 22 + 2 * step, rx + 22 + 3 * step, rx + 22 + 4 * step};
     const int repeatIcon = view.repeat == pspapp::RepeatMode::All ? IconRepeat
                          : view.repeat == pspapp::RepeatMode::One ? IconRepeatOne : IconOnce;
-    drawLineIcon(repeatIcon, cx[0] - 13, centerY - 13, 26,
-                 view.repeat == pspapp::RepeatMode::Once ? kMusicDim : kMusicAccent);
+    // Repeat on is a toggle that is on: a light glass square with the symbol showing the tint through.
+    const bool repeating = view.repeat != pspapp::RepeatMode::Once;
+    if (repeating) drawGlass(cx[0] - 16, centerY - 16, 32, 32, 8, kGlassSelected);
+    drawLineIconArgb(repeatIcon, cx[0] - 13, centerY - 13, 26, repeating ? kMusicKnockout : kMusicText);
     drawLineIcon(IconPrev, cx[1] - 13, centerY - 13, 26, kMusicText);
     drawMusicPlay(view, cx[2], centerY, 18);
     drawLineIcon(IconNext, cx[3] - 13, centerY - 13, 26, kMusicText);
-    drawLineIcon(IconList, cx[4] - 13, centerY - 13, 26, app.musicTracks().size() > 1 ? kMusicText : kMusicTrack);
+    drawLineIconArgb(IconList, cx[4] - 13, centerY - 13, 26,
+                     app.musicTracks().size() > 1 ? kMusicText : kMusicTertiary);
     const std::string keys[5] = {"\xE2\x96\xB3", "L", app.preferences().confirmButton(), "R", "\xE2\x96\xA1"};
-    for (int i = 0; i < 5; ++i) drawText(cx[i] - 14, 222, 0.5f, kMusicDim, keys[i], 28, true);
+    for (int i = 0; i < 5; ++i) drawTextArgb(cx[i] - 14, 222, 0.5f, kMusicSecondary, keys[i], 28, true);
 }
 
 void drawMusic(const pspapp::App& app, int64_t now) {
@@ -2976,8 +3082,8 @@ void drawMusic(const pspapp::App& app, int64_t now) {
         drawMusicCover(cover, x, 16, w);
         drawText(x, 168, 0.9f, kMusicText, title, w);
         const std::string status = musicStatus(app, view);
-        drawText(x, 186, 0.5f, status.empty() ? kMusicDim : kMusicAccent,
-                 status.empty() ? app.detail().card.author : status, w);
+        drawTextArgb(x, 186, 0.5f, status.empty() ? kMusicSecondary : kMusicText,
+                     status.empty() ? app.detail().card.author : status, w);
         drawMusicProgress(x, 204, w, view);
         drawLineIcon(IconPrev, x + 29, 224, 22, kMusicText);
         drawMusicPlay(view, x + w / 2, 235, 12);
@@ -2985,20 +3091,23 @@ void drawMusic(const pspapp::App& app, int64_t now) {
         drawMusicLyrics(app, view, now);
     } else {
         drawMusicCover(cover, 28, 40, 176);
+        drawMusicQuality(app, view, 28, 224, 176);
         if (panel == pspapp::MusicPanel::Queue) {
             drawMusicQueue(app, view);
             return;
         }
-        drawText(rx, 16, 0.5f, kMusicDim, uiText(app, pspapp::TextId::music_part,
+        drawTextArgb(rx, 16, 0.5f, kMusicSecondary, uiText(app, pspapp::TextId::music_part,
                  {{"n", std::to_string(index + 1)}, {"total", std::to_string(tracks.size())}}), 110);
         std::string sub = app.detail().card.author;
         if (app.detail().card.title != title && !app.detail().card.title.empty())
             sub = app.detail().card.title + (sub.empty() ? "" : " · " + sub);
         drawMusicControls(app, view, title, sub);
     }
+    // Lit (selected glass) while the lyrics are showing, like a lyrics toggle that is on.
     if (panel == pspapp::MusicPanel::Lyrics || (view.lyrics && !view.lyrics->empty()))
         drawMusicChip(rx + rw, 16, std::string("SELECT ") + uiText(app, panel == pspapp::MusicPanel::Lyrics
-                      ? pspapp::TextId::music_controls : pspapp::TextId::music_lyrics));
+                      ? pspapp::TextId::music_controls : pspapp::TextId::music_lyrics),
+                      panel == pspapp::MusicPanel::Lyrics);
 }
 
 void drawDetail(const pspapp::App& app) {
