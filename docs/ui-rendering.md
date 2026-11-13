@@ -164,3 +164,24 @@ are counted in emulated instructions; they are a lower bound and say nothing abo
 PPSSPP does not model the PSP's data cache. Anything the CPU writes for the GE to read (cover
 textures, the CLUTs) must be written back or written uncached; a mistake there looks correct
 in the emulator and wrong on a device.
+
+### Font storage errors across sleep
+
+The bitmap font keeps its compact index and glyph cache in RAM, and seeks to
+uncached glyph pixels on disk. A device exception during sleep showed a cached
+stdio offset of `0x80020328` (`SCE_KERNEL_ERROR_DRIVER_DELETED`) followed by an
+invalid glyph-read pointer. The installed libcglue converted `0x8001xxxx` errors
+but passed this error through, while newlib treated any seek result other than
+`-1` as a position.
+
+The client links a narrow `_lseek` wrapper (`client/psp_io.c`) that normalizes
+remaining negative results to `-1`/`EIO`, preserving already-converted errno
+values. This protects all client stdio seeks, including font and media reads.
+After a font seek/read failure, its owner closes the handle and retries once
+with a fresh handle. If storage remains unavailable, the glyph lookup fails
+normally and a later lookup can reopen it; the index and valid cached glyphs
+are retained. No cross-thread close or pre-sleep font teardown is required.
+
+Host regression coverage in `tools/test-host.sh` checks raw PSP seek errors,
+normal errno preservation, bounded font retries, and recovery after failed
+seek/read/open operations. Actual storage suspend/resume still needs PSP tests.

@@ -39,6 +39,14 @@ volatile int exiting = 0;
 // Set while psp_video_play owns the main thread. Its cleanup can wait on a
 // stalled decoder/audio/ME worker, so a cooperative HOME exit would never run.
 volatile int playbackActive = 0;
+int powerCallback(int, int flags, void*) {
+    if (flags & (PSP_POWER_CB_RESUMING | PSP_POWER_CB_RESUME_COMPLETE))
+        network_set_suspended(0);
+    else if (flags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING))
+        network_set_suspended(1);
+    return 0;
+}
+
 constexpr uint64_t kForcedExitWaitUs = 5000000;  // unmeasured first guess
 
 void logMemory(const char* phase) {
@@ -73,7 +81,16 @@ int exitCallback(int, int, void*) {
 int callbackThread(SceSize, void*) {
     const int id = sceKernelCreateCallback("wiliwili_exit", exitCallback, nullptr);
     sceKernelRegisterExitCallback(id);
-    sceKernelSleepThreadCB();
+    const int powerId = sceKernelCreateCallback("wili_power", powerCallback, nullptr);
+    const int slot = powerId >= 0 ? scePowerRegisterCallback(-1, powerId) : powerId;
+    if (slot < 0) WLOG_E(WLC_CLIENT, "power callback registration failed: %08x", slot);
+    while (!exiting) {
+        sceKernelDelayThreadCB(100000);
+        if (!exiting) network_poll_power();
+    }
+    if (slot >= 0) scePowerUnregisterCallback(slot);
+    if (powerId >= 0) sceKernelDeleteCallback(powerId);
+    if (id >= 0) sceKernelDeleteCallback(id);
     return 0;
 }
 
@@ -124,9 +141,10 @@ int main(int argc, char** argv) {
     WLOG_I(WLC_CLIENT, "root=%s", root);
     WLOG_I(WLC_CLIENT, "heap_kib=%d default_rgb_frames=%d",
            BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
-    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
+    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x4000,
                                                PSP_THREAD_ATTR_USER, nullptr);
-    if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
+    const int callbackStart = callback >= 0 ? sceKernelStartThread(callback, 0, nullptr) : callback;
+    if (callbackStart < 0) WLOG_E(WLC_CLIENT, "callback thread failed: %08x", callbackStart);
     scePowerSetClockFrequency(333, 333, 166);
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
@@ -445,6 +463,9 @@ int main(int argc, char** argv) {
 
     transfer_cancel = 1;
     app.shutdown();
+    exiting = 1;
+    if (callbackStart >= 0) sceKernelWaitThreadEnd(callback, nullptr);
+    if (callback >= 0) sceKernelDeleteThread(callback);
     network_close();
     ui_shutdown();
     logMemory("shutdown");

@@ -191,3 +191,21 @@ sequential, so one stalled request can delay the rest of a page.
 - Use PSPLink scrshot only when no video is playing or about to play; with the
   ME decoder active it crashes the ME. Never use VRAM savemem; it also crashes
   the ME and has stalled USB transfers. Headless captures use neither.
+
+## Wi-Fi and system sleep
+
+Power events mark Wi-Fi unavailable immediately. The callback thread requests an
+APCTL disconnect and waits asynchronously for the disconnected state; it does
+not terminate network modules or free another worker's HTTP handles. After wake,
+the next request reconnects through the saved Wi-Fi profile using the existing
+connection timeout and error handling. Resume does not require a
+`RESUME_COMPLETE` event: `RESUMING` also releases the sleep gate.
+
+Requests and network media sources retain their connection generation. Sleep
+invalidates them permanently, including when their callbacks first run after
+wake. Readers and writers leave their existing bounded waits and follow normal
+failure/cleanup paths. Interrupted media must be reopened; it does not continue
+using pre-sleep sockets. The owners of cached API/download handles discard them
+before their first request in the new generation. Account credentials and the
+shared DNS/TLS session caches remain intact. This handles Wi-Fi interruption;
+it does not implement ME context save/restore or guarantee hardware wake recovery.

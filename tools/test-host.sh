@@ -24,6 +24,13 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/bitmap_font_test.cpp client/bitmap_font.cpp -o "$out/bitmap-font-test"
 "$out/bitmap-font-test" client/assets/font/wqy.bmf
+${CC:-cc} -std=c11 -Wall -Wextra -Werror \
+    tests/psp_io_test.c client/psp_io.c -o "$out/psp-io-test"
+"$out/psp-io-test"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror \
+    tests/bitmap_font_io_test.cpp client/bitmap_font.cpp \
+    -Wl,--wrap=fopen -Wl,--wrap=fseek -Wl,--wrap=fread -o "$out/bitmap-font-io-test"
+"$out/bitmap-font-io-test" client/assets/font/wqy.bmf
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithird_party/nlohmann \
     tests/update_core_test.cpp client/services/update_core.cpp -o "$out/update-core-test"
 "$out/update-core-test"

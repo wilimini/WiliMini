@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -20,6 +21,7 @@ struct GlyphRange {
 };
 struct FontIndex {
     FILE* file = nullptr;
+    std::string path;
     // Five bytes per glyph, in separate arrays to keep the offsets aligned.
     std::vector<uint32_t> offsets;
     std::vector<uint8_t> advances;
@@ -30,7 +32,7 @@ struct FontIndex {
     void close();
     bool read(uint32_t count);
     bool find(uint32_t cp, int size, Record& record) const;
-    bool pixels(const Record& record, unsigned char* out, size_t capacity) const;
+    bool pixels(const Record& record, unsigned char* out, size_t capacity);
 };
 FontIndex bodyFont, lyricsFont;
 BitmapGlyph cache[384];
@@ -83,9 +85,10 @@ bool FontIndex::find(uint32_t cp, int size, Record& record) const {
     return true;
 }
 
-bool FontIndex::open(const char* path) {
+bool FontIndex::open(const char* filename) {
     close();
-    file = std::fopen(path, "rb");
+    path = filename;
+    file = std::fopen(path.c_str(), "rb");
     if (!file) return false;
     char magic[8];
     uint32_t count = 0;
@@ -104,15 +107,26 @@ bool FontIndex::open(const char* path) {
 void FontIndex::close() {
     if (file) std::fclose(file);
     file = nullptr;
+    path.clear();
     std::vector<uint32_t>{}.swap(offsets);
     std::vector<uint8_t>{}.swap(advances);
     std::vector<GlyphRange>{}.swap(ranges);
 }
 
-bool FontIndex::pixels(const Record& record, unsigned char* out, size_t capacity) const {
+bool FontIndex::pixels(const Record& record, unsigned char* out, size_t capacity) {
     const size_t bytes = (record.width * record.height + 1) / 2;
-    return bytes <= capacity && !std::fseek(file, dataOffset + record.offset, SEEK_SET) &&
-           std::fread(out, 1, bytes, file) == bytes;
+    if (bytes > capacity || path.empty()) return false;
+    // Sleep can invalidate the storage descriptor. Keep the index and cached
+    // glyphs; reopen only the failed handle, with one retry and no wait loop.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (!file) file = std::fopen(path.c_str(), "rb");
+        if (!file) return false;
+        if (!std::fseek(file, dataOffset + record.offset, SEEK_SET) &&
+            std::fread(out, 1, bytes, file) == bytes) return true;
+        std::fclose(file);
+        file = nullptr;
+    }
+    return false;
 }
 
 bool bodyRecord(uint32_t cp, int size, Record& record) {
@@ -133,7 +147,7 @@ void bitmapFontShutdown() {
 }
 
 const BitmapGlyph* bitmapGlyph(uint32_t cp, int size) {
-    if (!bodyFont.file) return nullptr;
+    if (bodyFont.offsets.empty()) return nullptr;
     const size_t slotHash = frontIndex(cp, size);
     if (const BitmapGlyph* hit = front[slotHash]; hit && hit->codepoint == cp && hit->size == size) return hit;
     for (const auto& glyph : cache)
