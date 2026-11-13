@@ -1,6 +1,8 @@
+#include <errno.h>
 #include "services/playback_request_policy.h"
 #include "bilibili.h"
 #include "json.h"
+#include "json_drop.h"
 #include <wili_log.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -315,6 +317,8 @@ typedef struct {
     int flush;
     const char *form;
     size_t text_capacity; /* Nonzero for a response that grows on demand. */
+    int drop_on;          /* Filter data.ugc_season out of the body as it arrives. */
+    BiliJsonDrop drop;
     CURL *handle; /* Set while transferring; supplies the Content-Length hint. */
 } Sink;
 static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t bytes);
@@ -322,26 +326,43 @@ static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t by
 static void stream_profile_http(CURL *c,BiliStreamCache *s);
 #endif
 static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
-    Sink *s=ctx;size_t bytes=size*count;
+    Sink *s=ctx;size_t bytes=size*count,stored=bytes;
     int cancelled=s->cancel?*s->cancel:transfer_cancel;
-    if(cancelled || s->used>s->limit || bytes>s->limit-s->used)return 0;
-    if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0)return 0;}
-    else if(s->file){if(fwrite(data,1,bytes,s->file)!=bytes)return 0;}
+    if(cancelled || s->used>s->limit || bytes>s->limit-s->used){
+        WLOG_E(WLC_NET,"write_data abort: cancelled=%d used=%zu bytes=%zu limit=%zu",
+               cancelled,(size_t)s->used,bytes,(size_t)s->limit);
+        return 0;
+    }
+    if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0){
+        WLOG_E(WLC_NET,"write_data abort: stream_cache_write failed used=%zu bytes=%zu",(size_t)s->used,bytes);
+        return 0;}}
+    else if(s->file){if(fwrite(data,1,bytes,s->file)!=bytes){
+        WLOG_E(WLC_NET,"write_data abort: fwrite failed errno=%d used=%zu bytes=%zu",errno,(size_t)s->used,bytes);
+        return 0;}}
     else {
-        if (s->text_capacity && !s->used && s->handle) {
+        /* No Content-Length hint when filtering: the stored body is far smaller. */
+        if (s->text_capacity && !s->used && s->handle && !s->drop_on) {
             curl_off_t length = -1;
             if (curl_easy_getinfo(s->handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length) == CURLE_OK)
                 bili_http_buffer_hint(&s->text, &s->text_capacity, (long long)length, s->limit);
         }
+        const size_t room = s->drop_on ? bytes + BILI_JSON_DROP_SLACK : bytes;
         if (s->text_capacity && bili_http_buffer_reserve(&s->text, &s->text_capacity,
-                                                        s->used + bytes, s->limit) < 0) {
+                                                        s->used + room, s->limit) < 0) {
+            WLOG_E(WLC_NET,"write_data abort: buffer reserve failed used=%zu bytes=%zu limit=%zu",
+                   (size_t)s->used,bytes,(size_t)s->limit);
             if (s->response) s->response->failure = BILI_HTTP_MEMORY;
             return 0;
         }
-        memcpy(s->text+s->used,data,bytes);s->text[s->used+bytes]=0;
+        if (s->drop_on) stored = bili_json_drop(&s->drop, data, bytes, s->text + s->used);
+        else memcpy(s->text + s->used, data, bytes);
+        s->text[s->used + stored] = 0;
     }
-    if(s->flush && fflush(s->file)!=0)return 0;
-    s->used+=bytes;transfer_kb=s->used/1024;
+    if(s->flush && fflush(s->file)!=0){
+        WLOG_E(WLC_NET,"write_data abort: fflush failed errno=%d",errno);
+        return 0;
+    }
+    s->used+=stored;transfer_kb=s->used/1024;
     return bytes;
 }
 static int progress(void *ctx,curl_off_t total,curl_off_t now,curl_off_t up,curl_off_t done){
@@ -386,6 +407,11 @@ static int request(const char *url,Sink *sink) {
     if(!sink->response)curl_easy_reset(c);
     http_share_apply(c);
     transfer_kb=transfer_total_kb=0;
+    /* Video detail embeds the whole uploader collection (data.ugc_season, up to
+     * MBs) that nothing reads; drop it while receiving. See json_drop.h. */
+    if(sink->text_capacity && strstr(url,"/x/web-interface/view?")){
+        sink->drop_on=1;memset(&sink->drop,0,sizeof(sink->drop));
+    }
     curl_easy_setopt(c,CURLOPT_URL,url);
     if(sink->form){
         curl_easy_setopt(c,CURLOPT_POST,1L);
@@ -462,6 +488,8 @@ static int request(const char *url,Sink *sink) {
 #if BILI_STREAM_PROFILE
     if(sink->stream)stream_profile_http(c,sink->stream);
 #endif
+    if(r!=CURLE_OK)WLOG_E(WLC_NET,"http curl=%d (%s) status=%ld used=%zu limit=%zu url=%.120s",
+                          (int)r,curl_easy_strerror(r),status,(size_t)sink->used,(size_t)sink->limit,url);
     if(sink->response)bili_http_transport_release(c);
     if(headers)curl_slist_free_all(headers);
     if(r!=CURLE_OK || status!=200){

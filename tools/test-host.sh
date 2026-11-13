@@ -30,6 +30,9 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -Ithir
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/http_buffer_test.c -o "$out/http-buffer-test"
 "$out/http-buffer-test"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    tests/json_drop_test.c -o "$out/json-drop-test"
+"$out/json-drop-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 sh tools/test-update-package.sh
