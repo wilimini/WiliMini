@@ -1,6 +1,7 @@
 #include "ui.hpp"
 #include <wili_log.h>
 #include "bitmap_font.hpp"
+#include "button_icons.hpp"
 #include "title_font.hpp"
 #include "comment_layout.hpp"
 #include "assets/wiliwili/sidebar.hpp"
@@ -590,6 +591,22 @@ void drawMask(const SpriteRef& ref, int x, int y, uint32_t shade) {
     geSprite(maskAtlas.tex(TexKind::Mask8), x, y, ref.w, ref.h, ref.u, ref.v, shade | 0xff000000u);
 }
 
+// Draws a controller button icon (private-use codepoint) at the text position (x, y) for a text
+// `size`. The mask is rendered once per icon and size, then tinted with the text colour.
+void drawButtonIcon(uint32_t cp, int size, int x, int y, uint32_t shade, int clipLeft, int clipTop,
+                    int clipRight, int clipBottom) {
+    const uint32_t key = (5u << 28) | ((cp - pspapp::kButtonIconFirst) << 8) | static_cast<uint32_t>(size);
+    const SpriteRef* ref = maskSprite(key);
+    if (!ref) {
+        static uint8_t alpha[pspapp::kButtonIconMaxWidth * pspapp::kButtonIconMaxHeight];
+        if (!pspapp::renderButtonIcon(cp, size, alpha, bitmapLabelFont())) return;
+        ref = addMaskSprite(key, bitmapIconWidth(cp, size), pspapp::buttonIconHeight(size), alpha);
+    }
+    if (ref)
+        geSprite(maskAtlas.tex(TexKind::Mask8), x, y, ref->w, ref->h, ref->u, ref->v, shade | 0xff000000u,
+                 clipLeft, clipTop, clipRight, clipBottom);
+}
+
 // The sidebar icons are 22x22 ARGB4444 bitmaps. They are scaled to `size` once, with the same
 // nearest-neighbour mapping the CPU renderer used, and cached either as an alpha mask (tinted when
 // drawn) or as a 4444 colour bitmap.
@@ -668,7 +685,15 @@ void drawText(int x, int y, float scale, uint32_t shade, std::string_view text, 
     const int top = std::max(0, clipTop), bottom = std::min(kHeight, clipBottom);
     const uint32_t solid = shade | 0xff000000u;
     for (size_t pos = 0; pos < text.size();) {
-        const auto* cell = bodyCell(bitmapNext(text, pos), size);
+        const uint32_t cp = bitmapNext(text, pos);
+        if (pspapp::isButtonIcon(cp)) {
+            const int advance = bitmapIconWidth(cp, size) + 2;
+            if (x + advance > right) break;
+            drawButtonIcon(cp, size, x, y, shade, 0, top, right, bottom);
+            x += advance;
+            continue;
+        }
+        const auto* cell = bodyCell(cp, size);
         if (!cell) continue;
         if (x + cell->advance > right) break;
         drawGlyphCell(bodyAtlas.tex(), *cell, x, y, 1, solid, 0, top, right, bottom);
@@ -1788,7 +1813,7 @@ void drawMineTiles(const pspapp::App& app) {
                          entry.duration});
     if (items.empty()) {
         drawText(12, listBounds.y0 + kRowPitch + 8, 0.7f, kText, "还没有本地记录", 440);
-        drawText(12, listBounds.y0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
+        drawText(12, listBounds.y0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 440);
     }
     drawRowList(items, kRowPitch, scroll);
     if (app.focusArea() == FocusArea::Content) {
@@ -1901,7 +1926,7 @@ void drawMineGrid(const pspapp::App& app) {
         items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
     if (items.empty()) {
         drawText(kTileX, kGridY0 + inset + 12, 0.7f, kText, "还没有本地记录", 440);
-        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 440);
+        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 440);
     }
     drawTileGrid(items, focus && selection ? static_cast<int>(selection) - 1 : -1, inset, scroll);
     if (focus && selection == 0) {
@@ -1943,7 +1968,7 @@ void drawSearchMetro(const pspapp::App& app) {
         if (history.empty()) {
             drawText(12, listBounds.y0 + inset + 6, 0.7f, kText, "还没有搜索历史", 440);
             drawText(12, listBounds.y0 + inset + 30, 0.5f, kTextDim,
-                     "□ 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 440);
+                     BTN_SQUARE " 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 440);
             return;
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i)
@@ -1966,7 +1991,7 @@ void drawSearchMetro(const pspapp::App& app) {
         if (topics.empty()) {
             const int y = listBounds.y0 + 2 * kRowPitch - scroll;
             drawText(12, y + 6, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 440, false, listBounds.top, kListBottom);
-            drawText(12, y + 28, 0.5f, kTextDim, "□ 仍可输入关键词搜索", 440, false, listBounds.top, kListBottom);
+            drawText(12, y + 28, 0.5f, kTextDim, BTN_SQUARE " 仍可输入关键词搜索", 440, false, listBounds.top, kListBottom);
         }
         for (size_t i = 0; i < topics.size(); ++i) {
             char rank[16];
@@ -1979,11 +2004,11 @@ void drawSearchMetro(const pspapp::App& app) {
     }
     // Results with nothing to list: the keyword line plus the reason.
     drawText(12, listBounds.y0 - 2, 0.5f, app.searchError().empty() ? kTextDim : kPink,
-             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · △ 重试", 380);
+             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · " BTN_TRIANGLE " 重试", 380);
     drawText(12, listBounds.y0 + 24, 0.7f, kText, app.busy() ? "正在搜索…" :
              app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 440);
     drawWrapped(12, listBounds.y0 + 50, 0.5f, kTextDim,
-                app.searchError().empty() ? "□ 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索"
+                app.searchError().empty() ? BTN_SQUARE " 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索"
                                           : app.searchError(), 440, 3, 16);
 }
 
@@ -2354,10 +2379,10 @@ void drawDetailTiles(const pspapp::App& app) {
     struct Action { uint32_t shade; std::string label; std::string note; };
     const Action actions[] = {
         {kTilePalette[0], confirm + (app.detailStartMs() > 0 ? " 继续" : " 播放"), formatCount(detail.like) + " 赞"},
-        {kTilePalette[4], "R 评论", formatCount(detail.coin) + " 投币"},
-        {app.currentIsLater() ? kTilePalette[2] : kTilePalette[3], app.currentIsLater() ? "□ 已稍后" : "□ 稍后",
+        {kTilePalette[4], BTN_R " 评论", formatCount(detail.coin) + " 投币"},
+        {app.currentIsLater() ? kTilePalette[2] : kTilePalette[3], app.currentIsLater() ? BTN_SQUARE " 已稍后" : BTN_SQUARE " 稍后",
          formatCount(detail.favorite) + " 收藏"},
-        {kTilePalette[6], "△ UP主", detail.card.author}};
+        {kTilePalette[6], BTN_TRIANGLE " UP主", detail.card.author}};
     for (int i = 0; i < 4; ++i) {
         const int x = 12 + i * 114;
         fillRect(x, 164, 110, 44, actions[i].shade);
@@ -2484,7 +2509,7 @@ void drawCardGrid(const pspapp::App& app) {
                 drawText(62, 198, 0.45f, kTextDim, history, 356);
             }
         } else {
-            drawEmpty("正在准备首页", "△ 刷新 · SELECT 打开 PSP 网络设置");
+            drawEmpty("正在准备首页", BTN_TRIANGLE " 刷新 · " BTN_SELECT " 打开 PSP 网络设置");
         }
         return;
     }
@@ -2989,7 +3014,7 @@ void drawMusic(const pspapp::App& app, int64_t now) {
         drawMusicControls(app, view, title, sub);
     }
     if (panel == pspapp::MusicPanel::Lyrics || (view.lyrics && !view.lyrics->empty()))
-        drawMusicChip(rx + rw, 16, std::string("SELECT ") + uiText(app, panel == pspapp::MusicPanel::Lyrics
+        drawMusicChip(rx + rw, 16, std::string(BTN_SELECT " ") + uiText(app, panel == pspapp::MusicPanel::Lyrics
                       ? pspapp::TextId::music_controls : pspapp::TextId::music_lyrics));
 }
 
@@ -3005,16 +3030,16 @@ void drawDetail(const pspapp::App& app) {
     drawText(151, 92, 0.5f, kTextDim, stats, 317);
 
     drawText(12, 113, 0.5f, kPink, std::string(app.preferences().confirmButton()) + " 播放", 74);
-    drawText(86, 113, 0.5f, kTextDim, "R 评论", 74);
+    drawText(86, 113, 0.5f, kTextDim, BTN_R " 评论", 74);
     drawText(158, 113, 0.5f, app.currentIsLater() ? kPink : kTextDim,
-             app.currentIsLater() ? "□ 已稍后" : "□ 稍后", 90);
+             app.currentIsLater() ? BTN_SQUARE " 已稍后" : BTN_SQUARE " 稍后", 90);
     drawText(268, 113, 0.5f, kTextDim, formatCount(detail.like) + " 赞 · " + formatCount(detail.favorite) + " 收藏", 200);
     drawWrapped(12, 135, 0.7f, kText, detail.description.empty() ? "暂无简介" : detail.description,
                 456, 2, 18);
 
     fillRect(12, 176, 456, 1, kLine);
     drawText(12, 183, 0.5f, kPink, "分 P  " + std::to_string(detail.pages.size()), 150);
-    drawText(120, 183, 0.5f, kTextDim, "↑↓ 选择分集", 250);
+    drawText(120, 183, 0.5f, kTextDim, BTN_UP_DOWN " 选择分集", 250);
     if (!detail.pages.empty()) {
         size_t first = app.detailPart() > 1 ? app.detailPart() - 1 : 0;
         if (detail.pages.size() > 1 && first + 2 > detail.pages.size()) first = detail.pages.size() - 2;
@@ -3048,7 +3073,7 @@ void drawMine(const pspapp::App& app) {
     const size_t total = app.history().size() + app.later().size();
     if (!total) {
         drawText(39, 124, 0.7f, kText, "还没有本地记录", 428);
-        drawText(39, 150, 0.5f, kTextDim, "播放后保存历史；详情页按 □ 加入稍后观看。", 428);
+        drawText(39, 150, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 428);
         return;
     }
     const size_t selection = app.selection() ? app.selection() - 1 : 0;
@@ -3085,7 +3110,7 @@ void drawLogin(const pspapp::App &app) {
                  pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 424);
         drawText(28, 198, 0.5f, kTextDim, "观看历史与稍后观看仍保存在本机", 424);
         drawText(28, 224, 0.5f, kTextDim,
-                 "□ 退出本机账号    △ 检查登录状态    " + std::string(app.preferences().backButton()) + " 返回", 424);
+                 BTN_SQUARE " 退出本机账号    " BTN_TRIANGLE " 检查登录状态    " + std::string(app.preferences().backButton()) + " 返回", 424);
     } else {
         if (auth.qrSize > 0 && !auth.qr.empty() && auth.state != AuthState::QrExpired) {
             const int scale = std::min(3, 176 / (auth.qrSize + 8));
@@ -3099,14 +3124,14 @@ void drawLogin(const pspapp::App &app) {
                                  kBlack);
         } else {
             drawWrapped(36, 112, 0.7f, kTextDim,
-                        app.busy() ? "正在获取二维码…" : "△ 获取新的二维码", 168, 3, 22);
+                        app.busy() ? "正在获取二维码…" : BTN_TRIANGLE " 获取新的二维码", 168, 3, 22);
         }
         drawWrapped(234, 64, 0.7f, kText,
                     pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 218, 3, 23);
         if (!app.authError())
             drawWrapped(234, 158, 0.5f, kTextDim, "手机扫码并确认后，将保存登录状态。", 218, 3, 18);
         drawText(234, 224, 0.5f, kPink,
-                 "△ 刷新    " + std::string(app.preferences().backButton()) + " 返回", 218);
+                 BTN_TRIANGLE " 刷新    " + std::string(app.preferences().backButton()) + " 返回", 218);
     }
     if (app.authError())
         drawWrapped(signedIn ? 28 : 234, signedIn ? 158 : 141, 0.5f, kPink,
@@ -3127,7 +3152,7 @@ void drawSearch(const pspapp::App& app) {
         if (history.empty()) {
             drawText(39, 80, 0.7f, kText, "还没有搜索历史", 428);
             drawText(39, 105, 0.5f, kTextDim,
-                     "□ 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 428);
+                     BTN_SQUARE " 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 428);
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i) {
             const int y = 54 + static_cast<int>(i) * 24;
@@ -3151,7 +3176,7 @@ void drawSearch(const pspapp::App& app) {
         const auto& topics = app.searchTopics();
         if (topics.empty()) {
             drawText(39, 124, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 428);
-            drawText(39, 150, 0.5f, kTextDim, "□ 仍可输入关键词搜索", 428);
+            drawText(39, 150, 0.5f, kTextDim, BTN_SQUARE " 仍可输入关键词搜索", 428);
         }
         const size_t selected = app.selection() >= 2 ? app.selection() - 2 : 0;
         const size_t first = selected > 2 ? selected - 2 : 0;
@@ -3167,7 +3192,7 @@ void drawSearch(const pspapp::App& app) {
         return;
     }
     drawText(39, 31, 0.5f, app.searchError().empty() ? kTextDim : kPink,
-             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · △ 重试",
+             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · " BTN_TRIANGLE " 重试",
              345);
     drawText(390, 31, 0.5f, kTextDim, std::to_string(app.cards().size()) + " 条", 77);
     const auto& cards = app.cards();
@@ -3175,7 +3200,7 @@ void drawSearch(const pspapp::App& app) {
         drawText(39, 91, 0.7f, kText, app.busy() ? "正在搜索…" :
                  app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 428);
         drawWrapped(39, 117, 0.5f, kTextDim,
-                    app.searchError().empty() ? "□ 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索" : app.searchError(),
+                    app.searchError().empty() ? BTN_SQUARE " 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索" : app.searchError(),
                     428, 3, 16);
         return;
     }
@@ -3536,7 +3561,7 @@ void drawBrowse(const pspapp::App& app) {
     }
     int top = 35;
     if (app.browseError()) {
-        drawText(12, top, 0.5f, kPink, pspapp::errorMessage(app.browseError()) + " · △ 重试", 456);
+        drawText(12, top, 0.5f, kPink, pspapp::errorMessage(app.browseError()) + " · " BTN_TRIANGLE " 重试", 456);
         top += 20;
     } else if (!page.description.empty()) {
         drawWrapped(12, top, 0.5f, kTextDim, page.description, 456, 2, 16);
@@ -3544,7 +3569,7 @@ void drawBrowse(const pspapp::App& app) {
     }
     if (page.items.empty()) {
         drawText(12, top + 27, 0.7f, kTextDim, app.busy() ? "正在载入…" :
-            app.browseError() ? std::string(app.preferences().confirmButton()) + " 登录 / △ 重试" : "暂无内容", 456);
+            app.browseError() ? std::string(app.preferences().confirmButton()) + " 登录 / " BTN_TRIANGLE " 重试" : "暂无内容", 456);
         return;
     }
     const size_t total = page.items.size() + (page.hasMore ? 1 : 0);
@@ -4110,7 +4135,11 @@ bool imeScreen(const std::string& title, std::string& text, size_t limit, pspapp
                 drawText(rect.x + std::max(0, (rect.w - width) / 2), y + (small ? 8 : 6), small ? 0.5f : 1.0f, ink, label, rect.w);
             }
         }
-        drawText(8, 250, 0.5f, kTextDim, hint, 464);
+        {   // The hint is two lines (split at '\n') to fit the width with the button icons.
+            const size_t split = hint.find('\n');
+            drawText(8, 244, 0.5f, kTextDim, hint.substr(0, split), 464);
+            if (split != std::string::npos) drawText(8, 257, 0.5f, kTextDim, hint.substr(split + 1), 464);
+        }
         presentFrame();
         ++frame;
     }

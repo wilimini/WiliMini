@@ -1,4 +1,5 @@
 #include "bitmap_font.hpp"
+#include "button_icons.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -149,8 +150,28 @@ const BitmapGlyph* bitmapGlyph(uint32_t cp, int size) {
 }
 
 int bitmapAdvance(uint32_t cp, int size) {
+    if (pspapp::isButtonIcon(cp)) return bitmapIconWidth(cp, size) + 2;
     Record record;
     return bodyRecord(cp, size, record) ? record.advance : size;
+}
+
+int bitmapIconWidth(uint32_t cp, int size) {
+    const char* label = pspapp::buttonIconLabel(cp);
+    return pspapp::buttonIconWidth(cp, size, label ? pspapp::buttonLabelWidth(bitmapMeasure(label, size)) : 0);
+}
+
+const pspapp::ButtonLabelFont* bitmapLabelFont() {
+    static const pspapp::ButtonLabelFont font{
+        [](const char* text, int size) { return bitmapMeasure(text, size); },
+        [](char letter, int size, int* advance, int* width, int* height, uint8_t* alpha) {
+            const BitmapGlyph* glyph = bitmapGlyph(static_cast<unsigned char>(letter), size);
+            if (!glyph) return false;
+            *advance = glyph->advance; *width = glyph->width; *height = glyph->height;
+            for (int i = 0; i < glyph->width * glyph->height; ++i)
+                alpha[i] = static_cast<uint8_t>(((glyph->alpha[i / 2] >> ((i & 1) ? 4 : 0)) & 15) * 17);
+            return true;
+        }};
+    return &font;
 }
 
 uint32_t bitmapNext(std::string_view text, size_t& pos) {

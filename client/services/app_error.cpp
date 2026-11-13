@@ -1,4 +1,5 @@
 #include "app_error.hpp"
+#include "../button_icons.hpp"
 #include <cstdio>
 #include <wili_log.h>
 
@@ -56,7 +57,7 @@ std::string errorMessage(const AppError &e) {
         text = "网络请求超时，请重试";
         break;
     case ErrorKind::Disconnected:
-        text = "网络未连接 · SELECT 选择 Wi-Fi";
+        text = "网络未连接 · " BTN_SELECT " 选择 Wi-Fi";
         break;
     case ErrorKind::HttpFailure:
         text = "服务器请求失败";

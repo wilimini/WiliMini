@@ -1,6 +1,7 @@
 #include "app.hpp"
 #include "playback.hpp"
 #include "settings_pages.hpp"
+#include "button_icons.hpp"
 #include "services/playback_error.hpp"
 
 #include <algorithm>
@@ -360,7 +361,7 @@ void App::init() {
         logError(CLIENT_PATH("/last-error.txt"), authError_);
     }
     loadCachedCards();
-    status_ = recommend_.empty() ? "推荐 · 按 □ 搜索，△ 刷新" : "缓存首页 · 联网后自动刷新";
+    status_ = recommend_.empty() ? "推荐 · 按 " BTN_SQUARE " 搜索，" BTN_TRIANGLE " 刷新" : "缓存首页 · 联网后自动刷新";
 #ifdef BILI_UI_FIXTURE
     loadUiFixture();
 #endif
@@ -484,7 +485,7 @@ void App::setTab(Tab nextTab) {
     if (nextTab == Tab::Search && root().searchView != SearchView::Results) {
         const size_t count = root().searchView == SearchView::History ? searchHistory_.size() : 2 + root().searchTopics.size();
         root().selection = count ? std::min(root().selection, count - 1) : 0;
-        status_ = "搜索 · □ 输入关键词";
+        status_ = "搜索 · " BTN_SQUARE " 输入关键词";
         if (root().searchView == SearchView::Landing && root().searchTopics.empty()) startJob(Job::SearchTopics);
         return;
     }
@@ -717,7 +718,7 @@ void App::activate() {
             root().searchLandingSelection = root().selection;
             root().searchView = SearchView::History;
             root().selection = 0;
-            status_ = "搜索历史 · " + std::string(preferences_.confirmButton()) + " 搜索 · △ 删除当前项";
+            status_ = "搜索历史 · " + std::string(preferences_.confirmButton()) + " 搜索 · " BTN_TRIANGLE " 删除当前项";
         } else if (root().selection >= 2 && root().selection - 2 < root().searchTopics.size()) {
             root().searchLandingSelection = root().selection;
             search(root().searchTopics[root().selection - 2].keyword);
@@ -860,7 +861,7 @@ void App::back() {
     } else if (root().tab == Tab::Search && root().searchView != SearchView::Landing) {
         root().searchView = SearchView::Landing;
         root().selection = std::min(root().searchLandingSelection, root().searchTopics.size() + 1);
-        status_ = "搜索 · □ 输入关键词";
+        status_ = "搜索 · " BTN_SQUARE " 输入关键词";
     } else if (root().tab == Tab::Search) {
         setTab(Tab::Recommend);
         if (preferences_.tileHome()) openHub();
@@ -1251,7 +1252,7 @@ void App::finishPrefetch() {
             if (promoted) {
                 navigation_.current().error = jobTypedError_;
                 if (job_ == Job::Browse && hasBrowse()) browseState().error = jobTypedError_;
-                status_ = jobError_.empty() ? (network_error[0] ? network_error : "载入失败，△ 重试")
+                status_ = jobError_.empty() ? (network_error[0] ? network_error : "载入失败，" BTN_TRIANGLE " 重试")
                                             : jobError_;
             }
         }
@@ -1558,9 +1559,9 @@ void App::poll() {
                       ? "已取消"
                       : (navigation_.current().error ? errorMessage(navigation_.current().error)
                                 : (jobError_.empty()
-                                       ? (network_error[0] ? network_error : "载入失败，△ 重试")
+                                       ? (network_error[0] ? network_error : "载入失败，" BTN_TRIANGLE " 重试")
                                        : jobError_));
-        if (navigation_.current().playbackFailed && !transfer_cancel) status_ += " · △ 重试";
+        if (navigation_.current().playbackFailed && !transfer_cancel) status_ += " · " BTN_TRIANGLE " 重试";
         if (navigation_.current().error)
             logError(CLIENT_PATH("/last-error.txt"), navigation_.current().error);
         if (job_ == Job::Search)
@@ -1659,7 +1660,7 @@ void App::commitJob() {
         status_ = authStateMessage(authView_.state, preferences_.confirmWithCircle);
     } else if (job_ == Job::SearchTopics) {
         root().searchTopics = std::move(stagedSearchTopics_);
-        status_ = root().searchTopics.empty() ? "暂无热搜 · □ 输入关键词" : "热搜已更新";
+        status_ = root().searchTopics.empty() ? "暂无热搜 · " BTN_SQUARE " 输入关键词" : "热搜已更新";
     } else if (job_ == Job::Recommend) {
         const size_t oldSize = recommend_.size();
         if (jobPage_ > 1) appendUniqueCards(recommend_, stagedCards_);
@@ -1668,7 +1669,7 @@ void App::commitJob() {
         recommendPage_ = jobPage_ + 1;
         recommendHasMore_ = stagedHasMore_;
         status_ = "推荐 · 第 " + std::to_string(jobPage_) + " 页 · " +
-                  (recommendHasMore_ ? "↓ 到底继续加载" : "已加载完");
+                  (recommendHasMore_ ? BTN_DOWN " 到底继续加载" : "已加载完");
     } else if (job_ == Job::Hots) {
         const size_t oldSize = hots_.size();
         if (jobPage_ > 1) appendUniqueCards(hots_, stagedCards_);
@@ -1677,7 +1678,7 @@ void App::commitJob() {
         hotsPage_ = jobPage_ + 1;
         hotsHasMore_ = stagedHasMore_;
         status_ = "热门 · 第 " + std::to_string(jobPage_) + " 页 · " +
-                  (hotsHasMore_ ? "↓ 到底继续加载" : "已加载完");
+                  (hotsHasMore_ ? BTN_DOWN " 到底继续加载" : "已加载完");
     } else if (job_ == Job::Search) {
         if (stagedSearchGeneration_ != searchGeneration_) {
             job_ = Job::None;
@@ -1692,14 +1693,14 @@ void App::commitJob() {
 
         status_ = search_.empty() ? "没有找到相关视频" :
                   "搜索：" + root().query + " · 已载入 " + std::to_string(search_.size()) + " 条" +
-                      (searchHasMore_ ? " · ↓ 继续" : "");
+                      (searchHasMore_ ? " · " BTN_DOWN " 继续" : "");
     } else if (job_ == Job::Detail) {
         detailState().detail = std::move(stagedDetail_);
         detailState().loaded = true;
         detailState().part = 0;
         for (size_t i = 0; i < detailState().detail.pages.size(); ++i)
             if (detailState().detail.pages[i].cid == detailState().detail.card.cid) detailState().part = i;
-        status_ = "视频详情 · " + std::string(preferences_.confirmButton()) + " 播放 · R 评论 · □ 稍后观看";
+        status_ = "视频详情 · " + std::string(preferences_.confirmButton()) + " 播放 · " BTN_R " 评论 · " BTN_SQUARE " 稍后观看";
     } else if (job_ == Job::Comments) {
         if (jobCommentNext_ == 0) commentsState().items = std::move(stagedComments_);
         else commentsState().items.insert(commentsState().items.end(), stagedComments_.begin(), stagedComments_.end());
@@ -1707,7 +1708,7 @@ void App::commitJob() {
         commentsState().end = stagedCommentsEnd_;
         status_ = commentsState().items.empty() ? "暂无评论" :
                   "评论 · " + std::to_string(commentsState().items.size()) + " 条" +
-                      (commentsState().end ? " · 已加载完" : " · R 加载更多");
+                      (commentsState().end ? " · 已加载完" : " · " BTN_R " 加载更多");
     } else if (job_ == Job::Play || job_ == Job::CommunityPlay) {
         if (job_ == Job::Play) {
             playbackCard_ = jobCard_;

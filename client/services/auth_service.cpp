@@ -1,4 +1,5 @@
 #include "auth_service.hpp"
+#include "../button_icons.hpp"
 #include "../bilibili.h"
 #include "../api/wiliwili/bilibili/api.h"
 #include "../third_party/qrcodegen/qrcodegen.h"
@@ -17,13 +18,13 @@ const char *authStateMessage(AuthState state, bool confirmWithCircle) {
     case AuthState::WaitingConfirm:
         return "已扫码 · 请在手机上确认登录";
     case AuthState::QrExpired:
-        return "二维码已过期 · △ 刷新";
+        return "二维码已过期 · " BTN_TRIANGLE " 刷新";
     case AuthState::SignedIn:
         return "已登录";
     case AuthState::SessionExpired:
-        return confirmWithCircle ? "登录已失效 · ○ 重新扫码" : "登录已失效 · × 重新扫码";
+        return confirmWithCircle ? "登录已失效 · " BTN_CIRCLE " 重新扫码" : "登录已失效 · " BTN_CROSS " 重新扫码";
     default:
-        return confirmWithCircle ? "未登录 · ○ 扫码登录" : "未登录 · × 扫码登录";
+        return confirmWithCircle ? "未登录 · " BTN_CIRCLE " 扫码登录" : "未登录 · " BTN_CROSS " 扫码登录";
     }
 }
 Result<AuthView> AuthService::restore() {

@@ -1,4 +1,5 @@
 #include "localization.hpp"
+#include "button_icons.hpp"
 
 namespace pspapp {
 const char* text(TextId id, Locale locale) {
@@ -20,7 +21,7 @@ std::string formatText(TextId id, Locale locale, std::initializer_list<TextArg> 
 }
 
 const char* buttonGlyph(ControllerButton button) {
-    return button == ControllerButton::Circle ? "○" : "×";
+    return button == ControllerButton::Circle ? BTN_CIRCLE : BTN_CROSS;
 }
 
 const char* localeCode(Locale locale) {

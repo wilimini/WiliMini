@@ -264,6 +264,7 @@ add_library(wili_client_objects OBJECT
     client/third_party/qrcodegen/qrcodegen.c
     client/ui.cpp
     client/bitmap_font.cpp
+    client/button_icons.cpp
     client/pinyin_ime.cpp
     client/title_font.cpp
     client/bilibili.c
