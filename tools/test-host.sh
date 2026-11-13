@@ -27,6 +27,9 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     tests/psp_io_test.c client/psp_io.c -o "$out/psp-io-test"
 "$out/psp-io-test"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Iclient -Itests/power_stubs \
+    tests/playback_power_test.cpp -o "$out/playback-power-test"
+"$out/playback-power-test"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror \
     tests/bitmap_font_io_test.cpp client/bitmap_font.cpp \
     -Wl,--wrap=fopen -Wl,--wrap=fseek -Wl,--wrap=fread -o "$out/bitmap-font-io-test"

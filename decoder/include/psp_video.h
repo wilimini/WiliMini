@@ -70,6 +70,9 @@ typedef struct {
     const PspVideoPresenter *presenter; /* NULL preserves diagnostic display */
     int start_paused;
     const PspVideoSettings *settings;
+    /* Optional host cancellation flag; remains valid until play returns.
+     * Publish with an atomic store. Controller thread owns source cancellation. */
+    const volatile int *cancel_requested;
 } PspVideoOptions;
 typedef enum {
     PSP_VIDEO_STAGE_NONE, PSP_VIDEO_STAGE_SETUP, PSP_VIDEO_STAGE_LOG,
@@ -88,6 +91,9 @@ typedef struct {
     int64_t seek_ms;
     int seek_paused;
     int quality_requested;
+    /* Negative when ME teardown could not establish safe firmware restoration.
+     * This error survives cancellation; the host must not permit suspend. */
+    int cleanup_error;
     PspVideoSettings settings;
 } PspVideoResult;
 int psp_video_play(const PspVideoOptions *options, PspVideoResult *result);
