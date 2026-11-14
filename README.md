@@ -114,13 +114,42 @@ flowchart LR
 
 ## 界面截图
 
-<p align="center">
-  <img src="docs/screenshots/home.png" alt="首页" width="480">
-  <img src="docs/screenshots/pgc.png" alt="番剧列表" width="480">
-  <img src="docs/screenshots/video-detail.png" alt="视频详情" width="480">
-  <img src="docs/screenshots/settings-light.png" alt="设置（浅色主题）" width="480">
-  <img src="docs/screenshots/settings.png" alt="设置（深色主题）" width="480">
-</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/home-recommended-light.jpg" alt="首页推荐（经典浅色）" width="480"><br>首页推荐（经典浅色）</td>
+    <td align="center" width="50%"><img src="docs/screenshots/home-popular-light.jpg" alt="热门视频（经典浅色）" width="480"><br>热门视频（经典浅色）</td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/search-results-light.jpg" alt="搜索结果" width="480"><br>搜索结果</td>
+    <td align="center" width="50%"><img src="docs/screenshots/pgc-light.jpg" alt="番剧列表" width="480"><br>番剧列表</td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/pgc-episodes-light.jpg" alt="番剧分集" width="480"><br>番剧分集</td>
+    <td align="center" width="50%"><img src="docs/screenshots/search-pinyin-light.jpg" alt="内置拼音输入法" width="480"><br>内置拼音输入法</td>
+  </tr>
+</table>
+
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/settings-light.jpg" alt="设置（浅色主题）" width="480"><br>设置（浅色主题）</td>
+    <td align="center" width="50%"><img src="docs/screenshots/settings-dark.jpg" alt="设置（深色主题）" width="480"><br>设置（深色主题）</td>
+  </tr>
+</table>
+
+磁贴与 Metro 界面
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/home-tiles-dark.jpg" alt="磁贴主页" width="480"><br>磁贴主页</td>
+    <td align="center" width="50%"><img src="docs/screenshots/home-metro-dark.jpg" alt="Metro 推荐列表" width="480"><br>Metro 推荐列表</td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/account-metro-dark.jpg" alt="Metro 我的页面" width="480"><br>Metro 我的页面</td>
+    <td align="center" width="50%"><img src="docs/screenshots/comments-metro-dark.jpg" alt="Metro 评论列表" width="480"><br>Metro 评论列表</td>
+  </tr>
+</table>
 
 # 安装
 
