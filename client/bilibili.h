@@ -65,6 +65,12 @@ int bili_finish_playback(BiliPlayback *playback);
 int network_init(void);
 int network_connect(void);
 int network_ready(void);
+/* Power callback publishes state only; callback thread applies APCTL disconnect. */
+void network_set_suspended(int suspended);
+void network_poll_power(void);
+/* Requests from an earlier connection lifetime must fail even after wake. */
+unsigned network_generation(void);
+int network_interrupted(unsigned generation);
 const char *network_progress_message(void);
 void network_progress_reset(void);
 int network_has_profile(void);

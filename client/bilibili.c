@@ -20,6 +20,7 @@
 #include <pspwlan.h>
 #include <curl/curl.h>
 #include "http_transport.h"
+#include "network_power.h"
 #include "http_buffer.h"
 #include <unistd.h>
 #include <pspiofilemgr.h>
@@ -98,6 +99,35 @@ int bili_parse_stream(const char *text,BiliStream *out) {
 }
 #ifndef HOST_TEST
 static int initialized;
+static NetworkPower network_power;
+unsigned network_generation(void) {
+    return network_power_generation(&network_power);
+}
+int network_interrupted(unsigned generation) {
+    return network_power_interrupted(&network_power, generation);
+}
+void network_set_suspended(int suspended) {
+    network_power_set_suspended(&network_power, suspended);
+}
+void network_poll_power(void) {
+    if (!__atomic_load_n(&initialized, __ATOMIC_ACQUIRE)) return;
+    unsigned generation = network_generation();
+    if (generation == __atomic_load_n(&network_power.disconnected_generation, __ATOMIC_RELAXED)) return;
+    static unsigned requested_generation;
+    int state = 0;
+    int ret = sceNetApctlGetState(&state);
+    if (ret < 0) return;
+    if (state == PSP_NET_APCTL_STATE_DISCONNECTED) {
+        network_power_disconnected(&network_power, generation);
+        WLOG_I(WLC_NET, "Wi-Fi disconnected for sleep; reconnect on next request");
+    } else if (requested_generation != generation) {
+        /* APCTL disconnect is asynchronous. Keep the stack and live handles
+         * allocated; their owners observe interruption and clean up normally. */
+        ret = sceNetApctlDisconnect();
+        requested_generation = generation;
+        if (ret < 0) WLOG_E(WLC_NET, "Wi-Fi suspend disconnect failed: %08x", ret);
+    }
+}
 enum { NET_IDLE, NET_CONNECTING, NET_AUTHENTICATING, NET_GETTING_IP,
        NET_SIGNING, NET_RECOMMEND, NET_FALLBACK, NET_REQUEST, NET_PLAYURL, NET_VIDEO_SOURCE, NET_DETAIL, NET_PARTS, NET_COMMENTS, NET_RELATION, NET_PROGRESS };
 static volatile int network_phase;
@@ -233,9 +263,9 @@ int network_init(void) {
     psp_dns_init();
     http_share_init();
     transport=curl_easy_init();if(!transport)return -1;
-    initialized=1;return 0;
+    __atomic_store_n(&initialized,1,__ATOMIC_RELEASE);return 0;
 }
-int network_ready(void){int state=0;return initialized && sceNetApctlGetState(&state)>=0 && state==PSP_NET_APCTL_STATE_GOT_IP;}
+int network_ready(void){int state=0;return initialized && !network_interrupted(network_generation()) && sceNetApctlGetState(&state)>=0 && state==PSP_NET_APCTL_STATE_GOT_IP;}
 #ifdef BILI_DEVICE_LIVE
 static void network_report(void) {
     SceNetApctlInfo info;
@@ -274,6 +304,11 @@ void network_remember_profile(void) {
     }
 }
 int network_connect(void) {
+    unsigned generation = network_generation();
+    if (network_interrupted(generation)) {
+        snprintf(network_error,sizeof(network_error),"Wi-Fi is suspended");
+        return -1;
+    }
     if(network_ready()){
 #ifdef BILI_DEVICE_LIVE
         network_report();
@@ -283,7 +318,7 @@ int network_connect(void) {
     network_phase=NET_CONNECTING;
     int profile=network_has_profile();
     if(profile && sceNetApctlConnect(profile)>=0){
-        for(int n=0;n<200&&!transfer_cancel;++n){
+        for(int n=0;n<200&&!transfer_cancel&&!network_interrupted(generation);++n){
             if(network_ready()){
 #ifdef BILI_DEVICE_LIVE
                 network_report();
@@ -319,6 +354,7 @@ typedef struct {
     size_t text_capacity; /* Nonzero for a response that grows on demand. */
     int drop_on;          /* Filter data.ugc_season out of the body as it arrives. */
     BiliJsonDrop drop;
+    unsigned power_generation;
     CURL *handle; /* Set while transferring; supplies the Content-Length hint. */
 } Sink;
 static int stream_cache_write(BiliStreamCache *stream,const char *data,size_t bytes);
@@ -327,7 +363,7 @@ static void stream_profile_http(CURL *c,BiliStreamCache *s);
 #endif
 static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
     Sink *s=ctx;size_t bytes=size*count,stored=bytes;
-    int cancelled=s->cancel?*s->cancel:transfer_cancel;
+    int cancelled=(s->cancel?*s->cancel:transfer_cancel) || network_interrupted(s->power_generation);
     if(cancelled || s->used>s->limit || bytes>s->limit-s->used){
         WLOG_E(WLC_NET,"write_data abort: cancelled=%d used=%zu bytes=%zu limit=%zu",
                cancelled,(size_t)s->used,bytes,(size_t)s->limit);
@@ -368,7 +404,8 @@ static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
 static int progress(void *ctx,curl_off_t total,curl_off_t now,curl_off_t up,curl_off_t done){
     Sink *s=ctx;(void)now;(void)up;(void)done;
     transfer_total_kb=total>0?total/1024:0;
-    return s&&s->cancel?*s->cancel:transfer_cancel;
+    return (s&&s->cancel?*s->cancel:transfer_cancel) ||
+           (s && network_interrupted(s->power_generation));
 }
 
 /* Timings are cumulative from transfer start, in milliseconds. Never log URLs,
@@ -392,6 +429,21 @@ static void http_timing(CURL *curl, const char *kind) {
 }
 
 static int request(const char *url,Sink *sink) {
+    sink->power_generation = network_generation();
+    if (network_interrupted(sink->power_generation)) {
+        if (sink->response) sink->response->failure = BILI_HTTP_DISCONNECTED;
+        return -1;
+    }
+    /* Both cached handles are serialized by the UI worker. Never destroy them
+     * from the power callback while curl may still be using them. */
+    static unsigned api_generation, transport_generation;
+    unsigned *generation = sink->response ? &api_generation : &transport_generation;
+    CURL **cached = sink->response ? &api_transport : &transport;
+    if (*generation != sink->power_generation) {
+        curl_easy_cleanup(*cached);
+        *cached = NULL;
+        *generation = sink->power_generation;
+    }
     if (!sink->cancel) network_phase=playback_address_request(url)?NET_PLAYURL:strstr(url,"/x/web-interface/nav")?NET_SIGNING:
         strstr(url,"/wbi/index/top/feed/rcmd")?NET_RECOMMEND:
         strstr(url,"/x/web-interface/popular")?NET_FALLBACK:
@@ -482,6 +534,7 @@ static int request(const char *url,Sink *sink) {
         sink->response->status=(int)status;
         sink->response->transport_code=(int)r;
         if((sink->cancel&&*sink->cancel) || transfer_cancel)sink->response->failure=BILI_HTTP_CANCELLED;
+        else if(network_interrupted(sink->power_generation))sink->response->failure=BILI_HTTP_DISCONNECTED;
         else if(r!=CURLE_OK){if(sink->response->failure!=BILI_HTTP_MEMORY)sink->response->failure=BILI_HTTP_TRANSPORT;}
         else if(status!=200)sink->response->failure=BILI_HTTP_STATUS;
     }
@@ -492,9 +545,10 @@ static int request(const char *url,Sink *sink) {
                           (int)r,curl_easy_strerror(r),status,(size_t)sink->used,(size_t)sink->limit,url);
     if(sink->response)bili_http_transport_release(c);
     if(headers)curl_slist_free_all(headers);
-    if(r!=CURLE_OK || status!=200){
+    if(network_interrupted(sink->power_generation) || r!=CURLE_OK || status!=200){
         if (sink->cancel) return -1; /* Overlay failures stay local to their request. */
         if((sink->cancel&&*sink->cancel) || transfer_cancel)snprintf(network_error,sizeof(network_error),"Cancelled");
+        else if(network_interrupted(sink->power_generation))snprintf(network_error,sizeof(network_error),"Wi-Fi disconnected");
         else snprintf(network_error,sizeof(network_error),"HTTP %ld: %s",status,detail[0]?detail:curl_easy_strerror(r));
         return -1;
     }return 0;
@@ -622,6 +676,7 @@ struct BiliStreamCache {
     SceUID fd;
     int disk;
     volatile unsigned available, base;
+    unsigned power_generation;
     volatile int cancelled, complete, failed, reads_interrupted;
     char error[160];
     SceUID io_lock, wake, thread;
@@ -660,6 +715,7 @@ struct BiliRangeStream {
     volatile unsigned base, available;
     unsigned restart_offset;
     unsigned generation;
+    unsigned power_generation;
     volatile int cancelled, failed, complete, restart, reads_interrupted;
     char error[160];
     SceUID lock, wake, space, sized, thread;
@@ -746,7 +802,7 @@ static size_t range_write_data(char *data, size_t size, size_t count, void *opaq
     size_t bytes = size * count;
     size_t written = 0;
     while (written < bytes) {
-        if (transfer_cancel) return 0;
+        if (transfer_cancel || network_interrupted(stream->power_generation)) return 0;
         sceKernelWaitSema(stream->lock, 1, NULL);
         if (transfer_cancel || stream->cancelled || stream->failed ||
             transfer->generation != stream->generation) {
@@ -778,7 +834,7 @@ static size_t range_write_data(char *data, size_t size, size_t count, void *opaq
         if (written < bytes) {
             SceUInt timeout = 100000;
             while (sceKernelWaitSema(stream->space, 1, &timeout) < 0) {
-                if (transfer_cancel || stream->cancelled || stream->failed) return 0;
+                if (network_interrupted(stream->power_generation) || transfer_cancel || stream->cancelled || stream->failed) return 0;
                 timeout = 100000;
             }
         }
@@ -801,7 +857,7 @@ static size_t range_transfer_header(char *data, size_t size, size_t count, void 
 static int range_progress(void *opaque, curl_off_t total, curl_off_t now, curl_off_t up, curl_off_t done) {
     (void)total; (void)now; (void)up; (void)done;
     BiliRangeStream *stream = opaque;
-    return (transfer_cancel || stream->cancelled || stream->failed || stream->restart) ? 1 : 0;
+    return (network_interrupted(stream->power_generation) || transfer_cancel || stream->cancelled || stream->failed || stream->restart) ? 1 : 0;
 }
 
 static struct curl_slist *range_headers(void) {
@@ -857,7 +913,7 @@ static int range_download_thread(SceSize args, void *argp) {
     }
     for (;;) {
         sceKernelWaitSema(stream->lock, 1, NULL);
-        if (transfer_cancel) stream->cancelled = 1;
+        if (transfer_cancel || network_interrupted(stream->power_generation)) stream->cancelled = 1;
         if (stream->cancelled || stream->failed) {
             sceKernelSignalSema(stream->lock, 1);
             sceKernelSignalSema(stream->wake, 1);
@@ -880,7 +936,7 @@ static int range_download_thread(SceSize args, void *argp) {
 
         int moved = 0;
         int successful = 0;
-        for (int attempt = 0; attempt < stream->url_count && !moved; ++attempt) {
+        for (int attempt = 0; attempt < stream->url_count && !moved && !network_interrupted(stream->power_generation); ++attempt) {
             const char *url = stream->urls[url_index];
             if (!url[0]) break;
             RangeTransfer transfer = {.stream = stream, .generation = generation,
@@ -925,7 +981,7 @@ static int range_download_thread(SceSize args, void *argp) {
             sceKernelSignalSema(stream->lock, 1);
             continue;
         }
-        if (transfer_cancel) stream->cancelled = 1;
+        if (transfer_cancel || network_interrupted(stream->power_generation)) stream->cancelled = 1;
         if (stream->cancelled) {
             sceKernelSignalSema(stream->lock, 1);
             break;
@@ -953,7 +1009,7 @@ static int range_read_at(void *opaque, int64_t offset, void *buffer, int bytes) 
     uint64_t last_change = sceKernelGetSystemTimeWide();
     for (;;) {
         sceKernelWaitSema(stream->lock, 1, NULL);
-        if (stream->cancelled || stream->failed || stream->reads_interrupted) {
+        if (network_interrupted(stream->power_generation) || stream->cancelled || stream->failed || stream->reads_interrupted) {
             sceKernelSignalSema(stream->lock, 1);
             return -1;
         }
@@ -1052,6 +1108,7 @@ static int range_start(const BiliMediaUrl *media, const char *label,
     snprintf(stream->label, sizeof(stream->label), "%s", label ? label : "media");
     stream->lock = stream->wake = stream->space = stream->sized = stream->thread = -1;
     stream->capacity = BILI_RANGE_CACHE_BYTES;
+    stream->power_generation = network_generation();
     stream->ring = malloc(stream->capacity);
     if (!stream->ring) {
         snprintf(error, error_size, "range_start_alloc_buffer");
@@ -1094,7 +1151,7 @@ fail:
 static int range_wait(BiliRangeStream *stream, int64_t deadline, int64_t *size,
                       char *error, size_t error_size) {
     int sized = 0;
-    while (!transfer_cancel && (int64_t)sceKernelGetSystemTimeWide() < deadline) {
+    while (!transfer_cancel && !network_interrupted(stream->power_generation) && (int64_t)sceKernelGetSystemTimeWide() < deadline) {
         SceUInt timeout = 100000;
         if (sceKernelWaitSema(stream->sized, 1, &timeout) >= 0) {
             sized = 1;
@@ -1102,9 +1159,9 @@ static int range_wait(BiliRangeStream *stream, int64_t deadline, int64_t *size,
         }
         if (stream->failed) break;
     }
-    if (!sized || transfer_cancel || stream->size <= 0 ||
+    if (!sized || network_interrupted(stream->power_generation) || transfer_cancel || stream->size <= 0 ||
         (unsigned long long)stream->size > STREAM_MAX_BYTES || stream->expected == 0) {
-        if (transfer_cancel) stream->cancelled = 1;
+        if (transfer_cancel || network_interrupted(stream->power_generation)) stream->cancelled = 1;
         snprintf(error, error_size, "range_wait media=%s reason=%.120s", stream->label,
                  transfer_cancel ? "cancelled" : stream->error[0] ? stream->error : "size_timeout");
         return -1;
@@ -1214,7 +1271,7 @@ static int stream_cache_write(BiliStreamCache *s,const char *data,size_t bytes) 
     if(bytes>s->prof.max_chunk)s->prof.max_chunk=(unsigned)bytes;
 #endif
     for(;;){
-        if(s->cancelled || s->failed)return -1;
+        if(network_interrupted(s->power_generation) || s->cancelled || s->failed)return -1;
 #if BILI_STREAM_PROFILE
         uint64_t lock_begin=sceKernelGetSystemTimeWide();
 #endif
@@ -1310,7 +1367,7 @@ static int stream_read_at(void *opaque,int64_t offset,void *buffer,int bytes) {
 #endif
     unsigned last_available=s->available,last_change=sceKernelGetSystemTimeLow();
     while(s->available<target){
-        if(s->cancelled || s->failed || s->complete || s->reads_interrupted)return -1;
+        if(network_interrupted(s->power_generation) || s->cancelled || s->failed || s->complete || s->reads_interrupted)return -1;
         SceUInt timeout=100000;
         sceKernelWaitSemaCB(s->wake,1,&timeout);
 #if BILI_STREAM_PROFILE
@@ -1464,6 +1521,7 @@ static void stream_report(BiliStreamCache *s) {
 static int stream_begin(const BiliStream *stream,BiliPlayback *out) {
     BiliStreamCache *s=&active_stream;
     memset(s,0,sizeof(*s));
+    s->power_generation=network_generation();
     s->io_lock=s->wake=s->thread=s->fd=-1;
 #if BILI_STREAM_PROFILE
     s->prof.started_us=sceKernelGetSystemTimeWide();
