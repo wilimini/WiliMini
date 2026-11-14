@@ -156,6 +156,15 @@ flowchart LR
   </tr>
 </table>
 
+视频播放与弹幕
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/playback-danmaku-settings.jpg" alt="视频播放与弹幕设置" width="480"><br>弹幕设置</td>
+    <td align="center" width="50%"><img src="docs/screenshots/playback-danmaku.jpg" alt="视频播放与弹幕显示" width="480"><br>视频播放与弹幕显示</td>
+  </tr>
+</table>
+
 # 安装
 
 ### PSP
