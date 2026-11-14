@@ -7,6 +7,7 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 #include <pspiofilemgr.h>
+#include <pspthreadman.h>
 #include <psppower.h>
 #include "services/update_curl.hpp"
 #include <wili_log.h>
@@ -131,6 +132,31 @@ uint64_t packageFreeBytes() {
     if (sceIoDevctl(dev, 0x02425818, &p, sizeof(p), nullptr, 0) < 0) return 0; // unknown: not enforced
     return static_cast<uint64_t>(info.freeClusters) * info.sectorCount * info.sectorSize;
 }
+// Runs the tasks at the same time: the first on the calling thread, the others on new
+// threads (same stack size as the update worker). Falls back to running a task inline if
+// its thread cannot start.
+void runParallelTasks(std::vector<std::function<void()>>& tasks) {
+    std::vector<SceUID> threads;
+    std::vector<std::function<void()>*> jobs(tasks.size());
+    for (size_t i = 1; i < tasks.size(); ++i) {
+        jobs[i] = &tasks[i];
+        SceUID id = sceKernelCreateThread("wili_update_dl", [](SceSize, void* arg) -> int {
+            try { (**static_cast<std::function<void()>**>(arg))(); } catch (...) { WLOG_E(WLC_CLIENT, "download worker threw"); }
+            return 0;
+        }, 0x24, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
+        if (id >= 0 && sceKernelStartThread(id, sizeof(jobs[i]), &jobs[i]) >= 0) {
+            threads.push_back(id);
+            continue;
+        }
+        if (id >= 0) sceKernelDeleteThread(id);
+        tasks[i]();
+    }
+    tasks[0]();
+    for (SceUID id : threads) {
+        sceKernelWaitThreadEnd(id, nullptr);
+        sceKernelDeleteThread(id);
+    }
+}
 } // namespace
 
 void App::openUpdate() {
@@ -147,6 +173,7 @@ void App::openUpdate() {
             return true;
         };
         policy.freeSpace = packageFreeBytes;
+        policy.runParallel = runParallelTasks;
         update_.reset(new UpdateController(CLIENT_ROOT, updateVersion_, [](const volatile bool* cancel) {
             return std::unique_ptr<UpdateTransport>(new CurlUpdateTransport(CLIENT_PATH("/cacert.pem"), cancel));
         }, policy));
