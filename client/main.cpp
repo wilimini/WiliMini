@@ -17,6 +17,7 @@
 #include "app.hpp"
 #include "ui.hpp"
 #include "playback_osd.hpp"
+#include "playback_power.hpp"
 #include "storage_paths.h"
 #include <psp_runtime.h>
 #include <wili_log.h>
@@ -39,6 +40,21 @@ volatile int exiting = 0;
 // Set while psp_video_play owns the main thread. Its cleanup can wait on a
 // stalled decoder/audio/ME worker, so a cooperative HOME exit would never run.
 volatile int playbackActive = 0;
+volatile int sleepRequested = 0;
+bool sleepPending() { return __atomic_load_n(&sleepRequested, __ATOMIC_ACQUIRE) != 0; }
+int powerCallback(int, int flags, void*) {
+    if (flags & (PSP_POWER_CB_RESUMING | PSP_POWER_CB_RESUME_COMPLETE)) {
+        network_set_suspended(0);
+        __atomic_store_n(&sleepRequested, 0, __ATOMIC_RELEASE);
+    } else if (flags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING)) {
+        // The player controller observes this flag and owns cancellation.
+        // Do not call source callbacks or wait for workers in a power callback.
+        __atomic_store_n(&sleepRequested, 1, __ATOMIC_RELEASE);
+        network_set_suspended(1);
+    }
+    return 0;
+}
+
 constexpr uint64_t kForcedExitWaitUs = 5000000;  // unmeasured first guess
 
 void logMemory(const char* phase) {
@@ -73,7 +89,16 @@ int exitCallback(int, int, void*) {
 int callbackThread(SceSize, void*) {
     const int id = sceKernelCreateCallback("wiliwili_exit", exitCallback, nullptr);
     sceKernelRegisterExitCallback(id);
-    sceKernelSleepThreadCB();
+    const int powerId = sceKernelCreateCallback("wili_power", powerCallback, nullptr);
+    const int slot = powerId >= 0 ? scePowerRegisterCallback(-1, powerId) : powerId;
+    if (slot < 0) WLOG_E(WLC_CLIENT, "power callback registration failed: %08x", slot);
+    while (!exiting) {
+        sceKernelDelayThreadCB(100000);
+        if (!exiting && !playbackActive) network_poll_power();
+    }
+    if (slot >= 0) scePowerUnregisterCallback(slot);
+    if (powerId >= 0) sceKernelDeleteCallback(powerId);
+    if (id >= 0) sceKernelDeleteCallback(id);
     return 0;
 }
 
@@ -124,9 +149,10 @@ int main(int argc, char** argv) {
     WLOG_I(WLC_CLIENT, "root=%s", root);
     WLOG_I(WLC_CLIENT, "heap_kib=%d default_rgb_frames=%d",
            BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
-    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x1000,
+    const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x4000,
                                                PSP_THREAD_ATTR_USER, nullptr);
-    if (callback >= 0) sceKernelStartThread(callback, 0, nullptr);
+    const int callbackStart = callback >= 0 ? sceKernelStartThread(callback, 0, nullptr) : callback;
+    if (callbackStart < 0) WLOG_E(WLC_CLIENT, "callback thread failed: %08x", callbackStart);
     scePowerSetClockFrequency(333, 333, 166);
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
@@ -201,9 +227,19 @@ int main(int argc, char** argv) {
     int64_t repeatAt = 0;
 
     while (!exiting) {
+        if (sleepPending()) {
+            sceKernelDelayThreadCB(10000);
+            continue;
+        }
         app.poll();
 
         if (app.playbackReady()) {
+            PlaybackPowerLock powerLock;
+            if (powerLock.result() < 0) {
+                WLOG_E(WLC_PLAYER, "cannot protect playback from suspend: %08x", powerLock.result());
+                app.finishPlayback(powerLock.result(), 0, 0, 0, PSP_VIDEO_STAGE_SETUP, app.playbackStartMs());
+                continue;
+            }
             ui_render(app);
             ui_prepare_playback();
             if (pspapp::defaultPlaybackBufferFrames() == 2) {
@@ -235,21 +271,32 @@ int main(int argc, char** argv) {
             settings.quality_count = app.playback().quality_count;
             for (int i = 0; i < settings.quality_count; ++i) settings.qualities[i] = app.playback().qualities[i];
             options.settings = &settings;
+            options.cancel_requested = &sleepRequested;
             PspVideoResult result{};
             playbackActive = 1;
             const int error = psp_video_play(&options, &result);
             playbackActive = 0;
+            if (result.cleanup_error < 0) {
+                powerLock.retain();
+                WLOG_E(WLC_PLAYER, "ME cleanup failed: %d; suspend lock retained, reboot required", result.cleanup_error);
+            }
             logMemory("after_playback");
             ui_resume();
             osd.reset();
             app.setPlayerSettings(result.settings);
-            if (result.quality_requested && !exiting && error >= 0)
+            if (result.quality_requested && !exiting && !sleepPending() && error >= 0)
                 app.seekPlayback(result.position_ms, result.seek_paused != 0, result.quality_requested);
-            else if (result.seek_requested && !exiting && error >= 0)
+            else if (result.seek_requested && !exiting && !sleepPending() && error >= 0)
                 app.seekPlayback(result.seek_ms, result.seek_paused != 0);
             else app.finishPlayback(error, result.frames, result.eof, result.cancelled, result.error_stage, result.position_ms);
+            if (sleepPending()) {
+                network_poll_power();
+                ui_render(app);
+                if (result.cleanup_error >= 0)
+                    WLOG_I(WLC_PLAYER, "playback stopped for sleep at %lld ms", (long long)result.position_ms);
+            }
             previous = ~0u;
-            continue;
+            continue; // Release the application power lock after all teardown.
         }
 
         SceCtrlData pad{};
@@ -445,6 +492,9 @@ int main(int argc, char** argv) {
 
     transfer_cancel = 1;
     app.shutdown();
+    exiting = 1;
+    if (callbackStart >= 0) sceKernelWaitThreadEnd(callback, nullptr);
+    if (callback >= 0) sceKernelDeleteThread(callback);
     network_close();
     ui_shutdown();
     logMemory("shutdown");

@@ -34,6 +34,8 @@ static void wait_presentation(uint64_t deadline);
 #endif
 #endif
 static volatile int quit_requested;
+static const volatile int *host_cancel_requested;
+static int playback_cleanup_error;
 #include "psp_video.h"
 #include "playback_controls.h"
 static PlaybackControls controls;
@@ -109,6 +111,10 @@ static int video_cancel_thread(SceSize size, void *arg) {
     (void)size; (void)arg;
     uint64_t last_tick = 0;
     while (poll_controller && !quit_requested) {
+        if (host_cancel_requested && __atomic_load_n(host_cancel_requested, __ATOMIC_ACQUIRE)) {
+            psp_video_stop();
+            break;
+        }
         SceCtrlData pad = {0};
         sceCtrlPeekBufferPositive(&pad, 1);
         /* Playback has no button input for long stretches; reset the idle
@@ -1226,6 +1232,7 @@ done:
         int shutdown = me_render_shutdown();
         playback_diagnostic("me_shutdown_end", shutdown);
         if (shutdown < 0) {
+            playback_cleanup_error = shutdown;
             /* Keep the source/decode error when shutdown only reports the
              * already-failed pipeline. */
             if (ret >= 0) { ret = shutdown; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
@@ -1376,6 +1383,15 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         (options->path && strlen(options->path)>1017) ||
         (options->source && (!options->source->read_at || (options->source->size==0 || options->source->size < -1))) ||
         (options->audio_source && (!options->audio_source->read_at || (options->audio_source->size==0 || options->audio_source->size < -1)))) return -1;
+    if (options->cancel_requested && __atomic_load_n(options->cancel_requested, __ATOMIC_ACQUIRE)) {
+        if (result) {
+            *result = (PspVideoResult){.cancelled = 1, .position_ms = options->start_ms};
+            if (options->settings) result->settings = *options->settings;
+        }
+        return 0;
+    }
+    host_cancel_requested = options->cancel_requested;
+    playback_cleanup_error = 0;
     presenter = options->presenter && options->presenter->present ? options->presenter : NULL;
     output_pixel_format = options->rgb_pixel_format;
     rgb_pixel_bytes = output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565 ? 2 : 4;
@@ -1411,7 +1427,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     } else video_source = options->path;
     video_log_root = options->log_root;
     client_playback = 1;
-    quit_requested = 0;
+    quit_requested = host_cancel_requested && __atomic_load_n(host_cancel_requested, __ATOMIC_ACQUIRE);
     profile_requested = options->diagnostic_profile != 0;
     current_run_path[0] = 0;
     results_enabled = wili_log_files() || profile_requested;
@@ -1456,7 +1472,10 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
         sceKernelWaitThreadEnd(control, NULL);
         sceKernelDeleteThread(control);
     }
-    if (result) *result = (PspVideoResult){.error = quit_requested ? 0 : ret, .cancelled = quit_requested,
+    if (playback_cleanup_error < 0) video_stage = PSP_VIDEO_STAGE_CLEANUP;
+    const int final_error = playback_cleanup_error < 0 ? playback_cleanup_error : quit_requested ? 0 : ret;
+    if (result) *result = (PspVideoResult){.error = final_error,
+        .cancelled = quit_requested && playback_cleanup_error >= 0, .cleanup_error = playback_cleanup_error,
         .frames = stats.total_frames, .eof = stats.eof && !quit_requested, .error_stage = video_stage,
         .position_ms = playback_position_us / 1000, .seeks = playback_seeks};
     if (result) {
@@ -1471,7 +1490,8 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     client_playback = 0;
     video_io_source = NULL;
     audio_io_source = NULL;
-    return quit_requested ? 0 : ret;
+    host_cancel_requested = NULL;
+    return final_error;
 }
 void psp_video_stop(void) {
     quit_requested = 1;

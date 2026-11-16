@@ -19,13 +19,14 @@ struct BiliLiveStream {
   unsigned char *ring;
   char *url;
   uint64_t written, position[2];
+  unsigned power_generation;
   volatile int cancelled, ended, failed;
   SceUID lock, thread;
   LiveReader readers[2];
   PspVideoSource sources[2];
 };
 static int live_cancelled(BiliLiveStream *s) {
-  return s->cancelled || transfer_cancel;
+  return network_interrupted(s->power_generation) || s->cancelled || transfer_cancel;
 }
 static size_t live_write(char *data, size_t size, size_t count, void *opaque) {
   BiliLiveStream *s = opaque;
@@ -164,6 +165,7 @@ int bili_prepare_live_playback(const char *url, BiliPlayback *out) {
   if (!s)
     return -1;
   s->lock = s->thread = -1;
+  s->power_generation = network_generation();
   s->ring = malloc(LIVE_CAPACITY);
   s->url = strdup(url);
   if (!s->ring || !s->url) {

@@ -270,6 +270,7 @@ add_library(wili_client_objects OBJECT
     client/bilibili.c
     client/live_stream.c
     client/json.c
+    client/psp_io.c
     client/psp_clock.c
     client/psp_select.c
     client/psp_dns.c
@@ -347,6 +348,7 @@ foreach(client_target wili_mini wili_mini_1000)
     target_link_options(${client_target} PRIVATE
         -G0
         "-Wl,-Map,${CMAKE_BINARY_DIR}/${client_target}.map"
+        -Wl,--wrap=_lseek
         -Wl,--wrap=gethostbyname
         -Wl,--wrap=time
         -Wl,--wrap=gettimeofday
