@@ -1,6 +1,8 @@
 #include "update_install.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <sys/stat.h>
 #include "wili_update_swap.h"
 #include <vector>
@@ -19,6 +21,18 @@ const char* updateResultName(UpdateResult r) {
     }
     return "?";
 }
+bool UpdateTransport::getRange(const std::string& url, uint64_t from, uint64_t to,
+                               const std::function<bool(int, const std::string&)>& onHeaders,
+                               const std::function<bool(const void*, size_t)>& onData) {
+    uint64_t remaining = to == UINT64_MAX ? UINT64_MAX : to - from + 1;
+    return get(url, from, onHeaders, [&](const void* d, size_t n) {
+        size_t take = (size_t)std::min<uint64_t>(n, remaining);
+        if (take && !onData(d, take)) return false;
+        remaining -= take;
+        return remaining != 0; // reached `to`: abort the rest of the body
+    });
+}
+
 uint64_t requiredFreeSpace(uint64_t zipSize) { return zipSize * 2 + (1u << 20); }
 
 namespace {
@@ -123,8 +137,138 @@ const UpdateSource kUpdateSources[2] = {
 };
 #endif
 
+// ---- Multi-connection download ----
+namespace {
+std::string segmentPath(const std::string& part, unsigned n, unsigned i) {
+    return part + "." + std::to_string(n) + "." + std::to_string(i);
+}
+// Deletes segment files of every layout except `keepN` (0 = delete all).
+void removeSegments(const std::string& part, unsigned keepN) {
+    for (unsigned n = 2; n <= BILI_UPDATE_MAX_CONNECTIONS; ++n) {
+        if (n == keepN) continue;
+        for (unsigned i = 1; i < n; ++i) std::remove(segmentPath(part, n, i).c_str());
+    }
+}
+enum class ParallelResult { Complete, Fallback, Cancelled, Network, Storage };
+struct ParallelState {
+    std::mutex m;
+    bool stop = false, cancelled = false, fallback = false, storage = false;
+    uint64_t done = 0;
+};
+struct Segment { uint64_t start = 0, len = 0, have = 0; std::string path; };
+
+// Appends `from` to `to` and deletes `from`.
+bool appendFile(const std::string& from, const std::string& to) {
+    FILE* in = std::fopen(from.c_str(), "rb");
+    if (!in) return false;
+    FILE* out = std::fopen(to.c_str(), "ab");
+    bool ok = out != nullptr;
+    std::vector<char> buf(32768);
+    while (ok) {
+        size_t n = std::fread(buf.data(), 1, buf.size(), in);
+        if (n == 0) break;
+        ok = std::fwrite(buf.data(), 1, n, out) == n;
+    }
+    ok = ok && !std::ferror(in);
+    std::fclose(in);
+    if (out) ok = std::fclose(out) == 0 && ok;
+    if (ok) std::remove(from.c_str());
+    return ok;
+}
+
+ParallelResult downloadParallel(UpdateTransport& t, const ReleaseInfo& info, const std::string& partPath,
+                                const ProgressFn& progress, const DownloadOptions& opt, unsigned requested) {
+    const uint64_t size = info.zipSize;
+    const uint64_t seg = (size + requested - 1) / requested;
+    const unsigned n = (unsigned)((size + seg - 1) / seg);
+    std::vector<Segment> segs(n);
+    for (unsigned i = 0; i < n; ++i) {
+        segs[i].start = i * seg;
+        segs[i].len = std::min<uint64_t>(seg, size - segs[i].start);
+        segs[i].path = i ? segmentPath(partPath, n, i) : partPath;
+    }
+    removeSegments(partPath, n); // leftovers of a build with a different connection count
+    uint64_t prefix = 0;
+    fileSize(partPath, prefix);
+    // A prefix past segment 0 (single-connection resume, interrupted merge) is continued alone.
+    if (prefix > segs[0].len) return ParallelResult::Fallback;
+    segs[0].have = prefix;
+    for (unsigned i = 1; i < n; ++i) {
+        uint64_t h = 0;
+        fileSize(segs[i].path, h);
+        if (h > segs[i].len) { std::remove(segs[i].path.c_str()); h = 0; }
+        segs[i].have = h;
+    }
+
+    ParallelState st;
+    for (auto& s : segs) st.done += s.have;
+    std::vector<std::unique_ptr<UpdateTransport>> owned;
+    std::vector<std::function<void()>> tasks;
+    for (unsigned i = 0; i < n; ++i) {
+        if (segs[i].have >= segs[i].len) continue;
+        UpdateTransport* tr = &t;
+        if (!tasks.empty()) {
+            owned.push_back(opt.makeTransport());
+            if (!owned.back()) return ParallelResult::Fallback;
+            tr = owned.back().get();
+        }
+        tasks.push_back([&, i, tr] {
+            Segment& s = segs[i];
+            const uint64_t offset = s.start + s.have, want = s.len - s.have;
+            uint64_t got = 0;
+            FILE* f = nullptr;
+            auto fail = [&](bool ParallelState::*flag) {
+                std::lock_guard<std::mutex> lock(st.m);
+                if (flag) st.*flag = true;
+                st.stop = true;
+                return false;
+            };
+            tr->getRange(info.zipUrl, offset, s.start + s.len - 1,
+                [&](int status, const std::string& cr) {
+                    ResumeAction a = resumeAction(status, cr, offset, size);
+                    if (a == ResumeAction::Restart) return fail(&ParallelState::fallback); // no Range support
+                    if (a != ResumeAction::Append) return false;                           // HTTP error: resume later
+                    f = std::fopen(s.path.c_str(), s.have ? "ab" : "wb");
+                    return f ? true : fail(&ParallelState::storage);
+                },
+                [&](const void* d, size_t len) {
+                    if (got + len > want) return false; // longer than requested
+                    {
+                        std::lock_guard<std::mutex> lock(st.m);
+                        if (st.stop) return false;
+                    }
+                    if (std::fwrite(d, 1, len, f) != len) return fail(&ParallelState::storage);
+                    got += len;
+                    std::lock_guard<std::mutex> lock(st.m);
+                    st.done += len;
+                    if (progress && !progress(UpdateProgress{st.done, size})) {
+                        st.cancelled = st.stop = true;
+                        return false;
+                    }
+                    return true;
+                });
+            if (f && std::fclose(f) != 0) fail(&ParallelState::storage);
+        });
+    }
+    if (tasks.size() == 1) tasks[0]();
+    else if (!tasks.empty()) opt.runParallel(tasks);
+
+    if (st.cancelled) return ParallelResult::Cancelled;
+    if (st.storage) return ParallelResult::Storage;
+    if (st.fallback) return ParallelResult::Fallback;
+    for (auto& s : segs) {
+        uint64_t h = 0;
+        if (!fileSize(s.path, h) || h != s.len) return ParallelResult::Network; // short: keep for resume
+    }
+    for (unsigned i = 1; i < n; ++i)
+        if (!appendFile(segs[i].path, partPath)) return ParallelResult::Storage;
+    return ParallelResult::Complete;
+}
+} // namespace
+
 UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const std::string& partPath,
-                             const std::string& zipPath, const ProgressFn& progress) {
+                             const std::string& zipPath, const ProgressFn& progress,
+                             const DownloadOptions* options) {
     std::string expected = info.sha256;
     if (expected.empty()) {
         std::string sums;
@@ -132,38 +276,53 @@ UpdateResult downloadRelease(UpdateTransport& t, const ReleaseInfo& info, const 
         if (r != UpdateResult::Ok) return r;
         if (!findChecksum(sums, info.zipName, expected)) return UpdateResult::BadRelease;
     }
-    for (int attempt = 0; attempt < 2; ++attempt) { // second pass: server refused our range, start over
-        uint64_t have = 0;
-        fileSize(partPath, have);
-        if (info.zipSize && have > info.zipSize) { std::remove(partPath.c_str()); have = 0; }
-        bool restart = false, aborted = false, openFailed = false;
-        FILE* f = nullptr;
-        UpdateProgress prog{have, info.zipSize};
-        if (have == 0 || have != info.zipSize) {
-            bool ok = t.get(info.zipUrl, have,
-                [&](int status, const std::string& cr) {
-                    if (have == 0) {
-                        if (status != 200) return false;
-                    } else {
-                        ResumeAction a = resumeAction(status, cr, have, info.zipSize);
-                        if (a == ResumeAction::Fail) return false;
-                        if (a == ResumeAction::Restart) { restart = true; return false; }
-                    }
-                    f = std::fopen(partPath.c_str(), have ? "ab" : "wb");
-                    openFailed = f == nullptr;
-                    return f != nullptr;
-                },
-                [&](const void* d, size_t n) {
-                    if (info.zipSize && prog.done + n > info.zipSize) return false; // longer than advertised
-                    if (std::fwrite(d, 1, n, f) != n) return false;
-                    prog.done += n;
-                    if (progress && !progress(prog)) { aborted = true; return false; }
-                    return true;
-                });
-            if (f) { std::fflush(f); std::fclose(f); }
-            if (aborted) return UpdateResult::Cancelled;
-            if (restart) { std::remove(partPath.c_str()); continue; }
-            if (!ok) return openFailed ? UpdateResult::Storage : UpdateResult::Network; // .part kept for resume
+    unsigned connections = 1;
+    if (options && options->runParallel && options->makeTransport && info.zipSize)
+        connections = (unsigned)std::min<uint64_t>(std::min<unsigned>(options->connections, BILI_UPDATE_MAX_CONNECTIONS),
+                                                    info.zipSize / std::max<uint64_t>(options->minSegment, 1));
+    bool parallel = connections >= 2;
+    // Extra passes: the server refused our range (start over), or refused parallel Range requests.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (parallel) {
+            ParallelResult pr = downloadParallel(t, info, partPath, progress, *options, connections);
+            if (pr == ParallelResult::Fallback) { removeSegments(partPath, 0); parallel = false; continue; }
+            if (pr == ParallelResult::Cancelled) return UpdateResult::Cancelled;
+            if (pr == ParallelResult::Storage) return UpdateResult::Storage;
+            if (pr == ParallelResult::Network) return UpdateResult::Network;
+        } else {
+            removeSegments(partPath, 0);
+            uint64_t have = 0;
+            fileSize(partPath, have);
+            if (info.zipSize && have > info.zipSize) { std::remove(partPath.c_str()); have = 0; }
+            bool restart = false, aborted = false, openFailed = false;
+            FILE* f = nullptr;
+            UpdateProgress prog{have, info.zipSize};
+            if (have == 0 || have != info.zipSize) {
+                bool ok = t.get(info.zipUrl, have,
+                    [&](int status, const std::string& cr) {
+                        if (have == 0) {
+                            if (status != 200) return false;
+                        } else {
+                            ResumeAction a = resumeAction(status, cr, have, info.zipSize);
+                            if (a == ResumeAction::Fail) return false;
+                            if (a == ResumeAction::Restart) { restart = true; return false; }
+                        }
+                        f = std::fopen(partPath.c_str(), have ? "ab" : "wb");
+                        openFailed = f == nullptr;
+                        return f != nullptr;
+                    },
+                    [&](const void* d, size_t n) {
+                        if (info.zipSize && prog.done + n > info.zipSize) return false; // longer than advertised
+                        if (std::fwrite(d, 1, n, f) != n) return false;
+                        prog.done += n;
+                        if (progress && !progress(prog)) { aborted = true; return false; }
+                        return true;
+                    });
+                if (f) { std::fflush(f); std::fclose(f); }
+                if (aborted) return UpdateResult::Cancelled;
+                if (restart) { std::remove(partPath.c_str()); continue; }
+                if (!ok) return openFailed ? UpdateResult::Storage : UpdateResult::Network; // .part kept for resume
+            }
         }
         uint64_t size = 0;
         if (!fileSize(partPath, size) || (info.zipSize && size != info.zipSize)) {

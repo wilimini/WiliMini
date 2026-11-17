@@ -1,5 +1,6 @@
 #include "update_curl.hpp"
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <curl/curl.h>
@@ -58,6 +59,12 @@ int onProgress(void* u, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
 bool CurlUpdateTransport::get(const std::string& url, uint64_t rangeFrom,
                               const std::function<bool(int, const std::string&)>& onHeaders,
                               const std::function<bool(const void*, size_t)>& onData) {
+    return getRange(url, rangeFrom, UINT64_MAX, onHeaders, onData);
+}
+
+bool CurlUpdateTransport::getRange(const std::string& url, uint64_t rangeFrom, uint64_t rangeTo,
+                                   const std::function<bool(int, const std::string&)>& onHeaders,
+                                   const std::function<bool(const void*, size_t)>& onData) {
     if (url.compare(0, 8, "https://") != 0) return false; // never plain HTTP
     CURL* h = curl_easy_init();
     if (!h) return false;
@@ -88,8 +95,9 @@ bool CurlUpdateTransport::get(const std::string& url, uint64_t rangeFrom,
     curl_easy_setopt(h, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(h, CURLOPT_XFERINFOFUNCTION, onProgress);
     curl_easy_setopt(h, CURLOPT_XFERINFODATA, &c);
-    if (rangeFrom) {
+    if (rangeFrom || rangeTo != UINT64_MAX) {
         std::string r = std::to_string(rangeFrom) + "-";
+        if (rangeTo != UINT64_MAX) r += std::to_string(rangeTo);
         curl_easy_setopt(h, CURLOPT_RANGE, r.c_str()); // curl copies the string
     }
     error_.clear();

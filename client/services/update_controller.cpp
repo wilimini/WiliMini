@@ -77,12 +77,15 @@ void UpdateController::runInstall() {
     set(UpdateState::Downloading);
     auto transport = factory_(&cancel_);
     const std::string part = root_ + "/update.part", zip = root_ + "/update.zip";
+    DownloadOptions options;
+    options.makeTransport = [this] { return factory_(&cancel_); };
+    options.runParallel = policy_.runParallel;
     UpdateResult r = downloadRelease(*transport, info, part, zip, [this](const UpdateProgress& p) {
         std::lock_guard<std::mutex> lock(mutex_);
         snap_.done = p.done;
         if (p.total) snap_.total = p.total;
         return !cancel_;
-    });
+    }, &options);
     if (r == UpdateResult::Cancelled || cancel_) { set(UpdateState::Available); return; } // .part kept for resume
     if (r != UpdateResult::Ok) { set(UpdateState::Failed, describe(r, transport.get())); return; }
     set(UpdateState::Staging);
