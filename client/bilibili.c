@@ -21,7 +21,7 @@
 #include <curl/curl.h>
 #include "http_transport.h"
 #include "network_power.h"
-#include "http_buffer.h"
+#include "http_spill.h"
 #include <unistd.h>
 #include <pspiofilemgr.h>
 #endif
@@ -351,7 +351,8 @@ typedef struct {
     BiliHttpResponse *response;
     int flush;
     const char *form;
-    size_t text_capacity; /* Nonzero for a response that grows on demand. */
+    int spill_on;         /* Dynamic RAM buffer with optional storage spill fallback. */
+    BiliHttpSpill spill;
     int drop_on;          /* Filter data.ugc_season out of the body as it arrives. */
     BiliJsonDrop drop;
     unsigned power_generation;
@@ -364,9 +365,52 @@ static void stream_profile_http(CURL *c,BiliStreamCache *s);
 static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
     Sink *s=ctx;size_t bytes=size*count,stored=bytes;
     int cancelled=(s->cancel?*s->cancel:transfer_cancel) || network_interrupted(s->power_generation);
-    if(cancelled || s->used>s->limit || bytes>s->limit-s->used){
-        WLOG_E(WLC_NET,"write_data abort: cancelled=%d used=%zu bytes=%zu limit=%zu",
-               cancelled,(size_t)s->used,bytes,(size_t)s->limit);
+    if(cancelled){
+        WLOG_E(WLC_NET,"write_data abort: cancelled=1 used=%zu bytes=%zu limit=%zu",
+               (size_t)s->used,bytes,(size_t)s->limit);
+        return 0;
+    }
+    if(s->spill_on){
+        /* No Content-Length hint when filtering: the stored body is far smaller. */
+        if(!s->used && s->handle && !s->drop_on){
+            curl_off_t length=-1;
+            if(curl_easy_getinfo(s->handle,CURLINFO_CONTENT_LENGTH_DOWNLOAD_T,&length)==CURLE_OK)
+                bili_http_spill_hint(&s->spill,(long long)length);
+        }
+        const int was_spilled=s->spill.spilled;
+        int spill_err=0;
+        if(s->drop_on){
+            char filtered[4096+BILI_JSON_DROP_SLACK];
+            for(size_t off=0;off<bytes;){
+                size_t slice=bytes-off;
+                if(slice>4096)slice=4096;
+                size_t out_len=bili_json_drop(&s->drop,data+off,slice,filtered);
+                if(out_len && bili_http_spill_write(&s->spill,filtered,out_len)<0){
+                    spill_err=1;
+                    break;
+                }
+                off+=slice;
+            }
+        } else {
+            if(bili_http_spill_write(&s->spill,data,bytes)<0)spill_err=1;
+        }
+        if(spill_err){
+            WLOG_E(WLC_NET,"write_data abort: spill write failed reason=%d used=%zu bytes=%zu limit=%zu",
+                   s->spill.failure,(size_t)s->spill.used,bytes,(size_t)s->limit);
+            if(s->response)
+                s->response->failure=s->spill.failure==BILI_SPILL_IO?BILI_HTTP_IO:BILI_HTTP_MEMORY;
+            return 0;
+        }
+        if(!was_spilled && s->spill.spilled)
+            WLOG_I(WLC_NET,"http response exceeded %zu KiB; streaming to storage",
+                   s->spill.ram_limit/1024);
+        s->used=s->spill.used;
+        transfer_kb=s->used/1024;
+        return bytes;
+    }
+    if(s->used>s->limit || bytes>s->limit-s->used){
+        WLOG_E(WLC_NET,"write_data abort: cancelled=0 used=%zu bytes=%zu limit=%zu",
+               (size_t)s->used,bytes,(size_t)s->limit);
         return 0;
     }
     if(s->stream){if(stream_cache_write(s->stream,data,bytes)<0){
@@ -376,22 +420,7 @@ static size_t write_data(char *data,size_t size,size_t count,void *ctx) {
         WLOG_E(WLC_NET,"write_data abort: fwrite failed errno=%d used=%zu bytes=%zu",errno,(size_t)s->used,bytes);
         return 0;}}
     else {
-        /* No Content-Length hint when filtering: the stored body is far smaller. */
-        if (s->text_capacity && !s->used && s->handle && !s->drop_on) {
-            curl_off_t length = -1;
-            if (curl_easy_getinfo(s->handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length) == CURLE_OK)
-                bili_http_buffer_hint(&s->text, &s->text_capacity, (long long)length, s->limit);
-        }
-        const size_t room = s->drop_on ? bytes + BILI_JSON_DROP_SLACK : bytes;
-        if (s->text_capacity && bili_http_buffer_reserve(&s->text, &s->text_capacity,
-                                                        s->used + room, s->limit) < 0) {
-            WLOG_E(WLC_NET,"write_data abort: buffer reserve failed used=%zu bytes=%zu limit=%zu",
-                   (size_t)s->used,bytes,(size_t)s->limit);
-            if (s->response) s->response->failure = BILI_HTTP_MEMORY;
-            return 0;
-        }
-        if (s->drop_on) stored = bili_json_drop(&s->drop, data, bytes, s->text + s->used);
-        else memcpy(s->text + s->used, data, bytes);
+        memcpy(s->text + s->used, data, bytes);
         s->text[s->used + stored] = 0;
     }
     if(s->flush && fflush(s->file)!=0){
@@ -461,7 +490,7 @@ static int request(const char *url,Sink *sink) {
     transfer_kb=transfer_total_kb=0;
     /* Video detail embeds the whole uploader collection (data.ugc_season, up to
      * MBs) that nothing reads; drop it while receiving. See json_drop.h. */
-    if(sink->text_capacity && strstr(url,"/x/web-interface/view?")){
+    if(sink->spill_on && strstr(url,"/x/web-interface/view?")){
         sink->drop_on=1;memset(&sink->drop,0,sizeof(sink->drop));
     }
     curl_easy_setopt(c,CURLOPT_URL,url);
@@ -535,7 +564,10 @@ static int request(const char *url,Sink *sink) {
         sink->response->transport_code=(int)r;
         if((sink->cancel&&*sink->cancel) || transfer_cancel)sink->response->failure=BILI_HTTP_CANCELLED;
         else if(network_interrupted(sink->power_generation))sink->response->failure=BILI_HTTP_DISCONNECTED;
-        else if(r!=CURLE_OK){if(sink->response->failure!=BILI_HTTP_MEMORY)sink->response->failure=BILI_HTTP_TRANSPORT;}
+        else if(r!=CURLE_OK){
+            if(sink->response->failure!=BILI_HTTP_MEMORY && sink->response->failure!=BILI_HTTP_IO)
+                sink->response->failure=BILI_HTTP_TRANSPORT;
+        }
         else if(status!=200)sink->response->failure=BILI_HTTP_STATUS;
     }
 #if BILI_STREAM_PROFILE
@@ -567,20 +599,45 @@ static int get_file(const char *url,const char *path,size_t max,unsigned long lo
     if(r<0)remove(tmp);
     return r;
 }
-int bili_http_get_response_cancel(const char *url,BiliHttpResponse *out,size_t max_bytes,volatile int *cancel) {
+int bili_http_get_response_spill(const char *url,BiliHttpResponse *out,size_t ram_threshold,
+                                 size_t max_spill_bytes,volatile int *cancel) {
     if(!out)return -1;
     memset(out,0,sizeof(*out));
-    if(!url || max_bytes<2 || max_bytes>1024*1024){out->failure=BILI_HTTP_MEMORY;return -1;}
+    if(!url || ram_threshold<2 || ram_threshold>1024*1024 ||
+       (max_spill_bytes && (max_spill_bytes<ram_threshold || max_spill_bytes>BILI_HTTP_SPILL_LIMIT))){
+        out->failure=BILI_HTTP_MEMORY;return -1;
+    }
     if(cancel && (*cancel || !network_ready())) {out->failure=*cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
     if(!cancel && network_connect()<0){out->failure=transfer_cancel?BILI_HTTP_CANCELLED:BILI_HTTP_DISCONNECTED;return -1;}
-    size_t capacity = max_bytes + 1 < 4096 ? max_bytes + 1 : 4096;
-    char *text=calloc(1,capacity);
-    if(!text){out->failure=BILI_HTTP_MEMORY;return -1;}
-    Sink sink={.text=text,.limit=max_bytes,.response=out,.cancel=cancel,.text_capacity=capacity};
+    const char *spill_dir=NULL;
+    if(max_spill_bytes){
+        sceIoMkdir(CLIENT_PATH("/cache"),0777);
+        spill_dir=CLIENT_PATH("/cache");
+    }
+    Sink sink={.response=out,.cancel=cancel,.spill_on=1};
+    if(bili_http_spill_init(&sink.spill,ram_threshold,max_spill_bytes,spill_dir)<0){
+        out->failure=BILI_HTTP_MEMORY;return -1;
+    }
+    sink.limit=bili_http_spill_effective_limit(&sink.spill);
     int result=request(url,&sink);
-    if(result<0){free(sink.text);return -1;}
-    out->text=sink.text;
+    if(result<0){bili_http_spill_abort(&sink.spill);return -1;}
+    if(bili_http_spill_finish(&sink.spill)<0){
+        out->failure=BILI_HTTP_IO;
+        bili_http_spill_abort(&sink.spill);
+        return -1;
+    }
+    out->body_bytes=sink.spill.used;
+    out->spilled=sink.spill.spilled;
+    if(sink.spill.spilled){
+        snprintf(out->body_path,sizeof(out->body_path),"%s",sink.spill.path);
+        out->text=NULL;
+    } else {
+        out->text=sink.spill.text;
+    }
     return 0;
+}
+int bili_http_get_response_cancel(const char *url,BiliHttpResponse *out,size_t max_bytes,volatile int *cancel) {
+    return bili_http_get_response_spill(url,out,max_bytes,0,cancel);
 }
 int bili_http_get_response(const char *url,BiliHttpResponse *out,size_t max_bytes) {
     return bili_http_get_response_cancel(url,out,max_bytes,NULL);

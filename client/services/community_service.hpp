@@ -70,6 +70,8 @@ struct BrowsePage {
   BrowseRequest request;
   std::string title, description, nextCursor, nextAux, subtitle;
   std::vector<BrowseItem> items;
+  size_t episodeOffset = 0; // Global 0-based index of the first episode in this Season window.
+  size_t totalEpisodes = 0; // Total episodes in a windowed Season response (0 when unwindowed).
   bool hasMore = false;
   bool followed = false;
 };

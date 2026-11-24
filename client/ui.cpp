@@ -3468,12 +3468,13 @@ void drawPgcEpisodes(const pspapp::App& app) {
     std::vector<size_t> episodes;
     for (size_t i = 0; i < page.items.size(); ++i)
         if (page.items[i].next.kind == pspapp::BrowseKind::Episode) episodes.push_back(i);
+    const size_t totalEpisodes = page.totalEpisodes ? page.totalEpisodes : episodes.size();
     const bool synopsis = app.browseSelection() < page.items.size() &&
                           page.items[app.browseSelection()].next.kind == pspapp::BrowseKind::Text;
     drawText(12, 6, 0.9f, kText, page.title, 370);
     drawText(408, 10, 0.5f, kPink, page.followed ? "已追番" : "+ 追番", 60);
     drawText(12, 27, 0.5f, kTextDim, page.subtitle.empty()
-        ? "共" + std::to_string(episodes.size()) + "集" : page.subtitle, 456);
+        ? "共" + std::to_string(totalEpisodes) + "集" : page.subtitle, 456);
     fillRect(12, 43, 456, 1, kLine);
     drawText(12, 48, 0.5f, synopsis ? kTextDim : kPink, "分集", 36);
     drawText(60, 48, 0.5f, synopsis ? kPink : kTextDim, "简介", 36);
@@ -3485,9 +3486,11 @@ void drawPgcEpisodes(const pspapp::App& app) {
     const auto selected = std::find(episodes.begin(), episodes.end(), app.browseSelection());
     const size_t ordinal = selected == episodes.end() ? 0 : static_cast<size_t>(selected - episodes.begin());
     const size_t first = ordinal / 3 * 3;
+    const size_t globalFirst = page.episodeOffset + first;
+    const size_t globalLast = std::min(page.episodeOffset + std::min(first + 3, episodes.size()), totalEpisodes);
     drawText(370, 48, 0.5f, kTextDim,
-        std::to_string(episodes.empty() ? 0 : first + 1) + "–" + std::to_string(std::min(first + 3, episodes.size())) +
-        " / " + std::to_string(episodes.size()), 98);
+        std::to_string(episodes.empty() ? 0 : globalFirst + 1) + "–" + std::to_string(episodes.empty() ? 0 : globalLast) +
+        " / " + std::to_string(totalEpisodes), 98);
     if (episodes.empty()) drawText(12, 92, 0.7f, kTextDim, "暂无分集", 456);
     for (size_t n = first; n < std::min(first + 3, episodes.size()); ++n) {
         const auto& item = page.items[episodes[n]];

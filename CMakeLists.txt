@@ -258,6 +258,7 @@ add_library(wili_client_objects OBJECT
     client/services/auth_service.cpp
     client/services/search_service.cpp
     client/services/community_service.cpp
+    client/services/stream_json.cpp
     client/app_community.cpp
     client/localization.cpp
     "${CMAKE_BINARY_DIR}/generated/localization.generated.cpp"

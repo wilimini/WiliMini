@@ -1,13 +1,21 @@
 #pragma once
 #include "app_error.hpp"
+#include <cstddef>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace pspapp {
 struct HttpResponse {
     std::string body;
+    std::string bodyPath; // Temporary file on storage when response exceeded RAM threshold.
+    size_t bodyBytes = 0;
+    std::shared_ptr<const void> bodyFileGuard; // Deletes bodyPath when the last owner is destroyed.
     std::string cookies; // Login response only; never logged.
     AppError error;
+
+    bool spilled() const { return !bodyPath.empty(); }
+    static HttpResponse fromSpillFile(std::string path, size_t bytes, bool autoDelete = true);
 };
 class WifiManager {
   public:

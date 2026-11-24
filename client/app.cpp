@@ -12,6 +12,7 @@
 #include <ctime>
 #include <utility>
 
+#include <pspiofilemgr.h>
 #include <sys/stat.h>
 #include <wili_log.h>
 
@@ -349,6 +350,18 @@ void App::init() {
     applyLogPreferences(preferences_);
     hubOpen_ = preferences_.tileHome();
     std::remove((std::string(CLIENT_ROOT) + "/history.json.part").c_str());
+    if (const SceUID dir = sceIoDopen(CLIENT_PATH("/cache")); dir >= 0) {
+        SceIoDirent entry{};
+        const size_t prefixLen = std::strlen(BILI_HTTP_SPILL_PREFIX);
+        while (sceIoDread(dir, &entry) > 0) {
+            if (FIO_S_ISREG(entry.d_stat.st_mode) &&
+                std::strncmp(entry.d_name, BILI_HTTP_SPILL_PREFIX, prefixLen) == 0) {
+                std::remove((std::string(CLIENT_ROOT) + "/cache/" + entry.d_name).c_str());
+            }
+            std::memset(&entry, 0, sizeof(entry));
+        }
+        sceIoDclose(dir);
+    }
     history_ = loadLocal(CLIENT_PATH("/history.json"));
     later_ = loadLocal(CLIENT_PATH("/later.json"));
     searchHistory_ = loadSearchHistory();
@@ -1622,11 +1635,17 @@ void App::commitJob() {
                 frame.page.nextAux = stagedBrowse_.nextAux;
             } else {
                 const bool openingSeason = frame.page.items.empty() && stagedBrowse_.request.kind == BrowseKind::Season;
+                const int landing = seasonLanding_;
+                seasonLanding_ = 0;
                 frame.page = std::move(stagedBrowse_);
                 frame.selection = frame.page.items.empty() ? 0 : std::min(frame.selection, frame.page.items.size() - 1);
-                if (openingSeason)
+                if (openingSeason || landing > 0) {
                     for (size_t i = 0; i < frame.page.items.size(); ++i)
                         if (frame.page.items[i].next.kind == BrowseKind::Episode) { frame.selection = i; break; }
+                } else if (landing < 0) {
+                    for (size_t i = frame.page.items.size(); i > 0; --i)
+                        if (frame.page.items[i - 1].next.kind == BrowseKind::Episode) { frame.selection = i - 1; break; }
+                }
             }
             frame.error = {};
             status_ = frame.page.items.empty() ? "暂无内容" : frame.page.title;
