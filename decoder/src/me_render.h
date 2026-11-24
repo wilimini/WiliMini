@@ -41,7 +41,8 @@ static int me_render_start(void)
     int ret = rgb_start();
     if (ret == AVERROR(EBUSY)) playback_diagnostic("rgb_buffer_retained_busy", ret);
     if (ret < 0) return ret;
-    ret = mefp_start((int)output_pixel_format,
+    unsigned max_inflight = rgb_slots > 3 ? 3 : (rgb_slots > 1 ? rgb_slots - 1 : 1);
+    ret = mefp_start((int)output_pixel_format, max_inflight,
                      mefp_rgb_acquire_cb, mefp_rgb_publish_cb, mefp_rgb_release_cb);
     if (ret < 0) {
         rgb_close();
@@ -50,7 +51,7 @@ static int me_render_start(void)
     }
     return 0;
 #else
-    return mefp_start((int)output_pixel_format, NULL, NULL, NULL);
+    return mefp_start((int)output_pixel_format, 1, NULL, NULL, NULL);
 #endif
 }
 static int me_render_submit(const AVFrame *frame)

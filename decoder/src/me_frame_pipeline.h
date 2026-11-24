@@ -25,6 +25,7 @@ typedef struct {
 } MefpStats;
 
 int mefp_start(int output_format,
+               unsigned max_inflight_renders,
                MefpAcquireRgbFn acquire_cb,
                MefpPublishRgbFn publish_cb,
                MefpReleaseRgbFn release_cb);

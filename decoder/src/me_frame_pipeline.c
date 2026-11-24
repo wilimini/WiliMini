@@ -34,7 +34,7 @@
 
 #define MEFP_RING_DEPTH     8
 #define MEFP_FRAME_SLOTS    2
-#define MEFP_MAX_MBS        1600
+#define MEFP_MAX_MBS        1680
 #define MEFP_MAX_SLICES     8
 #define MEFP_MAX_MC_PARTS   15000
 #define MEFP_MAX_COEFFS     360000
@@ -206,6 +206,7 @@ static unsigned          mefp_render_head, mefp_render_tail;
 
 static int              mefp_running;
 static int              mefp_output_format;
+static unsigned         mefp_max_inflight_renders = 2;
 static MefpAcquireRgbFn mefp_acquire_cb;
 static MefpPublishRgbFn mefp_publish_cb;
 static MefpReleaseRgbFn mefp_release_cb;
@@ -1614,6 +1615,7 @@ static void mefp_hook_frame_end(const H264Context *h, int error)
  * ========================================================================= */
 
 int mefp_start(int output_format,
+               unsigned max_inflight_renders,
                MefpAcquireRgbFn acquire_cb,
                MefpPublishRgbFn publish_cb,
                MefpReleaseRgbFn release_cb)
@@ -1636,6 +1638,8 @@ int mefp_start(int output_format,
     mefp_stat_error = 0;
 
     mefp_output_format = output_format;
+    mefp_max_inflight_renders = max_inflight_renders >= 1 && max_inflight_renders <= 4
+        ? max_inflight_renders : 1;
     mefp_acquire_cb = acquire_cb;
     mefp_publish_cb = publish_cb;
     mefp_release_cb = release_cb;
@@ -1731,9 +1735,9 @@ int mefp_render_submit(const AVFrame *frame, int64_t pts, int hash_frame)
         return -1;
 
     mefp_poll_renders();
-    /* Keep at most 3 renders queued on ME so rgb_pacer receives frames promptly
+    /* Bound renders queued on ME so rgb_pacer receives frames promptly
      * and rgb_acquire() can never stall on unpublished completed renders. */
-    if (mefp_render_tail - mefp_render_head >= 3) {
+    if (mefp_render_tail - mefp_render_head >= mefp_max_inflight_renders) {
         MefpPendingRender *oldest = &mefp_renders[mefp_render_head & (MEFP_RING_DEPTH - 1)];
         int wret = mefp_wait_seq(oldest->seq);
         if (wret < 0) return wret;
