@@ -14,7 +14,7 @@ static int audio_playback_failed(void);
 static void *rgb_pixels;
 static int64_t rgb_pts[RGB_SLOTS], presentation_pts_us;
 static SceUID rgb_space = -1, rgb_ready = -1, rgb_thread = -1;
-static volatile unsigned rgb_produced, rgb_consumed;
+static volatile unsigned rgb_acquired, rgb_produced, rgb_consumed;
 static volatile int rgb_stop, rgb_error;
 static unsigned rgb_presented, rgb_dropped;
 static int64_t rgb_max_late_us, rgb_total_late_us;
@@ -101,7 +101,7 @@ static int rgb_start(void)
 {
     // A failed ME shutdown may still own the previous output allocation.
     if (rgb_pixels) return AVERROR(EBUSY);
-    rgb_produced = rgb_consumed = rgb_presented = rgb_dropped = 0;
+    rgb_acquired = rgb_produced = rgb_consumed = rgb_presented = rgb_dropped = 0;
     rgb_stop = rgb_error = rgb_startup_ready = rgb_seek_preview = 0;
     rgb_generation = 0;
     rgb_max_late_us = rgb_total_late_us = 0;
@@ -140,7 +140,7 @@ static int rgb_acquire(void)
         if (playback_seeking) return -114;
         SceUInt timeout = 100000;
         int ret = sceKernelWaitSema(rgb_space, 1, &timeout);
-        if (ret >= 0) return rgb_produced % rgb_slots;
+        if (ret >= 0) return (int)(rgb_acquired++ % rgb_slots);
         if ((unsigned)ret != 0x800201a8u) return ret;
     }
 }

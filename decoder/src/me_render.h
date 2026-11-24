@@ -25,6 +25,7 @@ static void mefp_rgb_publish_cb(int64_t pts)
 }
 static void mefp_rgb_release_cb(void)
 {
+    --rgb_acquired;
     sceKernelSignalSema(rgb_space, 1);
 }
 #endif
@@ -222,6 +223,7 @@ static int me_render_submit(const AVFrame *frame)
 #endif
     if (!me_frame) {
 #if PSP_AUDIO && PSP_RGB_PACE
+        --rgb_acquired;
         sceKernelSignalSema(rgb_space, 1);
 #endif
         return -1;
@@ -255,6 +257,7 @@ static int me_render_submit(const AVFrame *frame)
     if (!PSP_ME_RENDER_QUEUE && (!me_submitted || ret < 0)) playback_diagnostic("me_submit_end", ret);
     if (ret < 0) {
 #if PSP_AUDIO && PSP_RGB_PACE
+        --rgb_acquired;
         sceKernelSignalSema(rgb_space, 1);
 #endif
 #if !PSP_ME_RENDER_QUEUE
