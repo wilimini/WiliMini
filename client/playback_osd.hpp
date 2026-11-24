@@ -5,6 +5,7 @@
 #include "services/subtitles.hpp"
 #include "bitmap_font.hpp"
 #include "services/network.hpp"
+#include "ge_yuv_renderer.hpp"
 #include <pspkernel.h>
 #include <memory>
 #include <cstdlib>
@@ -40,7 +41,6 @@ private:
     struct Glyph { uint32_t cp; unsigned short u, v; unsigned char width, height, advance; };
     alignas(16) unsigned char atlas_[512 * 256]{};
     alignas(16) unsigned int palette_[256]{};
-    alignas(16) unsigned int yuvClut_[5][256]{};
     alignas(16) unsigned int commands_[16384]{};
     Glyph glyphs_[300]{};
     struct Comment {
@@ -63,7 +63,8 @@ private:
     void drawSubtitles(const PspVideoStatus& status);
     unsigned count_ = 0, page_ = 1;
     uint64_t lastDraw_ = 0;
-    bool haveFrame_ = false, stagedRgb565_ = false;
+    bool haveFrame_ = false;
+    GeYuvRenderer yuv_;
     std::string title_, seeking_, buffering_, qualityNames_[3];
     std::string menuLabels_[5], density_[3], on_, off_, noSubtitles_, display_;
     void icon(int x, int y, unsigned id);
@@ -72,7 +73,6 @@ private:
     void text(int x, int y, std::string_view text, unsigned color, int right = 464, int size = 16);
     void rectangle(int x, int y, int w, int h, unsigned color);
     void gradient(int y, int height, unsigned topAlpha, unsigned bottomAlpha);
-    void drawYuv420p(const PspVideoYuvFrame& frame);
     int draw(const void* pixels, PspVideoPixelFormat format, const PspVideoStatus& status);
 };
 }

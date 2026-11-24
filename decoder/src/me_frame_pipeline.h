@@ -3,38 +3,31 @@
 
 #include <stdint.h>
 
-struct AVFrame;
-
-typedef int (*MefpAcquireRgbFn)(void **out_pixels);
-typedef void (*MefpPublishRgbFn)(int64_t pts);
-typedef void (*MefpReleaseRgbFn)(void);
+/* Whole-frame SC (entropy decoding) <-> ME (reconstruction) H.264 pipeline.
+ * All functions run on the decoder thread, except mefp_seq_is_done(), which
+ * the presentation thread may call while playback is running. */
 
 typedef struct {
-    unsigned recon_frames;
-    unsigned fallback_frames;
-    unsigned render_submitted;
-    unsigned render_completed;
+    unsigned recon_frames;    /* frames reconstructed on ME */
+    unsigned fallback_frames; /* frames FFmpeg reconstructed on SC */
     unsigned intra_mbs;
     unsigned inter_mbs;
-    unsigned wait_us;
-    uint64_t capture_us;
-    uint64_t me_recon_us;
-    uint64_t me_render_us;
-    uint32_t frame_hash;
+    unsigned wait_us;         /* SC time spent waiting for ME */
+    uint64_t capture_us;      /* SC time spent capturing macroblocks */
     int error;
 } MefpStats;
 
-int mefp_start(int output_format,
-               unsigned max_inflight_renders,
-               MefpAcquireRgbFn acquire_cb,
-               MefpPublishRgbFn publish_cb,
-               MefpReleaseRgbFn release_cb);
-int mefp_render_submit(const struct AVFrame *frame, int64_t pts, int hash_frame);
-void mefp_poll_renders(void);
-uint32_t mefp_find_recon_seq(const uint8_t *y_plane);
+/* Starts the ME worker on the loaded bridge (Custom Core or MIST) and installs
+ * the FFmpeg hooks. */
+int mefp_start(void);
+/* Call once per decoded frame before presenting it. Returns the sequence
+ * number that must complete before its planes may be read, or 0 when the
+ * frame is already complete in memory. */
+uint32_t mefp_prepare_present(const uint8_t *y_plane);
 int mefp_seq_is_done(uint32_t seq);
-int mefp_take_sc_written(void);
+/* Waits for all queued ME work and releases held reference frames. */
 int mefp_drain(void);
+/* Stops the worker and removes the hooks. */
 int mefp_stop(void);
 void mefp_get_stats(MefpStats *out);
 

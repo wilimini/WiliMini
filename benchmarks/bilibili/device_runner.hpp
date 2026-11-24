@@ -55,7 +55,10 @@ int bilibiliBenchmark(FILE* configFile) {
                 options.source = &video.source;
                 options.audio_source = &audio.source;
                 options.log_root = logRoot.c_str();
-                options.rgb_buffer_frames = config.value("buffer_frames", 2);
+                options.buffer_frames = config.value("buffer_frames", 2);
+                // Native playback presents through the GE; the OSD shows only video here.
+                pspapp::PlaybackOsd osd("", pspapp::Preferences{});
+                options.presenter = osd.presenter();
                 options.diagnostic_profile = config.value("profile", false);
                 const auto before = mallinfo();
                 PspVideoResult result{};

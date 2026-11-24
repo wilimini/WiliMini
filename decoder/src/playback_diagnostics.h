@@ -5,7 +5,7 @@
 #include <psprtc.h>
 #include "build_diagnostics.h"
 #include <wili_log.h>
-#if PSP_ME_RENDER
+#if PSP_ME_PIPELINE
 #include "me_bridge.h"
 #include "me_diagnostics.h"
 #endif
@@ -20,7 +20,7 @@ static unsigned diagnostic_attempt;
 /* The loader chooses the bridge PRX from the user's setting; report what it started. */
 static const char *playback_me_backend_name(void)
 {
-#if PSP_ME_RENDER
+#if PSP_ME_PIPELINE
     switch (meLabBackend()) {
     case ME_BACKEND_MIST: return "mist";
     case ME_BACKEND_CUSTOM_CORE: return "custom-core";
@@ -39,7 +39,7 @@ static void playback_diagnostic(const char *stage, int result)
     fprintf(out, "checkpoint=%s result=%d uptime_us=%llu free_bytes=%u max_free_bytes=%u\n",
             stage, result, (unsigned long long)sceKernelGetSystemTimeWide(),
             (unsigned)sceKernelTotalFreeMemSize(), (unsigned)sceKernelMaxFreeMemSize());
-#if PSP_ME_RENDER
+#if PSP_ME_PIPELINE
     MeDiagnostics snapshot;
     int ret = meLabGetDiagnostics(&snapshot, sizeof(snapshot));
     if (ret == 0 && snapshot.version == ME_DIAGNOSTICS_VERSION) {
@@ -83,12 +83,12 @@ static void playback_diagnostic_begin(const char *run_path)
     fprintf(out, "diagnostics_schema=1\nbuild=%s\ncompiled_utc=%s\nbuild_type=%s\n"
             "model_id=%d\ndevkit_version=%08x\nattempt_in_process=%u\n"
             "device_local_time=%04u-%02u-%02uT%02u:%02u:%02u\nrtc_result=%d\n"
-            "backend=psp-native\nme_backend=%s\nme_render=%d me_dma=%d me_cache=%d me_full_cache=%d me_queue=%d\n",
+            "backend=psp-native\nme_backend=%s\nme_pipeline=%d\n",
             WILI_DIAGNOSTIC_BUILD, WILI_DIAGNOSTIC_COMPILED_UTC, WILI_DIAGNOSTIC_BUILD_TYPE,
             diagnostic_model, diagnostic_devkit, diagnostic_attempt,
             diagnostic_clock.year, diagnostic_clock.month, diagnostic_clock.day,
             diagnostic_clock.hour, diagnostic_clock.minute, diagnostic_clock.second, rtc_result,
-            playback_me_backend_name(), PSP_ME_RENDER, PSP_ME_DMA, PSP_ME_CACHE, PSP_ME_FULL_CACHE, PSP_ME_RENDER_QUEUE);
+            playback_me_backend_name(), PSP_ME_PIPELINE);
     fclose(out);
     playback_diagnostic("begin", 0);
 }

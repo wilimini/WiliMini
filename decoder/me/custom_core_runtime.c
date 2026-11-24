@@ -24,8 +24,6 @@ void meLibOnProcess(void)
 {
     meLibDcacheWritebackInvalidateAll();
     meLibIcacheInvalidateAll();
-    /* Enable ME external interrupt delivery so VME/DMAC completion waits work. */
-    meLibExceptionHandlerInit(0);
     core->state = CORE_READY;
     core_sync();
     for (;;) {
@@ -99,9 +97,7 @@ int customCoreStart(uint32_t entry, CustomCoreBoot *boot)
     memcpy((void *)ME_HANDLER_BASE, &__start__me_section, size);
     sceKernelDcacheWritebackInvalidateAll();
     sceKernelIcacheInvalidateAll();
-    /* Release both ME (bit 2) and VME (bit 4) from reset; customCoreRestore
-     * restores saved_reset verbatim when returning control to firmware. */
-    HW_SYS_RESET_ENABLE = saved_reset & ~0x14u;
+    HW_SYS_RESET_ENABLE = saved_reset;
     core_sync();
     sceKernelCpuResumeIntrWithSync(intr);
     return 0;

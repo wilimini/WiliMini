@@ -1,6 +1,5 @@
 #ifndef PSP_AUDIO_PLAYBACK_H
 #define PSP_AUDIO_PLAYBACK_H
-#if PSP_AUDIO
 #include <pspaudio.h>
 #include <libavutil/samplefmt.h>
 
@@ -269,22 +268,8 @@ static int audio_start_workers(const char *run_path)
     source_memory("audio_prefill");
     if (audio.error) return audio.error;
     if (audio.stop || quit_requested || !audio.produced) return -103;
-#if PSP_AUDIO_VERIFY
-    if (run_path[0]) { /* empty when results are off */
-        char pcm_path[192];
-        snprintf(pcm_path, sizeof(pcm_path), "%s/audio-first.pcm", run_path);
-        FILE *pcm = fopen(pcm_path, "wb");
-        if (!pcm) return -106;
-        size_t count = 8 * AUDIO_SAMPLES * 2;
-        size_t written = fwrite(audio.pcm, sizeof(int16_t), count, pcm);
-        fclose(pcm);
-        if (written != count) return -107;
-    }
-#endif
     audio.epoch_us = playback_now_us() + audio_start_delay_us;
-#if PSP_RGB_PACE
-    rgb_startup_ready = 1;
-#endif
+    pacer_startup_ready = 1;
     return sceKernelSignalSema(audio.go, 1);
 }
 
@@ -323,7 +308,7 @@ static int audio_open(const char *source, const PspVideoSource *stream,
     if (ret < 0) return ret;
     for (unsigned i = 0; i < audio.format->nb_streams; ++i)
         if ((int)i != audio.stream) audio.format->streams[i]->discard = AVDISCARD_ALL;
-    const AVCodec *decoder = avcodec_find_decoder_by_name(PSP_AUDIO_FIXED ? "aac_fixed" : "aac");
+    const AVCodec *decoder = avcodec_find_decoder_by_name("aac");
     if (!decoder) return AVERROR_DECODER_NOT_FOUND;
     audio.codec = avcodec_alloc_context3(decoder);
     if (!audio.codec) return AVERROR(ENOMEM);
@@ -364,7 +349,7 @@ static void audio_close(int drain)
             if (!playback_is_paused()) active_wait += 100000;
             if (active_wait >= 10000000) { audio.error = -104; break; }
             // Native presentation has joined before final audio draining.
-            if (presenter) present_video(NULL, output_pixel_format);
+            if (presenter) present_video(NULL, PSP_VIDEO_PIXEL_FORMAT_YUV420P);
         }
     }
     audio.stop = 1;
@@ -449,19 +434,14 @@ static void audio_report(FILE *out)
     fprintf(out, "  \"audio_video_lead_us\": %u,\n", PSP_AUDIO_VIDEO_LEAD_US);
     fprintf(out, "  \"audio_eof\": %d,\n  \"audio_produced_blocks\": %u,\n"
             "  \"audio_consumed_blocks\": %u,\n", audio.input_eof, audio.produced, audio.consumed);
-    fprintf(out, "  \"audio_present_immediate\": %d,\n", PSP_AUDIO_PRESENT_IMMEDIATE);
     fprintf(out, "  \"audio_rest_samples\": %d,\n", audio.rest_samples);
     fprintf(out, "  \"audio_dma_staging_blocks\": 4,\n");
     fprintf(out, "  \"audio_first_pts_us\": %lld,\n  \"audio_epoch_us\": %llu,\n",
             (long long)audio.first_pts_us, (unsigned long long)audio.epoch_us);
-#if PSP_RGB_PACE
-    fprintf(out, "  \"rgb_pace\": 1,\n  \"rgb_presented\": %u,\n  \"rgb_dropped\": %u,\n",
-            rgb_presented, rgb_dropped);
-    fprintf(out, "  \"rgb_nearest_pts\": %d,\n", PSP_RGB_NEAREST_PTS);
-    fprintf(out, "  \"rgb_max_late_us\": %lld,\n  \"rgb_mean_late_us\": %lld,\n",
-            (long long)rgb_max_late_us, (long long)(rgb_presented ? rgb_total_late_us / rgb_presented : 0));
-#endif
-    fprintf(out, "  \"audio_enabled\": 1,\n  \"audio_fixed\": %d,\n", PSP_AUDIO_FIXED);
+    fprintf(out, "  \"presented\": %u,\n  \"dropped\": %u,\n", pacer_presented, pacer_dropped);
+    fprintf(out, "  \"present_max_late_us\": %lld,\n  \"present_mean_late_us\": %lld,\n",
+            (long long)pacer_max_late_us,
+            (long long)(pacer_presented ? pacer_total_late_us / pacer_presented : 0));
     fprintf(out, "  \"audio_rate\": %d,\n  \"audio_source_channels\": %d,\n"
                  "  \"audio_error\": %d,\n", audio.rate, audio.channels, audio.error);
     fprintf(out, "  \"audio_source_samples\": %llu,\n  \"audio_submitted_samples\": %llu,\n",
@@ -476,5 +456,4 @@ static void audio_report(FILE *out)
     fprintf(out, "  \"audio_first_output_us\": %llu,\n  \"audio_last_output_us\": %llu,\n",
             (unsigned long long)audio.first_output_us, (unsigned long long)audio.last_output_us);
 }
-#endif
 #endif

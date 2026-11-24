@@ -2,7 +2,6 @@
 #define PSP_AUDIO_ONLY_H
 /* Public audio-only API (psp_audio.h). Included at the end of player.c so it
  * shares the single `audio` engine and its buffers with the video player. */
-#if PSP_AUDIO
 #include "psp_audio.h"
 
 /* audio_api_lock guards the two flags below and every read of `audio` by
@@ -219,5 +218,4 @@ void psp_audio_close(int drain) {
 
 void psp_audio_stop(void) { psp_video_stop(); }
 
-#endif
 #endif

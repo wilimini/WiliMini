@@ -96,11 +96,7 @@ ExternalProject_Add(psp_ffmpeg
             -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
-            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0004-psp-vme-halfpel-qpel.patch"
-            -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
-        COMMAND "${CMAKE_COMMAND}"
-            "-DSOURCE_DIR=${BILI_FFMPEG_SOURCE_DIR}"
-            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0005-psp-me-frame-pipeline.patch"
+            "-DPATCH_FILES=${CMAKE_SOURCE_DIR}/patches/ffmpeg/0004-psp-me-frame-pipeline.patch"
             -P "${CMAKE_SOURCE_DIR}/cmake/ApplyPatch.cmake"
         CONFIGURE_COMMAND <SOURCE_DIR>/configure
             --prefix=${PSP_FFMPEG_PREFIX}

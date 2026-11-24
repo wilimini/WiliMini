@@ -3,8 +3,8 @@
 PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 `include/psp_video.h`，链接 `libpspvideo.a`，不接触 FFmpeg 类型、音频环形缓冲或 ME 作业。
 
-- `src/`：FFmpeg 调用、VFPU DSP、音频输出、音频时钟与 RGB 队列。
-- `me/`：ME 内核桥、用户态导入、转色与缩放任务。内核桥先于播放器 PRX 加载。
+- `src/`：FFmpeg 调用、ME 帧流水线、VFPU DSP、音频输出、音频时钟与帧队列。
+- `me/`：ME 内核桥、用户态导入与 MIST 入口跳板。内核桥先于播放器 PRX 加载。
 客户端构建：`make package`。CMake 在 `build/client/` 生成静态库、
 客户端 PRX、ME 桥和加载器，
 同时生成保留重链接所需的对象、ELF、map 和配置。依赖已有的 PSPDEV、
@@ -34,7 +34,7 @@ int error = psp_video_play(&options, &result);
 根目录必须存在。真机播放器独占 ME、音频 SRC 和视频帧缓冲。同一时刻仅允许一个实例。
 `PspVideoOptions.cancel_button` 控制取消键，零值默认为圆圈；客户端会传入设置中的返回键。
 HOME 退出由宿主注册回调并调用 `psp_video_stop()`。返回前会等待音频、
-RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后可再次调用。
+视频呈现和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后可再次调用。
 播放器不退出游戏、不连接网络、不管理 B 站或下载缓存。
 
 宿主也可通过 `PspVideoOptions.cancel_requested` 提供在调用期间有效的
@@ -53,15 +53,39 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 
 播放器初始化只安装解码内核，不运行亮度、色度、音频或 CABAC 自检。
 
-`PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
+## 视频流水线
+
+原生播放分三处执行：
+
+1. SC（主 CPU）解封装、解码音频，并只做 H.264 熵解码（CABAC/CAVLC）。
+   `me_frame_pipeline.c` 通过 FFmpeg 钩子（`patches/ffmpeg/0004-psp-me-frame-pipeline.patch`）
+   把每个宏块的预测模式、运动补偿分区和稀疏残差记录到整帧命令槽，不触碰像素。
+2. ME 上的常驻工作函数（`mefp_recon.c`）按 FIFO 命令环重建整帧：帧内预测、
+   精确 6 抽头亮度 qpel、精确 packed 色度、边缘模拟、加权预测和整数 IDCT。
+   ME 端不执行 VFPU 指令。重建写回 YUV 平面后推进完成序号。
+3. 帧队列（`frame_pacer.h`）按音频时钟把 YUV420P 帧交给 presenter；
+   客户端 `GeYuvRenderer` 用 GE 五遍 CLUT 绘制直接从主内存读取三个平面、
+   双线性缩放并转成 RGBA8888，写入第三个 VRAM 页面，再叠加 OSD、弹幕和字幕。
+   CPU 不做逐像素转色，也不分配 RGB 帧缓冲。
+
+呈现线程只读取帧描述和 ME 完成序号，不调用 FFmpeg；AVFrame 引用只在解码线程增减。
+流水线只接收 8-bit 4:2:0 逐行帧、无去块滤波（默认 `BILI_SKIP_LOOP_FILTER=48`）、
+宽高不超过 1680 个宏块、行距不超过 1024 的片；其余帧（隔行、MBAFF、开启去块等）
+先排空 ME，再由 FFmpeg 在 SC 上重建，同样经 GE 呈现。
+
+两种 ME 后端运行同一工作函数：Custom Core 直接调用，并把边缘模拟和双向预测
+暂存区放在 ME eDRAM；MIST 经 `me/me_entry.S` 的跳板进入，暂存区改在主内存
+分配，不改动固件的 eDRAM 布局。MIST 路径在整个播放期间占用固件的 ME 处理函数；
+播放器音频为软件解码，不依赖固件 ME 服务。MIST 上的流水线尚未在真机验证。
+
+`BILI_DEVICE_PLAYBACK_CPU_RENDER=ON`（仅诊断构建）关闭 ME 流水线，所有帧由 SC 重建，
+仍经帧队列和 GE 呈现，用于没有 ME 固件的环境。
+
+`PspVideoOptions.buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
+每个排队帧持有一份解码图像引用（640×360 约 350 KiB），而非额外的 RGB 输出缓冲。
 客户端在 PSP-1000 上固定使用默认的 2 帧，播放缓冲设置不可修改；扩展内存机型可选 2/4/8。
 在线内存不足复现和缓解结果见 [内存调查](../docs/playback-memory-investigation.md)。
-`rgb_pixel_format` 可选 RGB565 或 RGBA8888，零值使用 RGB565。客户端“自动”模式在 PSP-1000
-默认选择 RGB565，在扩展内存机型默认选择 RGBA8888；也可在设置中强制选择任一格式。
-ME 渲染队列按所选格式保存 512×272 输出帧：RGB565 每帧 272 KiB，RGBA8888 每帧 544 KiB。
-客户端 presenter 用 DMA 将 RGB565 帧原样复制到第三个 VRAM 页面，再以 `GU_PSM_5650` 纹理绘制到
-RGBA8888 OSD 页面，由 GE 完成转色，不再在 CPU 上逐像素转换。此前的 CPU 转换路径曾在 PSP 真机上
-显示正常；GE 转色路径尚待真机验证。
+原生后端要求提供 `presenter`。
 
 音频与视频共用同一封装时，音频沿用视频上下文的探测结果（流参数与 `start_time`），
 避免再次探测时打开无用的 H.264 解码器；独立的 DASH 音频输入始终调用
@@ -69,7 +93,7 @@ RGBA8888 OSD 页面，由 GE 完成转色，不再在 CPU 上逐像素转换。�
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
 默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`，只有启用
 `BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时才选择 `PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG`。
-RGB 队列使用一次对齐分配，在播放期间复用，等待显示线程和 ME 停止后才释放。
+帧队列槽在播放期间复用，等待呈现线程和 ME 停止后才释放。
 音频先于视频 EOF 时，所有 PCM 提交后时钟继续推进，视频可播放至自身结尾。
 若 ME 停止超时，保留其仍可能访问的缓冲，并拒绝再次启动，避免释放后写入。
 
@@ -84,22 +108,19 @@ H.264 色度默认使用精确 packed 整数插值和对齐 copy/average 内核�
 2.51%，追赶包减少 6.83%，也存在单样本退化；其他 cache、copy/average、
 队列候选仍默认关闭，见[第二轮实测](../benchmarks/bilibili/optimization-round2.md)。
 
-客户端配置使用 VFPU_DSP=4、整像素亮度与最近邻色度取样、关闭去块滤波、跳过非参考帧、
-ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不等同标准 H.264。
-8-bit YUV420P 双向预测分区只计算 list 0。亮度与色度残差均执行完整反变换和
-叠加，恢复帧间宏块的残差修正；近似运动预测仍可能造成误差传播和边缘失真。
-三项运动预测近似直接用于默认路径，没有新增配置开关。需重建 FFmpeg；客户端
-链接要求 v2 补丁标识符，旧的省略残差库会链接失败，避免误用。
-恢复残差后的测试见[残差恢复结果](../benchmarks/bilibili/residual-restored-results.md)。
-此前四项近似的历史结果见[四项近似重建](../benchmarks/bilibili/approximation-results.md)。
-默认 `PSP_SKIP_FRAME=8`（`AVDISCARD_NONREF`），主动跳过非参考帧以减少真机解码负担。
+默认配置关闭去块滤波并跳过非参考帧，画质不等同标准 H.264；ME 流水线内的运动补偿
+（含双向预测）与 FFmpeg 位精确。只有诊断用的 SC 重建构建仍对双向预测分区只计算
+list 0（`0003-psp-approximate-reconstruction.patch`），流水线运行时其钩子关闭该近似。
+此前近似重建的结果见[残差恢复结果](../benchmarks/bilibili/residual-restored-results.md)
+和[四项近似重建](../benchmarks/bilibili/approximation-results.md)。
+默认 `PSP_SKIP_FRAME=8`（`AVDISCARD_NONREF`），主动跳过非参考帧以减少真机解码负担；
+`-DBILI_SKIP_FRAME=0` 解码全部帧。
 此前关闭主动跳帧的 PPSSPP 测试见[测试与部署结果](../benchmarks/bilibili/allframes-results.md)，
 其结果不代表当前跳帧配置的真机播放表现。
 当视频落后音频时，客户端丢弃压缩包，直到后续关键帧再清理并重建参考状态；
 不会沿用实验模式的无条件 B 帧追赶。复杂画面仍可能跳跃或停顿。
 
-视频：8-bit YUV420P H.264，最多 1280×720，目标 480×270。
-640×360 复用原专用缩放内核；其他尺寸等比缩放并留黑边。
+视频：8-bit YUV420P H.264，最多 1280×720，由 GE 等比缩放到 480×270 以内并留黑边。
 音频：AAC / HE-AAC，单声道或双声道，44.1 或 48 kHz；不提供重采样。
 单声道输入复制到 PSP 的左右输出声道。其他编码、无音频等组合在本 demo 仍会报错。
 PSP-1000 尚未验证。
@@ -116,8 +137,8 @@ ME 桥按固件标识选表，播放器同步选择自身的 FAT/T2 函数表。
 选择方式：设置 → “ME 后端”（保存在 `settings.json` 的 `me_backend`，
 取值 `mist` 或 `custom-core`，缺省或无法识别时为 `custom-core`）。启动器（`bootstrap.c`）在加载
 客户端前读取该值，只加载对应的桥；客户端在每次播放初始化时用
-`meLabBackend()` 选择 MIST 返回跳板（`me_task`）或 Custom Core 的 C 工作函数
-（`me_worker`）。因此修改后必须退出（START）并重新打开 WiliMini 才生效，运行中
+`meLabBackend()` 选择 MIST 返回跳板（`me_mist_entry`）或 Custom Core 直接调用的
+C 工作函数（`mefp_me_worker`）。因此修改后必须退出（START）并重新打开 WiliMini 才生效，运行中
 不会切换已加载的桥；设置页在已保存值与已加载值不同时显示“需重启”。
 这样每次启动 ME 都处于干净状态，不在同一进程内交叉使用两种复位流程。
 
@@ -133,7 +154,7 @@ Custom Core 使用固定版本上游的 `me-core.h` 启动代码和 `me-lib.c` �
 空任务，确认工作函数可以完整返回后才继续播放。
 
 退出先等待任务返回，再请求常驻循环停止；收到停止确认后，主 CPU 复位 ME，
-恢复保存的启动 SRAM 并释放复位，随后播放器才释放 RGB 缓冲。任务或停止超时
+恢复保存的启动 SRAM 并释放复位，随后播放器才释放帧队列。任务或停止超时
 会拒绝后续播放并保留仍可能被访问的内存，需完全关机重启。
 此后端尚未实现休眠上下文恢复，持有 ME 期间锁定电源开关，恢复固件后解锁；
 播放中拨动开关的休眠请求可能在解锁后执行。
@@ -154,9 +175,9 @@ ME 桥自身的构建标识、设备本地时间、机型 ID、基础固件 devk
 （0 为 PSP-1000，1 为 PSP-2000）；devkit 值不能识别 PRO-C、ARK 等完整
 自制系统名称，反馈时仍需手动注明。构建时间是 CMake 配置时间。
 
-初始化前后、首个 ME 任务提交/完成、错误和清理阶段会写文件并关闭文件。
-ME 桥使用最多 24 条记录的固定内存环；正常播放只记录首个任务，避免逐帧
-写记忆棒。实验性 ME 队列的工作线程不写文件，桥记录在初始化和收尾时导出。
+初始化前后、ME 工作函数启动、错误和清理阶段会写文件并关闭文件。
+ME 桥使用最多 24 条记录的固定内存环；流水线只提交一次常驻任务，逐帧命令
+不经过桥，因此不写记忆棒。桥记录在初始化和收尾时导出。
 节点中的 `bridge_seq` 是桥加载以来的递增序号；`time_us` 是 32 位系统
 微秒计数，会回绕。跨次重试会导出环中尚存的前次上下文。
 
@@ -179,13 +200,14 @@ ME 桥使用最多 24 条记录的固定内存环；正常播放只记录首个�
 
 `submit` 被拒绝（result=-1）时 a/b 为 ready/pending；`dma_begin`
 分配失败（result=-7）时 b 为分配错误。`result` 保留原始返回码，
-`ready` 的非负结果是固件表 ID。任务超时的 `value` 对应 `me_task.h`
-中的进度标记：1 进入工作函数，2–4 输入平面处理，5 转色/缩放前，
-6 转色/缩放后，`4d450001` 工作函数结束。应结合 done 和完成邮箱判断，
-不能仅凭一个标记认定 ME 已安全停止。
+`ready` 的非负结果是固件表 ID。常驻工作函数结束时 `value` 为 `4d450001`。
+应结合 done 和完成邮箱判断，不能仅凭一个标记认定 ME 已安全停止。
 
 `summary.json` 同时记录构建与设备字段；`audio_stats_valid=false`
-表示本次尚未进入音频初始化，此时省略音频及 RGB 统计，不沿用前次值。
+表示本次尚未进入音频初始化，此时省略音频及呈现统计，不沿用前次值。
+`frames_queued`、`presented`、`dropped` 记录帧队列；`mefp_*` 记录流水线
+（ME 重建帧数、退回 SC 的帧数、SC 等待 ME 的时间等），`ge_wait_us` 和
+`ge_present_us` 记录呈现线程等待 ME 和 GE 绘制的时间。
 日志不保存 Cookie、签名 URL 或媒体内容。测试反馈请提供整个 `results/`、
 `last-error.txt`、`last-playback-error.txt` 和安装包的 `build.json`，并注明
 完整系统版本、插件启用情况，以及各次尝试之间是否完全关机重启。
@@ -197,7 +219,7 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 
 ## PPSSPP
 
-默认与真机共用 FFmpeg 解码 + ME 转色路径，加载 ME bridge。需要支持真正 ME
+默认与真机共用 FFmpeg 熵解码 + ME 重建 + GE 呈现路径，加载 ME bridge。需要支持真正 ME
 执行的 PPSSPP、启用 `EmulateMediaEngine`，并提供对应的 Sony ME 固件镜像。
 旧模拟器可显式构建 `-DBILI_PPSSPP_SCE_MPEG=ON` 使用保留的 sceMpeg 后端。
 详见 [模拟器后端与验证](../docs/ppsspp-player.md) 和
@@ -205,32 +227,9 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 
 ## 播放控制与显示回调
 
-`PspVideoOptions.presenter` 接收所选格式（RGB565 或 RGBA8888）的视频帧和控制状态；空帧表示重绘上一帧。
-宿主负责 DMA/GE 同步及换页。未提供回调时沿用默认视频显示。
+`PspVideoOptions.presenter` 接收 `PspVideoYuvFrame`（YUV420P）和控制状态；空帧表示重绘上一帧。
+PPSSPP sceMpeg 诊断后端改为传入 RGBA8888 图像。宿主负责 GE 同步及换页，
+返回前必须读完平面。
 原生 ME 跳转保留视频/ME 实例；音频管线会重新打开。源的
 `interrupt_reads` 回调用于中断旧读取，不得销毁或取消下载源。
 快捷键、菜单、缓冲所有权和限制见 [播放控制与弹幕](../docs/playback-controls.md)。
-
-## VME 转色接入实验
-
-`make package CMAKE_ARGS='-DBILI_VME_RENDER=ON -DBILI_DEVICE_PLAYBACK_TEST=ON'`
-启用播放器 ME worker 中的实验转色路径。仅 640×360、RGB565 使用 VME；
-其他尺寸和 RGBA8888 仍使用原有实现。该路径没有运行时回退。
-输入按原有 4→3 采样送入 scratchpad，运行三遍 VME context，直接读取
-RGB565 输出，沿用 RGB 队列及缓存写回生命周期。暂未使用异步 DMA、
-16-bit 打包传输或参考帧半像素预计算，因此不能代表最终性能。
-
-2026-11-24 在 PSP model=2、MIST 后端运行 640×360/24fps、5 秒合成
-H.264/AAC 测试片，播放器返回 code=0、eof=1、frames=28。
-这只验证播放调用完成；颜色一致性、Custom Core 播放与性能对照仍待验证。
-VME API 和 opcode 来自 mcidclan 的 MIT 许可实现，见对应第三方目录。
-
-同日用同一段真实视频重编码的 12 秒 H.264/AAC MP4（640×360、
-24fps、288 帧）在同一台 PSP（model=2、MIST、CPU 333 MHz、
-总线 166 MHz、2 个 RGB 缓冲）各运行一次。关闭 VME 时记录
-16 次帧提交，开启时记录 47 次，约合每秒 1.33 和 3.92 次提交。
-两次都到达 EOF；追帧逻辑分别跳过 259 和 195 个视频包。关闭
-和开启 VME 的两轮均现场报告黑屏，因此提交计数不能用来确认可见
-画面或颜色正确性。两个样本跨过的渲染统计预热区间不同，不能直接比较
-`render_us`。测试视频 SHA-256 为
-`779e07cb28cc57b8f3ae6000c6e2a69f1b03633180da52819b332ba875fd433e`。
