@@ -31,6 +31,7 @@ option(BILI_NETWORK_DIAGNOSTICS "Log redacted HTTP connection counts and timings
 option(BILI_VME_RENDER "Experimental VME RGB565 playback renderer (640x360)" OFF)
 option(BILI_VME_QPEL "Experimental VME2 exact reference-frame half-pel precomputation" OFF)
 option(BILI_ME_FRAME_PIPELINE "Experimental whole-frame SC(CABAC) <-> ME(recon+VME2 render) parallel pipeline" OFF)
+option(BILI_GE_RENDER "Experimental PSP GE 5-pass CLUT YUV420->RGBA8888 hardware renderer" OFF)
 set(BILI_SKIP_FRAME "8" CACHE STRING "H.264 skip_frame AVDiscard value (8=NONREF, 0=DEFAULT)")
 set(BILI_SKIP_LOOP_FILTER "48" CACHE STRING "H.264 skip_loop_filter AVDiscard value (48=ALL, 0=DEFAULT)")
 option(BILI_PACKED_CHROMA "Use exact packed H.264 chroma kernels" ON)
@@ -152,6 +153,7 @@ set(DECODER_DEFINITIONS
     PSP_VME_RENDER=$<BOOL:${BILI_VME_RENDER}>
     PSP_VME_QPEL=$<BOOL:${BILI_VME_QPEL}>
     PSP_ME_FRAME_PIPELINE=$<BOOL:${BILI_ME_FRAME_PIPELINE}>
+    PSP_GE_RENDER=$<BOOL:${BILI_GE_RENDER}>
     PSP_ME_FULL_CACHE=$<BOOL:${BILI_BENCHMARK_ME_FULL_CACHE}>
     PSP_ME_DECODE=0
     PSP_ME_DECODE_CHECK=0

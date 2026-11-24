@@ -42,9 +42,16 @@ static int me_render_start(void)
     int ret = rgb_start();
     if (ret == AVERROR(EBUSY)) playback_diagnostic("rgb_buffer_retained_busy", ret);
     if (ret < 0) return ret;
-    unsigned max_inflight = rgb_slots > 3 ? 3 : (rgb_slots > 1 ? rgb_slots - 1 : 1);
-    ret = mefp_start((int)output_pixel_format, max_inflight,
-                     mefp_rgb_acquire_cb, mefp_rgb_publish_cb, mefp_rgb_release_cb);
+#if PSP_GE_RENDER
+    if (rgb_ge_active()) {
+        ret = mefp_start((int)output_pixel_format, 1, NULL, NULL, NULL);
+    } else
+#endif
+    {
+        unsigned max_inflight = rgb_slots > 3 ? 3 : (rgb_slots > 1 ? rgb_slots - 1 : 1);
+        ret = mefp_start((int)output_pixel_format, max_inflight,
+                         mefp_rgb_acquire_cb, mefp_rgb_publish_cb, mefp_rgb_release_cb);
+    }
     if (ret < 0) {
         rgb_close();
         rgb_release();
@@ -60,6 +67,20 @@ static int me_render_submit(const AVFrame *frame)
     int64_t pts = 0;
 #if PSP_AUDIO && PSP_RGB_PACE
     pts = presentation_pts_us;
+#if PSP_GE_RENDER
+    if (rgb_ge_active()) {
+        if (frame->format != AV_PIX_FMT_YUV420P ||
+            frame->width <= 0 || frame->height <= 0 ||
+            frame->width > 1280 || frame->height > 720)
+            return -1;
+        if (mefp_take_sc_written()) sceKernelDcacheWritebackAll();
+        uint32_t ready_seq = mefp_find_recon_seq(frame->data[0]);
+        int ret = rgb_submit_yuv(frame, ready_seq, pts);
+        mefp_hash_next = 0;
+        if (ret >= 0) { ++me_submitted; ++me_completed; }
+        return ret;
+    }
+#endif
 #endif
     int ret = mefp_render_submit(frame, pts, mefp_hash_next);
     mefp_hash_next = 0;
@@ -70,14 +91,20 @@ static int me_render_finish(void)
 {
     int ret = mefp_drain();
     mefp_get_stats(&mefp_final_stats);
-    me_completed = mefp_final_stats.render_completed;
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_GE_RENDER
+    if (!rgb_ge_active())
+#endif
+        me_completed = mefp_final_stats.render_completed;
     return ret;
 }
 static int me_render_shutdown(void)
 {
     int ret = mefp_drain();
     mefp_get_stats(&mefp_final_stats);
-    me_completed = mefp_final_stats.render_completed;
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_GE_RENDER
+    if (!rgb_ge_active())
+#endif
+        me_completed = mefp_final_stats.render_completed;
 #if PSP_AUDIO && PSP_RGB_PACE
     rgb_close();
 #endif

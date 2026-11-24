@@ -733,6 +733,10 @@ static void save_results(const char *path, const RunStats *s, int render,
 #if PSP_VME_RENDER
         fprintf(out, "  \"vme_render\": 1,\n");
 #endif
+#if PSP_GE_RENDER && PSP_ME_FRAME_PIPELINE && PSP_AUDIO && PSP_RGB_PACE
+        fprintf(out, "  \"ge_render\": 1,\n  \"ge_wait_us\": %llu,\n  \"ge_present_us\": %llu,\n",
+                (unsigned long long)rgb_ge_wait_us, (unsigned long long)rgb_ge_present_us);
+#endif
 #if PSP_VME_QPEL
         fprintf(out, "  \"vme_qpel\": 1,\n  \"vme_qpel_refs\": %u,\n  \"vme_qpel_us\": %llu,\n",
                 vme_qpel_refs_built, (unsigned long long)vme_qpel_total_us);

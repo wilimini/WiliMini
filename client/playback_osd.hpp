@@ -40,6 +40,7 @@ private:
     struct Glyph { uint32_t cp; unsigned short u, v; unsigned char width, height, advance; };
     alignas(16) unsigned char atlas_[512 * 256]{};
     alignas(16) unsigned int palette_[256]{};
+    alignas(16) unsigned int yuvClut_[5][256]{};
     alignas(16) unsigned int commands_[16384]{};
     Glyph glyphs_[300]{};
     struct Comment {
@@ -71,6 +72,7 @@ private:
     void text(int x, int y, std::string_view text, unsigned color, int right = 464, int size = 16);
     void rectangle(int x, int y, int w, int h, unsigned color);
     void gradient(int y, int height, unsigned topAlpha, unsigned bottomAlpha);
+    void drawYuv420p(const PspVideoYuvFrame& frame);
     int draw(const void* pixels, PspVideoPixelFormat format, const PspVideoStatus& status);
 };
 }

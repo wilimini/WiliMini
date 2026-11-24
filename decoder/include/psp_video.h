@@ -15,8 +15,15 @@ typedef enum {
 } PspVideoCancelButton;
 typedef enum {
     PSP_VIDEO_PIXEL_FORMAT_RGB565 = 0,
-    PSP_VIDEO_PIXEL_FORMAT_RGBA8888 = 1
+    PSP_VIDEO_PIXEL_FORMAT_RGBA8888 = 1,
+    PSP_VIDEO_PIXEL_FORMAT_YUV420P = 2
 } PspVideoPixelFormat;
+typedef struct {
+    const uint8_t *planes[3];
+    int strides[3];
+    int width;
+    int height;
+} PspVideoYuvFrame;
 typedef struct {
     void *opaque;
     int64_t size; /* -1 denotes a live, non-seekable source. */

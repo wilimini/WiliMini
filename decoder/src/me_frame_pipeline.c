@@ -225,6 +225,12 @@ static int            mefp_frame_fallback;
 static int            mefp_any_sc_written;
 static unsigned       mefp_next_slot;
 
+#define MEFP_RECON_HIST 16
+static const uint8_t *mefp_recon_y[MEFP_RECON_HIST];
+static uint32_t       mefp_recon_seq[MEFP_RECON_HIST];
+static unsigned       mefp_recon_hist_pos;
+static unsigned       mefp_recon_hist_count;
+
 /* SC stats */
 static unsigned mefp_stat_recon_frames;
 static unsigned mefp_stat_fallback_frames;
@@ -1011,6 +1017,9 @@ static int __attribute__((noinline)) mefp_me_worker(int index, void *param)
         if (cmd->op == MEFP_OP_RECON) {
             MefpFrameSlot *slot = (MefpFrameSlot *)((uintptr_t)cmd->slot | 0x80000000u);
             me_reconstruct_frame(dsp, slot, q);
+            /* Write back ME D-cache immediately so GE (and SC) can read the
+             * reconstructed YUV planes as soon as q->completed advances. */
+            meCoreDcacheWritebackInvalidateAll();
         } else if (cmd->op == MEFP_OP_RENDER) {
             const uint8_t *planes[3];
             for (int p = 0; p < 3; ++p)
@@ -1154,8 +1163,33 @@ int mefp_drain(void)
     mefp_poll_renders();
     for (int i = 0; i < MEFP_FRAME_SLOTS; ++i)
         mefp_release_slot_refs(i);
+    mefp_recon_hist_count = 0;
     sceKernelDcacheWritebackInvalidateAll();
     return ret;
+}
+
+uint32_t mefp_find_recon_seq(const uint8_t *y_plane)
+{
+    if (!mefp_running || !y_plane || !mefp_recon_hist_count) return 0;
+    unsigned n = mefp_recon_hist_count < MEFP_RECON_HIST ? mefp_recon_hist_count : MEFP_RECON_HIST;
+    for (unsigned k = 0; k < n; ++k) {
+        unsigned idx = (mefp_recon_hist_pos - 1u - k) & (MEFP_RECON_HIST - 1u);
+        if (mefp_recon_y[idx] == y_plane) return mefp_recon_seq[idx];
+    }
+    return 0;
+}
+
+int mefp_seq_is_done(uint32_t seq)
+{
+    if (!seq || !mefp_running) return 1;
+    return (int)(mefp_sc_ctrl()->completed - seq) >= 0;
+}
+
+int mefp_take_sc_written(void)
+{
+    int v = mefp_any_sc_written;
+    mefp_any_sc_written = 0;
+    return v;
 }
 
 /* =========================================================================
@@ -1644,7 +1678,12 @@ static void mefp_hook_frame_end(const H264Context *h, int error)
     memset(cmd, 0, sizeof(*cmd));
     cmd->op   = MEFP_OP_RECON;
     cmd->slot = mefp_slots[idx];
-    mefp_slot_seq[idx] = mefp_submit_cmd(cmd);
+    uint32_t seq = mefp_submit_cmd(cmd);
+    mefp_slot_seq[idx] = seq;
+    unsigned hidx = mefp_recon_hist_pos++ & (MEFP_RECON_HIST - 1u);
+    mefp_recon_y[hidx] = mefp_slots[idx]->cur_data[0];
+    mefp_recon_seq[hidx] = seq;
+    if (mefp_recon_hist_count < MEFP_RECON_HIST) ++mefp_recon_hist_count;
     ++mefp_stat_recon_frames;
     mefp_poll_renders();
 }
@@ -1670,6 +1709,8 @@ int mefp_start(int output_format,
     mefp_frame_fallback = 0;
     mefp_any_sc_written = 0;
     mefp_next_slot = 0;
+    mefp_recon_hist_pos = 0;
+    mefp_recon_hist_count = 0;
     mefp_stat_recon_frames = mefp_stat_fallback_frames = 0;
     mefp_stat_render_submitted = mefp_stat_render_completed = 0;
     mefp_stat_wait_us = 0;
