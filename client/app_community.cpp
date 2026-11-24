@@ -41,11 +41,13 @@ void App::browseRefresh() {
       frame.page.request.kind == BrowseKind::CommentActions)
     return;
   jobBrowse_ = frame.page.request;
-  jobBrowse_.page = 1;
+  if (jobBrowse_.kind != BrowseKind::Season || frame.page.items.empty())
+    jobBrowse_.page = 1;
   jobBrowse_.cursor.clear();
   // aux identifies the root/area/session type; pagination must not overwrite it
   // in the stored route.
   browseAppending_ = false;
+  seasonLanding_ = 0;
   frame.error = {};
   startJob(Job::Browse);
 }
@@ -66,6 +68,7 @@ void App::browseMore() {
       jobBrowse_.kind == BrowseKind::History)
     jobBrowse_.aux = frame.page.nextAux;
   browseAppending_ = true;
+  seasonLanding_ = 0;
   frame.error = {};
   startJob(Job::Browse);
 }
@@ -87,6 +90,37 @@ void App::browseMove(int dx, int dy) {
         frame.selection = i;
         return;
       }
+  }
+  if (frame.page.request.kind == BrowseKind::Season && dy && !busy() &&
+      frame.selection < frame.page.items.size() &&
+      frame.page.items[frame.selection].next.kind == BrowseKind::Episode) {
+    size_t firstEp = std::string::npos, lastEp = std::string::npos, localEps = 0;
+    for (size_t i = 0; i < frame.page.items.size(); ++i) {
+      if (frame.page.items[i].next.kind == BrowseKind::Episode) {
+        if (firstEp == std::string::npos) firstEp = i;
+        lastEp = i;
+        ++localEps;
+      }
+    }
+    if (dy > 0 && frame.selection == lastEp &&
+        frame.page.episodeOffset + localEps < frame.page.totalEpisodes) {
+      jobBrowse_ = frame.page.request;
+      jobBrowse_.page = std::max(1, frame.page.request.page) + 1;
+      browseAppending_ = false;
+      seasonLanding_ = 1;
+      frame.error = {};
+      startJob(Job::Browse);
+      return;
+    }
+    if (dy < 0 && frame.selection == firstEp && frame.page.episodeOffset > 0) {
+      jobBrowse_ = frame.page.request;
+      jobBrowse_.page = std::max(1, frame.page.request.page - 1);
+      browseAppending_ = false;
+      seasonLanding_ = -1;
+      frame.error = {};
+      startJob(Job::Browse);
+      return;
+    }
   }
   const bool videoGrid =
       preferences_.homeStyle == HomeStyle::Tiles && isVideoListPage(frame.page);

@@ -1,4 +1,5 @@
 #include "community_service.hpp"
+#include "stream_json.hpp"
 #include "../api/wiliwili/bilibili/api.h"
 #include <algorithm>
 #include <ctime>
@@ -407,10 +408,34 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
     params = {{"is_refresh", r.cursor.empty() ? "1" : "0"},
               {"cursor", r.cursor}};
     break;
-  case BrowseKind::Season:
-    endpoint = Api::SeasonDetail;
-    params = {{"season_id", r.id}};
-    break;
+  case BrowseKind::Season: {
+    uint64_t seasonId = 0;
+    try {
+      seasonId = r.id.empty() ? 0 : std::stoull(r.id);
+    } catch (...) {
+      return Result<BrowsePage>::failure(
+          {ErrorDomain::Api, ErrorKind::InvalidResponse, op});
+    }
+    const size_t windowOffset =
+        static_cast<size_t>(std::max(1, r.page) - 1) * kSeasonWindowSize;
+    auto err = api_.getStream(
+        Api::SeasonDetail, {{"season_id", r.id}}, false, op,
+        [&](const HttpResponse &resp, StreamApiMeta &meta) {
+          parseSeasonStream(resp, seasonId, windowOffset, kSeasonWindowSize, out, meta);
+        });
+    if (err)
+      return Result<BrowsePage>::failure(err);
+    if (session.valid()) {
+      auto status =
+          api_.get(Api::SeasonStatus,
+                   {{"season_id", r.id},
+                    {"ts", std::to_string(std::time(nullptr) * 1000ULL)}},
+                   false, op);
+      if (status)
+        out.followed = number(status.value.data, "follow") != 0;
+    }
+    return {std::move(out), {}};
+  }
   case BrowseKind::LiveAreas:
     endpoint = Api::LiveAreaList;
     params = {{"platform", "web"}};
@@ -638,56 +663,6 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       out.hasMore = flag(d, "has_next");
       out.nextCursor = str(d, "next_cursor");
       break;
-    case BrowseKind::Season: {
-      out.title = str(d, "title");
-      out.description = str(d, "evaluate");
-      out.subtitle = str(obj(d, "new_ep"), "desc");
-      for (const auto &style : array(d, "styles"))
-        if (style.is_string()) {
-          if (!out.subtitle.empty()) out.subtitle += " · ";
-          out.subtitle += style.get<std::string>();
-        }
-      if (!out.description.empty()) {
-        auto text = link(BrowseKind::Text, "简介");
-        text.text = out.description;
-        out.items.push_back(std::move(text));
-      }
-      auto appendEpisode = [&](const Json &j) {
-        auto label = str(j, "title");
-        if (!label.empty() && label.size() == 1 && label[0] >= '0' && label[0] <= '9') label = "0" + label;
-        auto item = link(BrowseKind::Episode,
-                         label + " " + str(j, "long_title"),
-                         str(j, "id"));
-        item.bvid = str(j, "bvid");
-        item.aid = std::stoull(str(j, "aid", "0"));
-        item.cid = std::stoull(str(j, "cid", "0"));
-        item.epId = std::stoull(str(j, "id", "0"));
-        item.picture = str(j, "cover");
-        item.duration = number(j, "duration") / 1000;
-        item.seasonId = std::stoull(r.id);
-        const auto &user = obj(d, "user_status");
-        if (str(user, "last_ep_id") == str(j, "id"))
-          item.startMs = std::max(0, number(user, "last_time")) * 1000LL;
-        item.completed = str(user, "last_ep_id") == str(j, "id") && number(user, "last_time") < 0;
-        item.subtitle = str(j, "badge");
-        out.items.push_back(std::move(item));
-      };
-      for (const auto &j : array(d, "episodes"))
-        appendEpisode(j);
-      for (const auto &section : array(d, "section"))
-        for (const auto &j : array(section, "episodes"))
-          appendEpisode(j);
-      if (session.valid()) {
-        auto status =
-            api_.get(Api::SeasonStatus,
-                     {{"season_id", r.id},
-                      {"ts", std::to_string(std::time(nullptr) * 1000ULL)}},
-                     false, op);
-        if (status)
-          out.followed = number(status.value.data, "follow") != 0;
-      }
-      break;
-    }
     case BrowseKind::LiveAreas:
       for (const auto &group : d.at("list"))
         for (const auto &j : array(group, "area_list"))

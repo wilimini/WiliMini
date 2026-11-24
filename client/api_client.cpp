@@ -142,10 +142,30 @@ pspapp::Result<pspapp::ApiResponse> fetchJson(pspapp::HttpClient &http, const st
     if (!response)
         return pspapp::Result<pspapp::ApiResponse>::failure(response.error);
     try {
-        auto root = nlohmann::json::parse(response.value.body);
+        nlohmann::json root;
+        if (response.value.spilled()) {
+            std::FILE *file = std::fopen(response.value.bodyPath.c_str(), "rb");
+            if (!file)
+                return pspapp::Result<pspapp::ApiResponse>::failure(
+                    {pspapp::ErrorDomain::Storage, pspapp::ErrorKind::IoFailure, op});
+            char buffer[8192];
+            std::setvbuf(file, buffer, _IOFBF, sizeof(buffer));
+            try {
+                root = nlohmann::json::parse(file);
+            } catch (...) {
+                std::fclose(file);
+                throw;
+            }
+            std::fclose(file);
+        } else {
+            root = nlohmann::json::parse(response.value.body);
+        }
         if (!root.is_object())
             throw std::runtime_error("Expected object");
         return {{std::move(root), std::move(response.value.cookies)}, {}};
+    } catch (const std::bad_alloc &) {
+        return pspapp::Result<pspapp::ApiResponse>::failure(
+            {pspapp::ErrorDomain::Api, pspapp::ErrorKind::OutOfMemory, op});
     } catch (const std::exception &) {
         return pspapp::Result<pspapp::ApiResponse>::failure(
             {pspapp::ErrorDomain::Api, pspapp::ErrorKind::InvalidResponse, op});
@@ -247,19 +267,19 @@ pspapp::Result<pspapp::ApiResponse> requestDocument(pspapp::HttpClient &http,
             return response;
     }
     try {
-        const auto &root = response.value.data;
+        auto &root = response.value.data;
         int code = root.at("code").get<int>();
         if (code != 0)
             return Result<ApiResponse>::failure(
                 {code == -101 ? ErrorDomain::Auth : ErrorDomain::Api,
                  code == -101 ? ErrorKind::LoginRequired : ErrorKind::ApiRejected, op, code});
-        nlohmann::json data;
-        if (root.contains("data"))
-            data = root.at("data");
-        else if (root.contains("result"))
-            data = root.at("result");
-        else
+        auto it = root.find("data");
+        if (it == root.end())
+            it = root.find("result");
+        if (it == root.end())
             throw std::runtime_error("Missing data");
+        // Move the child out before overwriting root so the subtree is never deep-copied.
+        nlohmann::json data = std::move(*it);
         response.value.data = std::move(data);
         return response;
     } catch (const std::exception &) {
@@ -438,9 +458,60 @@ Result<ApiResponse> BilibiliApi::get(const std::string &endpoint, const ApiParam
     try {
         return bilibili::requestDocument(http_, endpoint, params, signedRequest, operation,
                                          retrySafe);
+    } catch (const std::bad_alloc &) {
+        return Result<ApiResponse>::failure(
+            {ErrorDomain::Api, ErrorKind::OutOfMemory, operation});
     } catch (const std::exception &) {
         return Result<ApiResponse>::failure(
             {ErrorDomain::Api, ErrorKind::InvalidResponse, operation});
+    }
+}
+AppError BilibiliApi::getStream(const std::string &endpoint, const ApiParams &params,
+                                bool signedRequest, ErrorOperation operation,
+                                const StreamApiParser &parser, bool retrySafe) {
+    try {
+        if (signedRequest) {
+            auto error = bilibili::fetchWbiMixin(http_);
+            if (error) return error;
+        }
+        auto run = [&]() -> Result<StreamApiMeta> {
+            auto response = http_.get(
+                bilibili::joinUrl(endpoint, signedRequest ? bilibili::signWbi(params) : params),
+                operation, retrySafe);
+            if (!response)
+                return Result<StreamApiMeta>::failure(std::move(response.error));
+            StreamApiMeta meta{};
+            parser(response.value, meta);
+            return {meta, {}};
+        };
+        auto parsed = run();
+        if (!parsed) return parsed.error;
+        if (signedRequest && parsed.value.parseOk && parsed.value.hasCode &&
+            parsed.value.code == -403) {
+            {
+                std::lock_guard<std::mutex> lock(bilibili::wbiMutex);
+                bilibili::wbiMixin.clear();
+            }
+            bilibili::clearWbiCache();
+            auto error = bilibili::fetchWbiMixin(http_);
+            if (error) return error;
+            parsed = run();
+            if (!parsed) return parsed.error;
+        }
+        const StreamApiMeta &meta = parsed.value;
+        if (!meta.parseOk || !meta.hasCode)
+            return {ErrorDomain::Api, ErrorKind::InvalidResponse, operation};
+        if (meta.code != 0)
+            return {meta.code == -101 ? ErrorDomain::Auth : ErrorDomain::Api,
+                    meta.code == -101 ? ErrorKind::LoginRequired : ErrorKind::ApiRejected,
+                    operation, meta.code};
+        if (!meta.hasData)
+            return {ErrorDomain::Api, ErrorKind::InvalidResponse, operation};
+        return {};
+    } catch (const std::bad_alloc &) {
+        return {ErrorDomain::Api, ErrorKind::OutOfMemory, operation};
+    } catch (const std::exception &) {
+        return {ErrorDomain::Api, ErrorKind::InvalidResponse, operation};
     }
 }
 Result<ApiResponse> BilibiliApi::post(const std::string &endpoint, const ApiParams &form,
@@ -462,7 +533,9 @@ Result<ApiResponse> BilibiliApi::post(const std::string &endpoint, const ApiPara
         if (code != 0)
             return Result<ApiResponse>::failure({code == -101 ? ErrorDomain::Auth : ErrorDomain::Api,
                 code == -101 ? ErrorKind::LoginRequired : ErrorKind::ApiRejected, operation, code});
-        return {{root.value("data", nlohmann::json()), {}}, {}};
+        auto it = root.find("data");
+        nlohmann::json data = it != root.end() ? std::move(*it) : nlohmann::json();
+        return {{std::move(data), {}}, {}};
     } catch (const std::exception &) {
         return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, operation});
     }

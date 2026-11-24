@@ -41,8 +41,17 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/http_buffer_test.c -o "$out/http-buffer-test"
 "$out/http-buffer-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
+    tests/http_spill_test.c -o "$out/http-spill-test"
+"$out/http-spill-test"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/json_drop_test.c -o "$out/json-drop-test"
 "$out/json-drop-test"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Wno-null-pointer-subtraction -fsanitize=address,undefined \
+    -Idecoder/include -Ithird_party/nlohmann -Ithird_party/pystring -Iclient -Iclient/api/wiliwili \
+    tests/season_stream_test.cpp client/api_client.cpp client/services/network.cpp \
+    client/services/community_service.cpp client/services/stream_json.cpp \
+    -o "$out/season-stream-test"
+"$out/season-stream-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"
 "$out/playback-controls-test"
 sh tools/test-update-package.sh

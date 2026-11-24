@@ -1,8 +1,23 @@
 #include "network.hpp"
 #include "playback_request_policy.h"
 #include "../bilibili.h"
+#include <cstdio>
 
 namespace pspapp {
+HttpResponse HttpResponse::fromSpillFile(std::string path, size_t bytes, bool autoDelete) {
+    HttpResponse out;
+    out.bodyPath = std::move(path);
+    out.bodyBytes = bytes;
+    if (autoDelete && !out.bodyPath.empty()) {
+        auto *owned = new std::string(out.bodyPath);
+        out.bodyFileGuard = std::shared_ptr<const void>(owned, [](const void *ptr) {
+            const auto *p = static_cast<const std::string *>(ptr);
+            std::remove(p->c_str());
+            delete p;
+        });
+    }
+    return out;
+}
 AppError WifiManager::initialize() const {
     const int result = network_init();
     return result < 0 ? AppError{ErrorDomain::Network, ErrorKind::Disconnected,
@@ -19,42 +34,52 @@ AppError WifiManager::connect() const {
     return {ErrorDomain::Network, transfer_cancel ? ErrorKind::Cancelled : ErrorKind::Disconnected,
             ErrorOperation::ConnectWifi, result};
 }
+static AppError mapHttpError(const BiliHttpResponse &response, ErrorOperation op) {
+    if (!response.failure) return {};
+    ErrorKind kind = ErrorKind::Unknown;
+    switch (response.failure) {
+    case BILI_HTTP_CANCELLED:
+        kind = ErrorKind::Cancelled;
+        break;
+    case BILI_HTTP_DISCONNECTED:
+        kind = ErrorKind::Disconnected;
+        break;
+    case BILI_HTTP_MEMORY:
+        kind = ErrorKind::OutOfMemory;
+        break;
+    case BILI_HTTP_IO:
+        kind = ErrorKind::IoFailure;
+        break;
+    case BILI_HTTP_TRANSPORT:
+        kind = response.transport_code == 28 ? ErrorKind::Timeout : ErrorKind::HttpFailure;
+        break;
+    case BILI_HTTP_STATUS:
+        kind = ErrorKind::HttpFailure;
+        break;
+    }
+    return {ErrorDomain::Network, kind, op, response.transport_code, response.status};
+}
 static HttpResponse deviceRequest(const std::string &url, const std::string *form, ErrorOperation op) {
     auto wifiError = WifiManager{}.connect();
     if (wifiError) {
         wifiError.operation = op;
-        return {{}, {}, std::move(wifiError)};
+        HttpResponse out;
+        out.error = std::move(wifiError);
+        return out;
     }
     BiliHttpResponse response{};
-    if (form) bili_http_post_response(url.c_str(), form->c_str(), &response, 512 * 1024);
-    else bili_http_get_response(url.c_str(), &response, 512 * 1024);
+    if (form) bili_http_post_response(url.c_str(), form->c_str(), &response, BILI_HTTP_RAM_THRESHOLD);
+    else bili_http_get_response_spill(url.c_str(), &response, BILI_HTTP_RAM_THRESHOLD, BILI_HTTP_SPILL_LIMIT, nullptr);
     HttpResponse out;
-    if (response.text) {
+    if (response.spilled && response.body_path[0]) {
+        out = HttpResponse::fromSpillFile(response.body_path, response.body_bytes, true);
+    } else if (response.text) {
         out.body = response.text;
+        out.bodyBytes = out.body.size();
         bili_http_free(response.text);
     }
     out.cookies = response.cookies;
-    if (response.failure) {
-        ErrorKind kind = ErrorKind::Unknown;
-        switch (response.failure) {
-        case BILI_HTTP_CANCELLED:
-            kind = ErrorKind::Cancelled;
-            break;
-        case BILI_HTTP_DISCONNECTED:
-            kind = ErrorKind::Disconnected;
-            break;
-        case BILI_HTTP_MEMORY:
-            kind = ErrorKind::OutOfMemory;
-            break;
-        case BILI_HTTP_TRANSPORT:
-            kind = response.transport_code == 28 ? ErrorKind::Timeout : ErrorKind::HttpFailure;
-            break;
-        case BILI_HTTP_STATUS:
-            kind = ErrorKind::HttpFailure;
-            break;
-        }
-        out.error = {ErrorDomain::Network, kind, op, response.transport_code, response.status};
-    }
+    out.error = mapHttpError(response, op);
     return out;
 }
 HttpClient::HttpClient(Transport transport, PostTransport postTransport)

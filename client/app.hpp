@@ -321,6 +321,7 @@ private:
     ApiResponse stagedWrite_;
     BrowseItem activeComment_;
     bool browseAppending_ = false, communityInputPending_ = false;
+    int seasonLanding_ = 0; // 1: land on first episode after next-window load, -1: last episode after prev-window load
     bool communityLoginPending_ = false, dismissLoginAfterCheck_ = false;
     std::string communityDraft_;
     CommunityWrite inputWrite_;

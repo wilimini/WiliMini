@@ -86,16 +86,23 @@ extern volatile unsigned transfer_kb, transfer_total_kb;
 extern char network_error[160];
 /* C ABI used by the C++17 Wiliwili-compatible API layer. The returned text is
  * allocated with malloc() and must be released with bili_http_free(). */
+#define BILI_HTTP_RAM_THRESHOLD (512u * 1024u)
+#define BILI_HTTP_SPILL_LIMIT (16u * 1024u * 1024u)
+#define BILI_HTTP_SPILL_PREFIX "http_spill_"
 enum {
     BILI_HTTP_OK,
     BILI_HTTP_CANCELLED,
     BILI_HTTP_DISCONNECTED,
     BILI_HTTP_MEMORY,
     BILI_HTTP_TRANSPORT,
-    BILI_HTTP_STATUS
+    BILI_HTTP_STATUS,
+    BILI_HTTP_IO
 };
 typedef struct {
     char *text;
+    char body_path[256]; /* Temporary storage path when response exceeded RAM threshold. */
+    size_t body_bytes;
+    int spilled;
     int failure, transport_code, status;
     char cookies[4096];
 } BiliHttpResponse;
@@ -103,6 +110,8 @@ int bili_http_credential_host(const char *url);
 int bili_http_login_host(const char *url);
 size_t bili_http_capture_cookie(char *data, size_t size, size_t count, void *response);
 int bili_http_get_response_cancel(const char *url, BiliHttpResponse *out, size_t max_bytes, volatile int *cancel);
+int bili_http_get_response_spill(const char *url, BiliHttpResponse *out, size_t ram_threshold,
+                                 size_t max_spill_bytes, volatile int *cancel);
 int bili_http_get_response(const char *url, BiliHttpResponse *out, size_t max_bytes);
 int bili_http_post_response(const char *url, const char *form, BiliHttpResponse *out, size_t max_bytes);
 /* Called only between joined jobs; credentials are scoped to API/passport HTTPS. */
