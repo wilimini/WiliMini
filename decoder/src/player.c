@@ -737,6 +737,28 @@ static void save_results(const char *path, const RunStats *s, int render,
         fprintf(out, "  \"vme_qpel\": 1,\n  \"vme_qpel_refs\": %u,\n  \"vme_qpel_us\": %llu,\n",
                 vme_qpel_refs_built, (unsigned long long)vme_qpel_total_us);
 #endif
+#if PSP_ME_FRAME_PIPELINE
+        fprintf(out,
+                "  \"me_frame_pipeline\": 1,\n"
+                "  \"mefp_recon_frames\": %u,\n"
+                "  \"mefp_fallback_frames\": %u,\n"
+                "  \"mefp_intra_mbs\": %u,\n"
+                "  \"mefp_inter_mbs\": %u,\n"
+                "  \"mefp_wait_us\": %u,\n"
+                "  \"mefp_capture_us\": %llu,\n"
+                "  \"mefp_me_recon_us\": %llu,\n"
+                "  \"mefp_me_render_us\": %llu,\n"
+                "  \"mefp_error\": %d,\n",
+                mefp_final_stats.recon_frames,
+                mefp_final_stats.fallback_frames,
+                mefp_final_stats.intra_mbs,
+                mefp_final_stats.inter_mbs,
+                mefp_final_stats.wait_us,
+                (unsigned long long)mefp_final_stats.capture_us,
+                (unsigned long long)mefp_final_stats.me_recon_us,
+                (unsigned long long)mefp_final_stats.me_render_us,
+                mefp_final_stats.error);
+#endif
 #if PSP_PTS_PACE
         fprintf(out, "  \"late_over_40ms_including_warmup\": %u,\n"
                 "  \"max_lateness_us\": %u,\n  \"total_lateness_us\": %llu,\n",
@@ -862,6 +884,13 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
             if (quit_requested) { av_frame_unref(frame); return AVERROR_EXIT; }
 #endif
             begin = tick_us();
+#if PSP_ME_FRAME_PIPELINE
+#if PSP_HEADLESS_VERIFY
+            mefp_hash_next = (*output_count >= WARMUP_FRAMES) ? 1 : 0;
+#else
+            mefp_hash_next = 0;
+#endif
+#endif
             ret = draw_frame(frame);
             if (!*output_count && video_io_source && video_io_source->first_frame)
                 video_io_source->first_frame(video_io_source->opaque);
@@ -895,7 +924,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
 #endif
         }
 
-#if PSP_HEADLESS_VERIFY || PSP_VME_QPEL || PSP_VME_RENDER || !PSP_APPROX_QPEL
+#if !PSP_ME_FRAME_PIPELINE && (PSP_HEADLESS_VERIFY || PSP_VME_QPEL || PSP_VME_RENDER || !PSP_APPROX_QPEL)
         if (*output_count >= WARMUP_FRAMES) {
             s->frame_hash = hash_visible_plane(s->frame_hash, frame->data[0],
                                                frame->width, frame->height, frame->linesize[0]);
@@ -1211,6 +1240,9 @@ done:
         unsigned begin = tick_us();
         int finish = me_render_finish();
         stats->render_us += tick_us() - begin;
+#if PSP_ME_FRAME_PIPELINE
+        stats->frame_hash = mefp_final_stats.frame_hash;
+#endif
         if (finish < 0) {
             if (ret >= 0) { ret = finish; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
             ++stats->errors;

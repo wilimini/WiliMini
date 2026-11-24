@@ -1,6 +1,91 @@
 #ifndef PSP_LAB_ME_RENDER_H
 #define PSP_LAB_ME_RENDER_H
 #if PSP_ME_RENDER
+#if PSP_ME_FRAME_PIPELINE
+#include "me_bridge.h"
+#include "me_frame_pipeline.h"
+static unsigned me_submitted, me_completed;
+#if PSP_PTS_PACE
+static uint64_t me_total_lateness_us;
+static unsigned me_late_frames, me_max_lateness_us;
+#endif
+static int mefp_hash_next;
+static MefpStats mefp_final_stats;
+#if PSP_AUDIO && PSP_RGB_PACE
+static int mefp_rgb_acquire_cb(void **out_pixels)
+{
+    int slot = rgb_acquire();
+    if (slot < 0) return slot;
+    *out_pixels = rgb_slot_pixels((unsigned)slot);
+    return 0;
+}
+static void mefp_rgb_publish_cb(int64_t pts)
+{
+    rgb_publish(pts);
+}
+static void mefp_rgb_release_cb(void)
+{
+    sceKernelSignalSema(rgb_space, 1);
+}
+#endif
+static int me_render_start(void)
+{
+    me_submitted = me_completed = 0;
+    mefp_hash_next = 0;
+    memset(&mefp_final_stats, 0, sizeof(mefp_final_stats));
+#if PSP_PTS_PACE
+    me_total_lateness_us = 0;
+    me_late_frames = me_max_lateness_us = 0;
+#endif
+#if PSP_AUDIO && PSP_RGB_PACE
+    int ret = rgb_start();
+    if (ret == AVERROR(EBUSY)) playback_diagnostic("rgb_buffer_retained_busy", ret);
+    if (ret < 0) return ret;
+    ret = mefp_start((int)output_pixel_format,
+                     mefp_rgb_acquire_cb, mefp_rgb_publish_cb, mefp_rgb_release_cb);
+    if (ret < 0) {
+        rgb_close();
+        rgb_release();
+        return ret;
+    }
+    return 0;
+#else
+    return mefp_start((int)output_pixel_format, NULL, NULL, NULL);
+#endif
+}
+static int me_render_submit(const AVFrame *frame)
+{
+    int64_t pts = 0;
+#if PSP_AUDIO && PSP_RGB_PACE
+    pts = presentation_pts_us;
+#endif
+    int ret = mefp_render_submit(frame, pts, mefp_hash_next);
+    mefp_hash_next = 0;
+    if (ret >= 0) ++me_submitted;
+    return ret;
+}
+static int me_render_finish(void)
+{
+    int ret = mefp_drain();
+    mefp_get_stats(&mefp_final_stats);
+    me_completed = mefp_final_stats.render_completed;
+    return ret;
+}
+static int me_render_shutdown(void)
+{
+    int ret = mefp_drain();
+    mefp_get_stats(&mefp_final_stats);
+    me_completed = mefp_final_stats.render_completed;
+#if PSP_AUDIO && PSP_RGB_PACE
+    rgb_close();
+#endif
+    int shutdown = mefp_stop();
+#if PSP_AUDIO && PSP_RGB_PACE
+    if (shutdown >= 0) rgb_release();
+#endif
+    return ret < 0 ? ret : shutdown;
+}
+#else /* !PSP_ME_FRAME_PIPELINE */
 #include "me_task.h"
 #if PSP_VME_QPEL
 #include "h264_vme_qpel.h"
@@ -313,5 +398,6 @@ static void vme_qpel_free(void)
     }
 }
 #endif
+#endif /* !PSP_ME_FRAME_PIPELINE */
 #endif
 #endif

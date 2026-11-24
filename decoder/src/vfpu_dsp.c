@@ -182,6 +182,7 @@ static void vfpu_chroma_put8(uint8_t *d, const uint8_t *s, ptrdiff_t stride, int
 static void vfpu_chroma_avg8(uint8_t *d, const uint8_t *s, ptrdiff_t stride, int h, int x, int y)
 { vfpu_chroma8(d, s, stride, h, x, y, 1); }
 
+#if PSP_APPROX_QPEL
 /* Round eighth-pixel chroma positions to the nearest source pixel. Keep the
  * existing zero-phase kernels, including their stride/height handling. */
 static h264_chroma_mc_func nearest_chroma_integer[2][4];
@@ -208,6 +209,7 @@ static void nearest_chroma_init(H264ChromaContext *c)
         c->avg_h264_chroma_pixels_tab[i] = avg[i];
     }
 }
+#endif
 
 void __real_ff_h264chroma_init(H264ChromaContext *, int);
 void __wrap_ff_h264chroma_init(H264ChromaContext *c, int bit_depth)
@@ -225,5 +227,7 @@ void __wrap_ff_h264chroma_init(H264ChromaContext *c, int bit_depth)
 #if PSP_PACKED_CHROMA
     if (bit_depth == 8) packed_chroma_init(c);
 #endif
+#if PSP_APPROX_QPEL
     if (bit_depth == 8) nearest_chroma_init(c);
+#endif
 }

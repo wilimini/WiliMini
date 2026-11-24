@@ -30,6 +30,7 @@ option(BILI_MEMORY_PROFILE "Log large libc allocations for memory diagnostics" O
 option(BILI_NETWORK_DIAGNOSTICS "Log redacted HTTP connection counts and timings" OFF)
 option(BILI_VME_RENDER "Experimental VME RGB565 playback renderer (640x360)" OFF)
 option(BILI_VME_QPEL "Experimental VME2 exact reference-frame half-pel precomputation" OFF)
+option(BILI_ME_FRAME_PIPELINE "Experimental whole-frame SC(CABAC) <-> ME(recon+VME2 render) parallel pipeline" OFF)
 set(BILI_SKIP_FRAME "8" CACHE STRING "H.264 skip_frame AVDiscard value (8=NONREF, 0=DEFAULT)")
 set(BILI_SKIP_LOOP_FILTER "48" CACHE STRING "H.264 skip_loop_filter AVDiscard value (48=ALL, 0=DEFAULT)")
 option(BILI_PACKED_CHROMA "Use exact packed H.264 chroma kernels" ON)
@@ -113,7 +114,7 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/me")
 file(REMOVE_RECURSE "${ME_INCLUDE_ROOT}/me-core-mapper")
 file(CREATE_LINK "${ME_CORE_ROOT}" "${ME_INCLUDE_ROOT}/me-core-mapper" SYMBOLIC)
 
-if(BILI_VME_QPEL)
+if(BILI_VME_QPEL OR BILI_ME_FRAME_PIPELINE)
     set(_psp_approx_qpel 0)
 else()
     option(BILI_APPROX_QPEL "Use integer approximate luma qpel" ON)
@@ -150,6 +151,7 @@ set(DECODER_DEFINITIONS
     PSP_ME_CACHE=$<BOOL:${BILI_BENCHMARK_ME_CACHE}>
     PSP_VME_RENDER=$<BOOL:${BILI_VME_RENDER}>
     PSP_VME_QPEL=$<BOOL:${BILI_VME_QPEL}>
+    PSP_ME_FRAME_PIPELINE=$<BOOL:${BILI_ME_FRAME_PIPELINE}>
     PSP_ME_FULL_CACHE=$<BOOL:${BILI_BENCHMARK_ME_FULL_CACHE}>
     PSP_ME_DECODE=0
     PSP_ME_DECODE_CHECK=0
@@ -186,6 +188,9 @@ add_library(pspvideo STATIC
     decoder/me/me_entry.S
     "${ME_CORE_ROOT}/me-core-mapping.c"
     "${ME_CORE_ROOT}/vme-lib.c")
+if(BILI_ME_FRAME_PIPELINE)
+    target_sources(pspvideo PRIVATE decoder/src/me_frame_pipeline.c)
+endif()
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
