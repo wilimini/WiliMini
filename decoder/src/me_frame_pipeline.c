@@ -30,14 +30,17 @@
 #if PSP_VME_RENDER
 #include "vme_render.h"
 #endif
+#include "me_qpel_exact.h"
 #include "me_frame_pipeline.h"
 
 #define MEFP_RING_DEPTH     8
 #define MEFP_FRAME_SLOTS    2
 #define MEFP_MAX_MBS        1680
 #define MEFP_MAX_SLICES     8
-#define MEFP_MAX_MC_PARTS   15000
-#define MEFP_MAX_COEFFS     360000
+#define MEFP_INIT_MC_PARTS  2048
+#define MEFP_MAX_MC_PARTS   26880
+#define MEFP_INIT_COEFFS    65536
+#define MEFP_MAX_COEFFS     655360
 #define MEFP_MAX_HELD_REFS  32
 #define MEFP_MAX_STRIDE     1024
 #define MEFP_MAX_UVSTRIDE   512
@@ -124,11 +127,13 @@ typedef struct __attribute__((aligned(64))) {
     unsigned mc_count;
     unsigned intra4_count;
     unsigned coeff_count;
+    unsigned mc_cap;
+    unsigned coeff_cap;
+    MefpMcPart   *mc_parts;
+    int16_t      *coeff_pool;
     MefpSliceInfo slices[MEFP_MAX_SLICES];
     MefpMbCmd     mbs[MEFP_MAX_MBS];
     uint8_t       intra4_modes[MEFP_MAX_MBS * 16];
-    MefpMcPart    mc_parts[MEFP_MAX_MC_PARTS];
-    int16_t       coeff_pool[MEFP_MAX_COEFFS];
 } MefpFrameSlot;
 
 typedef struct __attribute__((aligned(64))) {
@@ -184,9 +189,11 @@ static MefpRing mefp_ring;
 static MefpDsp  mefp_dsp;
 static MeJob    mefp_job __attribute__((aligned(64)));
 
-/* ME-only scratchpads (accessed exclusively via KSEG0 0x88xxxxxx on ME) */
-static uint8_t mefp_emu_buf[MEFP_MAX_STRIDE * 28] __attribute__((aligned(64)));
-static uint8_t mefp_bipred_buf[MEFP_MAX_STRIDE * 32] __attribute__((aligned(64)));
+/* ME-only scratchpads placed in ME's dedicated 2 MiB eDRAM (cached KSEG0
+ * 0x80120000..0x80130000, above VME_EDRAM_OUT16 and ~832 KiB below ME stack).
+ * Saves 60 KiB of Main RAM BSS and avoids Main RAM bus contention on edge/bipred. */
+#define MEFP_EDRAM_EMU_BUF    0x80120000u /* 28 KiB: MEFP_MAX_STRIDE * 28 */
+#define MEFP_EDRAM_BIPRED_BUF 0x80128000u /* 32 KiB: MEFP_MAX_STRIDE * 32 */
 
 /* SC-only state */
 static MefpFrameSlot *mefp_slots[MEFP_FRAME_SLOTS];
@@ -243,8 +250,7 @@ static inline volatile MefpRing *mefp_sc_ctrl(void)
 
 static inline uint8_t mefp_clip_u8(int a)
 {
-    if (a & (~0xFF)) return (uint8_t)((-a) >> 31);
-    return (uint8_t)a;
+    return (uint8_t)meq_clip_u8(a);
 }
 
 static void mefp_put16(uint8_t *dst, const uint8_t *src, ptrdiff_t stride)
@@ -824,8 +830,10 @@ static void me_reconstruct_frame(const MefpDsp *dsp, MefpFrameSlot *s, volatile 
     const int uvlinesize = s->uvlinesize;
     const int *bo = s->block_offset;
 
-    uint8_t *emu_buf    = (uint8_t *)((uintptr_t)mefp_emu_buf | 0x80000000u);
-    uint8_t *bipred_buf = (uint8_t *)((uintptr_t)mefp_bipred_buf | 0x80000000u);
+    uint8_t *emu_buf    = (uint8_t *)MEFP_EDRAM_EMU_BUF;
+    uint8_t *bipred_buf = (uint8_t *)MEFP_EDRAM_BIPRED_BUF;
+    const MefpMcPart *mc_parts = (const MefpMcPart *)((uintptr_t)s->mc_parts | 0x80000000u);
+    int16_t *coeff_base        = (int16_t *)((uintptr_t)s->coeff_pool | 0x80000000u);
 
     unsigned intra_cnt = 0, inter_cnt = 0;
 
@@ -834,13 +842,13 @@ static void me_reconstruct_frame(const MefpDsp *dsp, MefpFrameSlot *s, volatile 
         uint8_t *dest_y  = cur_y  + (mb->mb_y * 16) * linesize   + mb->mb_x * 16;
         uint8_t *dest_cb = cur_cb + (mb->mb_y * 8)  * uvlinesize + mb->mb_x * 8;
         uint8_t *dest_cr = cur_cr + (mb->mb_y * 8)  * uvlinesize + mb->mb_x * 8;
-        int16_t *cp = s->coeff_pool + mb->coeff_start;
+        int16_t *cp = coeff_base + mb->coeff_start;
 
         if (mb->kind == MEFP_MB_INTER) {
             ++inter_cnt;
             const MefpSliceInfo *sl = &s->slices[(mb->flags >> 1) & 7u];
             for (unsigned p = 0; p < mb->mc_count; ++p) {
-                me_exec_mc_part(dsp, s, sl, mb, &s->mc_parts[mb->mc_start + p],
+                me_exec_mc_part(dsp, s, sl, mb, &mc_parts[mb->mc_start + p],
                                 dest_y, dest_cb, dest_cr, emu_buf, bipred_buf);
             }
             if (mb->luma_res_mask) {
@@ -1363,6 +1371,37 @@ static inline uint16_t mefp_pack_chroma(const H264Context *h, H264SliceContext *
     return mask;
 }
 
+static int mefp_ensure_pools(MefpFrameSlot *s, unsigned need_mc, unsigned need_coeff)
+{
+    if (s->mc_count + need_mc > s->mc_cap) {
+        unsigned ncap = s->mc_cap ? s->mc_cap * 2 : MEFP_INIT_MC_PARTS;
+        while (ncap < s->mc_count + need_mc) ncap *= 2;
+        if (ncap > MEFP_MAX_MC_PARTS) ncap = MEFP_MAX_MC_PARTS;
+        if (s->mc_count + need_mc > ncap) return -1;
+        MefpMcPart *nbuf = memalign(64, ncap * sizeof(MefpMcPart));
+        if (!nbuf) return -1;
+        if (s->mc_parts && s->mc_count)
+            memcpy(nbuf, s->mc_parts, s->mc_count * sizeof(MefpMcPart));
+        free(s->mc_parts);
+        s->mc_parts = nbuf;
+        s->mc_cap = ncap;
+    }
+    if (s->coeff_count + need_coeff > s->coeff_cap) {
+        unsigned ncap = s->coeff_cap ? s->coeff_cap * 2 : MEFP_INIT_COEFFS;
+        while (ncap < s->coeff_count + need_coeff) ncap *= 2;
+        if (ncap > MEFP_MAX_COEFFS) ncap = MEFP_MAX_COEFFS;
+        if (s->coeff_count + need_coeff > ncap) return -1;
+        int16_t *nbuf = memalign(64, ncap * sizeof(int16_t));
+        if (!nbuf) return -1;
+        if (s->coeff_pool && s->coeff_count)
+            memcpy(nbuf, s->coeff_pool, s->coeff_count * sizeof(int16_t));
+        free(s->coeff_pool);
+        s->coeff_pool = nbuf;
+        s->coeff_cap = ncap;
+    }
+    return 0;
+}
+
 static int mefp_hook_capture_mb(const H264Context *h, H264SliceContext *sl)
 {
     if (mefp_open_slot_idx < 0 || mefp_frame_fallback) return 0;
@@ -1373,10 +1412,10 @@ static int mefp_hook_capture_mb(const H264Context *h, H264SliceContext *sl)
     const int mb_type = h->cur_pic.mb_type[mb_xy];
 
     if (s->mb_count >= MEFP_MAX_MBS ||
-        s->mc_count + 16 > MEFP_MAX_MC_PARTS ||
-        s->coeff_count + 384 > MEFP_MAX_COEFFS ||
-        s->intra4_count + 16 > MEFP_MAX_MBS * 16) {
-        return 0; /* should never happen on <= 640x360 */
+        s->intra4_count + 16 > MEFP_MAX_MBS * 16 ||
+        mefp_ensure_pools(s, 16, 384) < 0) {
+        mefp_stat_error = AVERROR(ENOMEM);
+        return 0;
     }
 
     h->list_counts[mb_xy] = (uint8_t)sl->list_count;
@@ -1644,13 +1683,19 @@ int mefp_start(int output_format,
     mefp_publish_cb = publish_cb;
     mefp_release_cb = release_cb;
 
-    /* Allocate 2 whole-frame command slots + reusable AVFrame holders */
+    /* Allocate 2 whole-frame command slots + compact growable pools */
     for (int i = 0; i < MEFP_FRAME_SLOTS; ++i) {
         mefp_slots[i] = memalign(64, sizeof(MefpFrameSlot));
         mefp_slot_cur[i] = av_frame_alloc();
         mefp_slot_seq[i] = 0;
         mefp_slot_ref_count[i] = 0;
         if (!mefp_slots[i] || !mefp_slot_cur[i]) goto oom;
+        memset(mefp_slots[i], 0, sizeof(MefpFrameSlot));
+        mefp_slots[i]->mc_parts = memalign(64, MEFP_INIT_MC_PARTS * sizeof(MefpMcPart));
+        mefp_slots[i]->coeff_pool = memalign(64, MEFP_INIT_COEFFS * sizeof(int16_t));
+        if (!mefp_slots[i]->mc_parts || !mefp_slots[i]->coeff_pool) goto oom;
+        mefp_slots[i]->mc_cap = MEFP_INIT_MC_PARTS;
+        mefp_slots[i]->coeff_cap = MEFP_INIT_COEFFS;
         for (int r = 0; r < MEFP_MAX_HELD_REFS; ++r) {
             mefp_slot_refs[i][r] = av_frame_alloc();
             if (!mefp_slot_refs[i][r]) goto oom;
@@ -1667,6 +1712,7 @@ int mefp_start(int output_format,
     mefp_dsp.qpel.avg_h264_qpel_pixels_tab[0][0] = mefp_avg16;
     mefp_dsp.qpel.put_h264_qpel_pixels_tab[1][0] = mefp_put8;
     mefp_dsp.qpel.avg_h264_qpel_pixels_tab[1][0] = mefp_avg8;
+    meq_install_qpel(&mefp_dsp.qpel);
     __real_ff_h264chroma_init(&mefp_dsp.chroma, 8);
     mefp_dsp.chroma.put_h264_chroma_pixels_tab[0] = mefp_chroma_put8;
     mefp_dsp.chroma.put_h264_chroma_pixels_tab[1] = mefp_chroma_put4;
@@ -1715,6 +1761,10 @@ oom:
     ret = AVERROR(ENOMEM);
 fail:
     for (int i = 0; i < MEFP_FRAME_SLOTS; ++i) {
+        if (mefp_slots[i]) {
+            free(mefp_slots[i]->mc_parts);
+            free(mefp_slots[i]->coeff_pool);
+        }
         free(mefp_slots[i]); mefp_slots[i] = NULL;
         av_frame_free(&mefp_slot_cur[i]);
         for (int r = 0; r < MEFP_MAX_HELD_REFS; ++r)
@@ -1803,6 +1853,10 @@ int mefp_stop(void)
 
     for (int i = 0; i < MEFP_FRAME_SLOTS; ++i) {
         mefp_release_slot_refs(i);
+        if (mefp_slots[i]) {
+            free(mefp_slots[i]->mc_parts);
+            free(mefp_slots[i]->coeff_pool);
+        }
         free(mefp_slots[i]); mefp_slots[i] = NULL;
         av_frame_free(&mefp_slot_cur[i]);
         for (int r = 0; r < MEFP_MAX_HELD_REFS; ++r)
