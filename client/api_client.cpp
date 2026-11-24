@@ -247,19 +247,19 @@ pspapp::Result<pspapp::ApiResponse> requestDocument(pspapp::HttpClient &http,
             return response;
     }
     try {
-        const auto &root = response.value.data;
+        auto &root = response.value.data;
         int code = root.at("code").get<int>();
         if (code != 0)
             return Result<ApiResponse>::failure(
                 {code == -101 ? ErrorDomain::Auth : ErrorDomain::Api,
                  code == -101 ? ErrorKind::LoginRequired : ErrorKind::ApiRejected, op, code});
-        nlohmann::json data;
-        if (root.contains("data"))
-            data = root.at("data");
-        else if (root.contains("result"))
-            data = root.at("result");
-        else
+        auto it = root.find("data");
+        if (it == root.end())
+            it = root.find("result");
+        if (it == root.end())
             throw std::runtime_error("Missing data");
+        // Move the child out before overwriting root so the subtree is never deep-copied.
+        nlohmann::json data = std::move(*it);
         response.value.data = std::move(data);
         return response;
     } catch (const std::exception &) {
@@ -462,7 +462,9 @@ Result<ApiResponse> BilibiliApi::post(const std::string &endpoint, const ApiPara
         if (code != 0)
             return Result<ApiResponse>::failure({code == -101 ? ErrorDomain::Auth : ErrorDomain::Api,
                 code == -101 ? ErrorKind::LoginRequired : ErrorKind::ApiRejected, operation, code});
-        return {{root.value("data", nlohmann::json()), {}}, {}};
+        auto it = root.find("data");
+        nlohmann::json data = it != root.end() ? std::move(*it) : nlohmann::json();
+        return {{std::move(data), {}}, {}};
     } catch (const std::exception &) {
         return Result<ApiResponse>::failure({ErrorDomain::Api, ErrorKind::InvalidResponse, operation});
     }
