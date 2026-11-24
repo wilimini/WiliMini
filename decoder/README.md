@@ -87,6 +87,15 @@ HOME 退出由宿主注册回调并调用 `psp_video_stop()`。返回前会等�
 在线内存不足复现和缓解结果见 [内存调查](../docs/playback-memory-investigation.md)。
 原生后端要求提供 `presenter`。
 
+2026-11-24 在 PPSSPPHeadless（固定提交 `44f1f44`，软件渲染）运行 SC 重建诊断构建
+（`BILI_DEVICE_PLAYBACK_CPU_RENDER=ON`，未执行 ME 流水线，模拟器无 ME 固件），
+640×360/24fps High Profile（B 帧）8 秒 H.264/AAC 片源，默认跳帧设置。
+PSP-1000 与 PSP-3000 机型各连续播放 2/4/8 帧队列：均 code=0、EOF，呈现 100 帧、
+丢弃 0、追赶包 0，结束后堆回落到播放前水平。预热后堆占用分别为 6.34、7.08、8.57 MB，
+每增加一个排队帧约 363 KiB（旧 RGB 队列每帧 RGB565 272 KiB、RGBA8888 544 KiB）。
+截图确认 GE 转色、缩放正确。模拟器结果不代表真机内存或性能，ME 流水线本身
+（约 0.47 MiB 命令槽，MIST 另加 60 KiB 暂存区）未在此测量。
+
 音频与视频共用同一封装时，音频沿用视频上下文的探测结果（流参数与 `start_time`），
 避免再次探测时打开无用的 H.264 解码器；独立的 DASH 音频输入始终调用
 `avformat_find_stream_info()`，以确定起始时间并识别隐式 HE-AAC SBR/PS。
