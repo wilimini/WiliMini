@@ -2,6 +2,9 @@
 #define PSP_LAB_ME_RENDER_H
 #if PSP_ME_RENDER
 #include "me_task.h"
+#if PSP_VME_QPEL
+#include "h264_vme_qpel.h"
+#endif
 #if PSP_ME_DMA
 #include <pspdmac.h>
 #endif
@@ -95,6 +98,16 @@ static int me_render_start(void)
     if (ret < 0) return ret;
     meCoreSelectSystemTable(ret);
     sceKernelDcacheWritebackRange(&meCoreSystemTable, sizeof(meCoreSystemTable));
+#if PSP_VME_RENDER || PSP_VME_QPEL
+    if (meLabBackend() == ME_BACKEND_CUSTOM_CORE) {
+        vme_contexts_init();
+        memset(&me_job, 0, sizeof(me_job));
+        me_job.operation = 0;
+        int vret = meLabSubmit(&me_job);
+        if (vret >= 0) vret = meLabWait();
+        if (vret < 0) return vret;
+    }
+#endif
 #if PSP_AUDIO && PSP_RGB_PACE
     if (ret >= 0) ret = rgb_start();
     if (ret == AVERROR(EBUSY)) playback_diagnostic("rgb_buffer_retained_busy", ret);
@@ -197,5 +210,108 @@ static int me_render_shutdown(void)
 #endif
     return ret < 0 ? ret : shutdown;
 }
+#if PSP_VME_QPEL
+#define VME_QPEL_SLOTS 6
+#define VME_QPEL_PLANE_BYTES (VME_HP_W * VME_HP_MAX_H)
+#define VME_QPEL_SLOT_BYTES  (VME_QPEL_PLANE_BYTES * 3)
+static uint8_t *vme_qpel_pool_mem;
+static unsigned vme_qpel_free_mask;
+static VmeHalfpelJob vme_hp_job __attribute__((aligned(64)));
+static unsigned vme_qpel_refs_built;
+static uint64_t vme_qpel_total_us;
+
+static void vme_qpel_slot_free(void *opaque, uint8_t *data)
+{
+    (void)data;
+    unsigned slot = (unsigned)(uintptr_t)opaque;
+    if (slot < VME_QPEL_SLOTS) vme_qpel_free_mask |= (1u << slot);
+}
+
+static AVBufferRef *vme_qpel_ref_build(const uint8_t *luma, int stride,
+                                       int width, int height,
+                                       PspVmeHalfpelPlanes *out)
+{
+    if (!vme_qpel_pool_mem || !vme_qpel_free_mask) return NULL;
+    if (width != VME_HP_W || height <= 0 || height > VME_HP_MAX_H || stride < VME_HP_W)
+        return NULL;
+    if (me_render_finish() < 0) return NULL;
+
+    unsigned slot = 0;
+    while (slot < VME_QPEL_SLOTS && !(vme_qpel_free_mask & (1u << slot))) ++slot;
+    if (slot >= VME_QPEL_SLOTS) return NULL;
+
+    uint8_t *base = vme_qpel_pool_mem + (size_t)slot * VME_QPEL_SLOT_BYTES;
+    uint8_t *p20 = base;
+    uint8_t *p02 = base + VME_QPEL_PLANE_BYTES;
+    uint8_t *p22 = base + VME_QPEL_PLANE_BYTES * 2;
+
+    AVBufferRef *ref = av_buffer_create(base, VME_QPEL_SLOT_BYTES,
+                                        vme_qpel_slot_free,
+                                        (void *)(uintptr_t)slot, 0);
+    if (!ref) return NULL;
+    vme_qpel_free_mask &= ~(1u << slot);
+
+    uint64_t t0 = sceKernelGetSystemTimeWide();
+    vme_hp_job.p20 = p20;
+    vme_hp_job.p02 = p02;
+    vme_hp_job.p22 = p22;
+    sceKernelDcacheWritebackAll();
+
+    memset(&me_job, 0, sizeof(me_job));
+    me_job.operation = 2;
+    me_job.planes[0] = luma;
+    me_job.strides[0] = stride;
+    me_job.width = width;
+    me_job.height = height;
+    me_job.output = &vme_hp_job;
+
+    int ret = meLabSubmit(&me_job);
+    if (ret >= 0) ret = meLabWait();
+    if (ret < 0 || me_job.value != 0x4d450002u) {
+        av_buffer_unref(&ref);
+        return NULL;
+    }
+    sceKernelDcacheWritebackInvalidateAll();
+    vme_qpel_total_us += sceKernelGetSystemTimeWide() - t0;
+    ++vme_qpel_refs_built;
+
+    out->p20 = p20;
+    out->p02 = p02;
+    out->p22 = p22;
+    out->stride = VME_HP_W;
+    out->width = width;
+    out->height = height;
+    return ref;
+}
+
+static void vme_qpel_start(void)
+{
+    vme_qpel_refs_built = 0;
+    vme_qpel_total_us = 0;
+    avpriv_psp_vme_ref_build = NULL;
+    if (meLabBackend() != ME_BACKEND_CUSTOM_CORE) return;
+    if (!vme_qpel_pool_mem)
+        vme_qpel_pool_mem = memalign(64, (size_t)VME_QPEL_SLOTS * VME_QPEL_SLOT_BYTES);
+    if (!vme_qpel_pool_mem) return;
+    vme_qpel_free_mask = (1u << VME_QPEL_SLOTS) - 1u;
+    avpriv_psp_vme_ref_build = vme_qpel_ref_build;
+    WLOG_I(WLC_MEM, "vme_qpel_pool slots=%u bytes=%u",
+           (unsigned)VME_QPEL_SLOTS, (unsigned)(VME_QPEL_SLOTS * VME_QPEL_SLOT_BYTES));
+}
+
+static void vme_qpel_stop(void)
+{
+    avpriv_psp_vme_ref_build = NULL;
+}
+
+static void vme_qpel_free(void)
+{
+    avpriv_psp_vme_ref_build = NULL;
+    if (vme_qpel_pool_mem && vme_qpel_free_mask == ((1u << VME_QPEL_SLOTS) - 1u)) {
+        free(vme_qpel_pool_mem);
+        vme_qpel_pool_mem = NULL;
+    }
+}
+#endif
 #endif
 #endif

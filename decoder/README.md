@@ -210,3 +210,27 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 原生 ME 跳转保留视频/ME 实例；音频管线会重新打开。源的
 `interrupt_reads` 回调用于中断旧读取，不得销毁或取消下载源。
 快捷键、菜单、缓冲所有权和限制见 [播放控制与弹幕](../docs/playback-controls.md)。
+
+## VME 转色接入实验
+
+`make package CMAKE_ARGS='-DBILI_VME_RENDER=ON -DBILI_DEVICE_PLAYBACK_TEST=ON'`
+启用播放器 ME worker 中的实验转色路径。仅 640×360、RGB565 使用 VME；
+其他尺寸和 RGBA8888 仍使用原有实现。该路径没有运行时回退。
+输入按原有 4→3 采样送入 scratchpad，运行三遍 VME context，直接读取
+RGB565 输出，沿用 RGB 队列及缓存写回生命周期。暂未使用异步 DMA、
+16-bit 打包传输或参考帧半像素预计算，因此不能代表最终性能。
+
+2026-11-24 在 PSP model=2、MIST 后端运行 640×360/24fps、5 秒合成
+H.264/AAC 测试片，播放器返回 code=0、eof=1、frames=28。
+这只验证播放调用完成；颜色一致性、Custom Core 播放与性能对照仍待验证。
+VME API 和 opcode 来自 mcidclan 的 MIT 许可实现，见对应第三方目录。
+
+同日用同一段真实视频重编码的 12 秒 H.264/AAC MP4（640×360、
+24fps、288 帧）在同一台 PSP（model=2、MIST、CPU 333 MHz、
+总线 166 MHz、2 个 RGB 缓冲）各运行一次。关闭 VME 时记录
+16 次帧提交，开启时记录 47 次，约合每秒 1.33 和 3.92 次提交。
+两次都到达 EOF；追帧逻辑分别跳过 259 和 195 个视频包。关闭
+和开启 VME 的两轮均现场报告黑屏，因此提交计数不能用来确认可见
+画面或颜色正确性。两个样本跨过的渲染统计预热区间不同，不能直接比较
+`render_us`。测试视频 SHA-256 为
+`779e07cb28cc57b8f3ae6000c6e2a69f1b03633180da52819b332ba875fd433e`。

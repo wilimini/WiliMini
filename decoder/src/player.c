@@ -730,6 +730,13 @@ static void save_results(const char *path, const RunStats *s, int render,
 #endif
 #if PSP_ME_RENDER
         fprintf(out, "  \"me_submitted\": %u,\n  \"me_completed\": %u,\n", me_submitted, me_completed);
+#if PSP_VME_RENDER
+        fprintf(out, "  \"vme_render\": 1,\n");
+#endif
+#if PSP_VME_QPEL
+        fprintf(out, "  \"vme_qpel\": 1,\n  \"vme_qpel_refs\": %u,\n  \"vme_qpel_us\": %llu,\n",
+                vme_qpel_refs_built, (unsigned long long)vme_qpel_total_us);
+#endif
 #if PSP_PTS_PACE
         fprintf(out, "  \"late_over_40ms_including_warmup\": %u,\n"
                 "  \"max_lateness_us\": %u,\n  \"total_lateness_us\": %llu,\n",
@@ -888,7 +895,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
 #endif
         }
 
-#if PSP_HEADLESS_VERIFY
+#if PSP_HEADLESS_VERIFY || PSP_VME_QPEL || PSP_VME_RENDER || !PSP_APPROX_QPEL
         if (*output_count >= WARMUP_FRAMES) {
             s->frame_hash = hash_visible_plane(s->frame_hash, frame->data[0],
                                                frame->width, frame->height, frame->linesize[0]);
@@ -962,7 +969,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     presentation_origin_us = presentation_deadline = 0;
 #endif
     memset(psp_profile_stages, 0, sizeof(psp_profile_stages));
-#if PSP_HEADLESS_VERIFY
+#if PSP_HEADLESS_VERIFY || PSP_VME_QPEL || PSP_VME_RENDER || !PSP_APPROX_QPEL
     stats->frame_hash = 2166136261u;
     stats->render_hash = 2166136261u;
 #endif
@@ -1014,6 +1021,9 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
         ret = me_render_start();
         playback_diagnostic("me_render_init_end", ret);
         if (ret < 0) goto done;
+#if PSP_VME_QPEL
+        vme_qpel_start();
+#endif
     }
 #endif
 
@@ -1194,6 +1204,9 @@ done:
     }
 #endif
 #if PSP_ME_RENDER
+#if PSP_VME_QPEL
+    vme_qpel_stop();
+#endif
     if (render) {
         unsigned begin = tick_us();
         int finish = me_render_finish();
@@ -1260,6 +1273,9 @@ done:
     if (packet) av_packet_free(&packet);
     if (frame) av_frame_free(&frame);
     if (codec) avcodec_free_context(&codec);
+#if PSP_ME_RENDER && PSP_VME_QPEL
+    vme_qpel_free();
+#endif
     source_memory("video_codec_closed");
     source_close(&format, &input_io);
     source_memory("video_source_closed");

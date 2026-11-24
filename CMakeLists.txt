@@ -28,6 +28,10 @@ option(BILI_DEVICE_PLAYBACK_CPU_RENDER "Diagnostic CPU display when ME firmware 
 option(BILI_PPSSPP_SCE_MPEG "Use the legacy PPSSPP sceMpeg backend instead of native ME" OFF)
 option(BILI_MEMORY_PROFILE "Log large libc allocations for memory diagnostics" OFF)
 option(BILI_NETWORK_DIAGNOSTICS "Log redacted HTTP connection counts and timings" OFF)
+option(BILI_VME_RENDER "Experimental VME RGB565 playback renderer (640x360)" OFF)
+option(BILI_VME_QPEL "Experimental VME2 exact reference-frame half-pel precomputation" OFF)
+set(BILI_SKIP_FRAME "8" CACHE STRING "H.264 skip_frame AVDiscard value (8=NONREF, 0=DEFAULT)")
+set(BILI_SKIP_LOOP_FILTER "48" CACHE STRING "H.264 skip_loop_filter AVDiscard value (48=ALL, 0=DEFAULT)")
 option(BILI_PACKED_CHROMA "Use exact packed H.264 chroma kernels" ON)
 option(BILI_BENCHMARK_ME_CACHE "Diagnostic whole-cache ME input writeback" OFF)
 option(BILI_BENCHMARK_ME_FULL_CACHE "Diagnostic whole-cache maintenance on ME" OFF)
@@ -109,6 +113,17 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/me")
 file(REMOVE_RECURSE "${ME_INCLUDE_ROOT}/me-core-mapper")
 file(CREATE_LINK "${ME_CORE_ROOT}" "${ME_INCLUDE_ROOT}/me-core-mapper" SYMBOLIC)
 
+if(BILI_VME_QPEL)
+    set(_psp_approx_qpel 0)
+else()
+    option(BILI_APPROX_QPEL "Use integer approximate luma qpel" ON)
+    if(BILI_APPROX_QPEL)
+        set(_psp_approx_qpel 2)
+    else()
+        set(_psp_approx_qpel 0)
+    endif()
+endif()
+
 set(DECODER_DEFINITIONS
     _POSIX_C_SOURCE=200809L
     PSP_BUILD_ID=\"${BILI_BUILD_VERSION}\"
@@ -133,6 +148,8 @@ set(DECODER_DEFINITIONS
     PSP_ME_RENDER=2
     PSP_ME_DMA=1
     PSP_ME_CACHE=$<BOOL:${BILI_BENCHMARK_ME_CACHE}>
+    PSP_VME_RENDER=$<BOOL:${BILI_VME_RENDER}>
+    PSP_VME_QPEL=$<BOOL:${BILI_VME_QPEL}>
     PSP_ME_FULL_CACHE=$<BOOL:${BILI_BENCHMARK_ME_FULL_CACHE}>
     PSP_ME_DECODE=0
     PSP_ME_DECODE_CHECK=0
@@ -141,9 +158,9 @@ set(DECODER_DEFINITIONS
     PSP_ME_DECODE_SELECT=0
     PSP_ME_PIPE_BATCH=8
     PSP_ME_PIPE_FILTER=0
-    PSP_SKIP_FRAME=8
-    PSP_SKIP_LOOP_FILTER=48
-    PSP_APPROX_QPEL=2
+    PSP_SKIP_FRAME=${BILI_SKIP_FRAME}
+    PSP_SKIP_LOOP_FILTER=${BILI_SKIP_LOOP_FILTER}
+    PSP_APPROX_QPEL=${_psp_approx_qpel}
     PSP_PACKED_CHROMA=$<BOOL:${BILI_PACKED_CHROMA}>
     PSP_YUV_LUT=1
     PSP_SPATIAL_LUT=1
@@ -167,7 +184,8 @@ add_library(pspvideo STATIC
     decoder/src/audio_vfpu.c
     decoder/me/me_lab.S
     decoder/me/me_entry.S
-    "${ME_CORE_ROOT}/me-core-mapping.c")
+    "${ME_CORE_ROOT}/me-core-mapping.c"
+    "${ME_CORE_ROOT}/vme-lib.c")
 target_compile_definitions(pspvideo PRIVATE ${DECODER_DEFINITIONS})
 target_compile_definitions(pspvideo PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)
 target_include_directories(pspvideo PRIVATE
@@ -223,7 +241,8 @@ endfunction()
 add_me_bridge(me_bridge me_bridge
     decoder/me/bridge.c decoder/me/mist_backend.c "${ME_MIST_ROOT}/me-mist-utils.c")
 add_me_bridge(me_bridge_custom_core me_bridge_custom_core
-    decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c "${ME_CORE_ROOT}/me-lib.c")
+    decoder/me/custom_core_bridge.c decoder/me/custom_core_runtime.c
+    "${ME_CORE_ROOT}/me-lib.c" "${ME_CORE_ROOT}/me-core-custom.c")
 # Keep PSP export roots while discarding the upstream user-mode kcall loader.
 target_link_options(me_bridge_custom_core PRIVATE -Wl,--gc-sections -Wl,-u,__library_exports)
 target_link_libraries(me_bridge_custom_core PRIVATE psppower)
