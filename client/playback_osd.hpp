@@ -63,6 +63,8 @@ private:
     void drawSubtitles(const PspVideoStatus& status);
     unsigned count_ = 0, page_ = 1;
     uint64_t lastDraw_ = 0;
+    uint64_t fpsWindowStart_ = 0;
+    unsigned fpsFrames_ = 0, fpsTenths_ = 0;
     bool haveFrame_ = false;
     GeYuvRenderer yuv_;
     std::string title_, seeking_, buffering_, qualityNames_[3];

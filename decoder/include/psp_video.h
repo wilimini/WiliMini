@@ -82,6 +82,9 @@ typedef struct {
     int diagnostic_profile; /* Nonzero enables sampled H.264 timings; adds overhead. */
     const PspVideoPresenter *presenter; /* required by the native backend */
     int start_paused;
+    /* Nonzero skips H.264 non-reference frames (AVDISCARD_NONREF) to reduce
+     * decode load; 0 decodes all frames (AVDISCARD_DEFAULT). */
+    int skip_nonref;
     const PspVideoSettings *settings;
     /* Optional host cancellation flag; remains valid until play returns.
      * Publish with an atomic store. Controller thread owns source cancellation. */

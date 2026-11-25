@@ -79,6 +79,8 @@ void App::changeSetting() {
         case SettingItem::SlowRepeat: next.slowRepeat = !next.slowRepeat; break;
         case SettingItem::PlaybackBufferFrames: next.playbackBufferFrames = next.playbackBufferFrames == 2 ? 4 :
                     next.playbackBufferFrames == 4 ? 8 : 2; break;
+        case SettingItem::ShowFps: next.showFps = !next.showFps; break;
+        case SettingItem::SkipNonRefFrames: next.skipNonRefFrames = !next.skipNonRefFrames; break;
         case SettingItem::MeBackend:
             next.meBackend = next.meBackend == MeBackend::Mist ? MeBackend::CustomCore : MeBackend::Mist;
             break;

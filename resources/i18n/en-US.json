@@ -11,6 +11,8 @@
   "settings_covers": "Cover loading",
   "settings_repeat": "Button repeat",
   "settings_playback_buffer": "Playback buffer",
+  "settings_show_fps": "Show playback FPS",
+  "settings_skip_nonref": "Skip non-ref frames",
   "settings_me_backend": "ME backend",
   "settings_confirm_button": "Confirm button",
   "settings_language": "Language",

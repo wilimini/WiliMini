@@ -65,6 +65,16 @@ bool loadPreferences(const char* path, Preferences& preferences) {
         loaded.musicRepeat = root.value("music_repeat", 0);
         if (loaded.musicRepeat < 0 || loaded.musicRepeat > 2) loaded.musicRepeat = 0;
         loaded.playbackBufferFrames = root.value("playback_buffer_frames", defaultPlaybackBufferFrames());
+        const auto showFps = root.find("show_fps");
+        if (showFps != root.end()) {
+            if (!showFps->is_boolean()) return false;
+            loaded.showFps = showFps->get<bool>();
+        }
+        const auto skipNonRef = root.find("skip_nonref_frames");
+        if (skipNonRef != root.end()) {
+            if (!skipNonRef->is_boolean()) return false;
+            loaded.skipNonRefFrames = skipNonRef->get<bool>();
+        }
         // "playback_pixel_format" from earlier builds is ignored: frames are
         // now always converted by the GE.
         const std::string meBackend = root.value("me_backend", std::string("custom-core"));
@@ -147,6 +157,8 @@ bool savePreferences(const char* path, const Preferences& preferences) {
         {"show_covers", preferences.showCovers}, {"slow_repeat", preferences.slowRepeat},
         {"music_repeat", preferences.musicRepeat},
         {"playback_buffer_frames", preferences.playbackBufferFrames},
+        {"show_fps", preferences.showFps},
+        {"skip_nonref_frames", preferences.skipNonRefFrames},
         {"me_backend", meBackendCode(preferences.meBackend)},
         {"confirm_with_circle", preferences.confirmWithCircle},
         {"confirm_button", preferences.confirmWithCircle ? "circle" : "cross"},
