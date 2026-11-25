@@ -1,5 +1,5 @@
 #include "auth_service.hpp"
-#include "../button_icons.hpp"
+#include "../localization.hpp"
 #include "../bilibili.h"
 #include "../api/wiliwili/bilibili/api.h"
 #include "../third_party/qrcodegen/qrcodegen.h"
@@ -9,22 +9,23 @@ using namespace bilibili;
 static AppError invalid(ErrorOperation op) {
     return {ErrorDomain::Auth, ErrorKind::InvalidResponse, op};
 }
-const char *authStateMessage(AuthState state, bool confirmWithCircle) {
+std::string authStateMessage(AuthState state, bool confirmWithCircle) {
+    const char *confirm = buttonGlyph(confirmWithCircle ? ControllerButton::Circle : ControllerButton::Cross);
     switch (state) {
     case AuthState::Restored:
-        return "已恢复账号 · 等待联网验证";
+        return tr(TextId::auth_restored);
     case AuthState::WaitingScan:
-        return "请用哔哩哔哩手机客户端扫码";
+        return tr(TextId::auth_wait_scan);
     case AuthState::WaitingConfirm:
-        return "已扫码 · 请在手机上确认登录";
+        return tr(TextId::auth_wait_confirm);
     case AuthState::QrExpired:
-        return "二维码已过期 · " BTN_TRIANGLE " 刷新";
+        return tr(TextId::auth_qr_expired);
     case AuthState::SignedIn:
-        return "已登录";
+        return tr(TextId::auth_signed_in);
     case AuthState::SessionExpired:
-        return confirmWithCircle ? "登录已失效 · " BTN_CIRCLE " 重新扫码" : "登录已失效 · " BTN_CROSS " 重新扫码";
+        return formatTr(TextId::auth_session_expired, {{"confirm", confirm}});
     default:
-        return confirmWithCircle ? "未登录 · " BTN_CIRCLE " 扫码登录" : "未登录 · " BTN_CROSS " 扫码登录";
+        return formatTr(TextId::auth_signed_out, {{"confirm", confirm}});
     }
 }
 Result<AuthView> AuthService::restore() {

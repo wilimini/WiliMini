@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
     const int playbackTest = controlledPlaybackTest();
     logMemory("playback_test_complete");
     ui_resume();
-    ui_startup_status("播放测试完成 · START 退出");
+    ui_startup_status(pspapp::tr(pspapp::TextId::startup_playback_test_done));
     for (;;) {
         SceCtrlData pad{};
         sceCtrlReadBufferPositive(&pad, 1);
@@ -180,15 +180,15 @@ int main(int argc, char** argv) {
         app.setActiveMeBackend(psp_video_me_backend());
         WLOG_I(WLC_CLIENT, "me_backend=%d", app.activeMeBackend());
     }
-    ui_startup_status("正在读取设置与本地缓存…");
+    ui_startup_status(pspapp::tr(pspapp::TextId::startup_loading_cache));
     app.init();
     logMemory("app_init");
-    app.setStatus("正在初始化网络…");
+    app.setStatus(pspapp::text(pspapp::TextId::startup_init_network, app.preferences().locale));
     ui_render(app);
 #ifdef BILI_DEVICE_OSK_TEST
     app.setTab(pspapp::Tab::Search);
     ui_render(app);
-    const std::string osk_text = ui_input_text("PSP OSK 测试", "");
+    const std::string osk_text = ui_input_text(pspapp::text(pspapp::TextId::startup_osk_test, app.preferences().locale), "");
     FILE* osk_result = std::fopen(CLIENT_PATH("/osk-result.txt"), "w");
     if (osk_result) {
         std::fprintf(osk_result, "%s\n", osk_text.c_str());
@@ -207,7 +207,8 @@ int main(int argc, char** argv) {
         pspapp::logError(CLIENT_PATH("/last-error.txt"), initError);
     }
     if (net >= 0 && !network_ready() && !network_has_profile()) {
-        app.setStatus("请选择 Wi-Fi 连接 · " + std::string(app.preferences().backButton()) + " 返回离线首页");
+        app.setStatus(pspapp::formatText(pspapp::TextId::hint_network_offline, app.preferences().locale,
+                                         {{"back", app.preferences().backButton()}}));
         ui_render(app);
         networkDialog();
     }
@@ -331,7 +332,7 @@ int main(int argc, char** argv) {
                 if (app.screen() == pspapp::Screen::Settings &&
                     app.settingSelection() == static_cast<size_t>(pspapp::SettingItem::Wifi)) {
                     networkDialog();
-                    app.setStatus(network_ready() ? "Wi-Fi 已连接" : "已返回 · 未连接 Wi-Fi");
+                    app.setStatus(pspapp::text(network_ready() ? pspapp::TextId::status_wifi_connected : pspapp::TextId::status_wifi_not_connected, app.preferences().locale));
                     previous = ~0u;
                 } else app.activate();
             } else if ((pressed & PSP_CTRL_TRIANGLE) && app.screen() == pspapp::Screen::Storage)
@@ -447,7 +448,7 @@ int main(int argc, char** argv) {
             } else {
                 if (pressed & confirmButton) {
                     if (app.searchInputSelected()) {
-                        const std::string keyword = ui_input_text("搜索 Bilibili", app.query());
+                        const std::string keyword = ui_input_text(pspapp::text(pspapp::TextId::input_search_bilibili, app.preferences().locale), app.query());
                         if (!keyword.empty()) app.search(keyword);
                         previous = ~0u;
                     } else {
@@ -456,7 +457,7 @@ int main(int argc, char** argv) {
                 } else if (pressed & backButton) {
                     app.back();
                 } else if (pressed & PSP_CTRL_SQUARE) {
-                    const std::string keyword = ui_input_text("搜索 Bilibili", app.query());
+                    const std::string keyword = ui_input_text(pspapp::text(pspapp::TextId::input_search_bilibili, app.preferences().locale), app.query());
                     if (!keyword.empty()) app.search(keyword);
                     previous = ~0u;
                 } else if (pressed & PSP_CTRL_TRIANGLE) {
@@ -480,7 +481,7 @@ int main(int argc, char** argv) {
         }
         if (app.communityInputPending() && !app.busy()) {
             bool confirmed = false;
-            const std::string text = ui_input_text("撰写内容", app.communityDraft(), &confirmed);
+            const std::string text = ui_input_text(pspapp::text(pspapp::TextId::input_compose, app.preferences().locale), app.communityDraft(), &confirmed);
             if (confirmed) app.submitCommunityInput(text);
             else app.cancelCommunityInput();
             previous = ~0u;

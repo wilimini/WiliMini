@@ -19,6 +19,10 @@ struct TextArg {
 
 const char* text(TextId id, Locale locale);
 std::string formatText(TextId id, Locale locale, std::initializer_list<TextArg> args);
+Locale currentLocale();
+void setCurrentLocale(Locale locale);
+const char* tr(TextId id);
+std::string formatTr(TextId id, std::initializer_list<TextArg> args);
 const char* buttonGlyph(ControllerButton button);
 const char* localeCode(Locale locale);
 } // namespace pspapp

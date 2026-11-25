@@ -102,6 +102,7 @@ void App::changeSetting() {
         return;
     }
     preferences_ = next;
+    setCurrentLocale(preferences_.locale);
     const auto changed = static_cast<SettingItem>(navigation_.get<SettingsRoute>().selection);
     if (changed == SettingItem::HomeStyle) {
         // Settings sits above the root, so the hub shows once this page is popped.
@@ -135,7 +136,7 @@ void App::openUpdate() {
             // A power loss in the middle of the swap is what the journal is for, but do not invite it.
             if (!scePowerIsPowerOnline() && scePowerGetBatteryLifePercent() >= 0 &&
                 scePowerGetBatteryLifePercent() < 30) {
-                reason = "battery below 30%, connect the charger";
+                reason = pspapp::tr(pspapp::TextId::status_update_low_battery);
                 return false;
             }
             return true;
@@ -176,11 +177,11 @@ void App::startUpdateJob(bool install) {
     joinUpdateThread();
     updateJob = {update_.get(), install};
     updateThread_ = sceKernelCreateThread("wili_update", updateEntry, 0x24, 224 * 1024, PSP_THREAD_ATTR_USER, nullptr);
-    if (updateThread_ < 0) { status_ = "无法启动更新线程"; return; }
+    if (updateThread_ < 0) { status_ = text(TextId::status_update_thread_failed, preferences_.locale); return; }
     if (sceKernelStartThread(updateThread_, 0, nullptr) < 0) {
         sceKernelDeleteThread(updateThread_);
         updateThread_ = -1;
-        status_ = "无法启动更新线程";
+        status_ = text(TextId::status_update_thread_failed, preferences_.locale);
     }
 }
 
@@ -231,7 +232,7 @@ void App::updateStorage() {
     coverBytes_ = 0;
     const SceUID directory = sceIoDopen(CLIENT_PATH("/cache"));
     if (directory < 0) {
-        status_ = "无法读取封面缓存";
+        status_ = text(TextId::status_cache_read_failed, preferences_.locale);
         return;
     }
     SceIoDirent entry{};
@@ -241,7 +242,7 @@ void App::updateStorage() {
         std::memset(&entry, 0, sizeof(entry));
     }
     sceIoDclose(directory);
-    if (result < 0) status_ = "缓存目录读取未完成";
+    if (result < 0) status_ = text(TextId::status_cache_read_incomplete, preferences_.locale);
 }
 
 std::string App::buildVersion() const {
@@ -265,7 +266,7 @@ void App::activateUtility() {
             case UpdateState::Available: startUpdateJob(true); break;
             case UpdateState::Ready: sceKernelExitGame(); break; // the loader swaps files on the next launch
             default:
-                if (!network_ready()) { status_ = "请先连接 Wi-Fi"; return; }
+                if (!network_ready()) { status_ = text(TextId::status_connect_wifi_first, preferences_.locale); return; }
                 if (update_) update_->reset();
                 startUpdateJob(false);
                 break;
@@ -274,24 +275,24 @@ void App::activateUtility() {
         navigation_.push<LicensesRoute>();
     } else if (screen() == Screen::Licenses) {
         const std::string path = std::string(CLIENT_ROOT) + "/licenses/" + settingsLicenses[navigation_.get<LicensesRoute>().selection].file;
-        auto text = readSettingsText(path.c_str(), 256 * 1024);
-        if (text.empty()) {
-            status_ = "许可文件缺失或无法读取";
+        auto content = readSettingsText(path.c_str(), 256 * 1024);
+        if (content.empty()) {
+            status_ = text(TextId::status_license_unreadable, preferences_.locale);
             return;
         }
         LicenseTextRoute page;
-        page.text = std::move(text);
+        page.text = std::move(content);
         navigation_.push(std::move(page));
     } else if (screen() == Screen::Storage) {
         if (!navigation_.get<StorageRoute>().clearing) {
             updateStorage();
             if (coverFiles_) navigation_.get<StorageRoute>().clearing = true;
-            else status_ = "没有可清理的封面缓存";
+            else status_ = text(TextId::status_cache_empty, preferences_.locale);
             return;
         }
         navigation_.get<StorageRoute>().clearing = false;
         const SceUID directory = sceIoDopen(CLIENT_PATH("/cache"));
-        if (directory < 0) { status_ = "无法读取封面缓存"; return; }
+        if (directory < 0) { status_ = text(TextId::status_cache_read_failed, preferences_.locale); return; }
         bool failed = false;
         SceIoDirent entry{};
         int result;
@@ -307,7 +308,7 @@ void App::activateUtility() {
         completedCoverKey_.clear();
         coverDirty_ = true;
         updateStorage();
-        status_ = failed || result < 0 ? "部分缓存未能清理 · 可重试" : "封面缓存已清理";
+        status_ = text(failed || result < 0 ? TextId::status_cache_clear_partial : TextId::status_cache_cleared, preferences_.locale);
     }
 }
 } // namespace pspapp

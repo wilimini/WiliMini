@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "bilibili.h"
+#include "localization.hpp"
 #include "services/bilibili_api.hpp"
 #include "api/wiliwili/bilibili.h"
 #include "api/wiliwili/bilibili/api.h"
@@ -305,7 +306,7 @@ bool requestResult(const std::string &endpoint, const Params &params, bool signe
         return true;
     } catch (const std::exception &) {
         if (errorCallback)
-            errorCallback("服务器响应无法识别", -1);
+            errorCallback(pspapp::tr(pspapp::TextId::err_invalid_response), -1);
         return false;
     }
 }

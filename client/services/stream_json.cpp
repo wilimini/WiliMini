@@ -1,4 +1,5 @@
 #include "stream_json.hpp"
+#include "../localization.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -44,7 +45,7 @@ class SeasonSax : public nlohmann::json_sax<nlohmann::json> {
         out_.episodeOffset = offset_;
         out_.totalEpisodes = total_;
         if (!out_.description.empty()) {
-            auto text = makeLink(BrowseKind::Text, "简介");
+            auto text = makeLink(BrowseKind::Text, tr(TextId::ui_season_synopsis));
             text.text = out_.description;
             out_.items.push_back(std::move(text));
         }

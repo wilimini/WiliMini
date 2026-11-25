@@ -740,14 +740,24 @@ std::string formatDuration(int seconds) {
 }
 
 std::string formatCount(uint64_t value) {
-    char text[32]{};
-    if (value >= 100000000ULL)
-        std::snprintf(text, sizeof(text), "%.1f亿", static_cast<double>(value) / 100000000.0);
-    else if (value >= 10000ULL)
-        std::snprintf(text, sizeof(text), "%.1f万", static_cast<double>(value) / 10000.0);
-    else
-        std::snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(value));
-    return text;
+    char buf[32]{};
+    if (pspapp::currentLocale() == pspapp::Locale::EnUs) {
+        if (value >= 1000000ULL)
+            std::snprintf(buf, sizeof(buf), "%.1fM", static_cast<double>(value) / 1000000.0);
+        else if (value >= 1000ULL)
+            std::snprintf(buf, sizeof(buf), "%.1fK", static_cast<double>(value) / 1000.0);
+        else
+            std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(value));
+    } else if (value >= 100000000ULL) {
+        std::snprintf(buf, sizeof(buf), "%.1f%s", static_cast<double>(value) / 100000000.0,
+                      pspapp::tr(pspapp::TextId::ui_unit_100m));
+    } else if (value >= 10000ULL) {
+        std::snprintf(buf, sizeof(buf), "%.1f%s", static_cast<double>(value) / 10000.0,
+                      pspapp::tr(pspapp::TextId::ui_unit_10k));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%llu", static_cast<unsigned long long>(value));
+    }
+    return buf;
 }
 
 // Decodes a JPEG, scaling it (nearest neighbour after libjpeg's DCT scaling) to outputWidth x
@@ -1067,19 +1077,26 @@ void drawHeader(const pspapp::App& app) {
         fillRect(38, 26, 430, 1, kLine);
         return;
     }
-    drawText(38, 3, 0.9f, kText, app.tab() == pspapp::Tab::Mine ? "我的" : app.tab() == pspapp::Tab::Search ? "搜索" : "首页", 290);
+    const auto locale = app.preferences().locale;
+    drawText(38, 3, 0.9f, kText,
+             pspapp::text(app.tab() == pspapp::Tab::Mine ? pspapp::TextId::ui_tab_mine
+                        : app.tab() == pspapp::Tab::Search ? pspapp::TextId::ui_tab_search
+                        : pspapp::TextId::ui_tab_home, locale), 290);
     fillRect(38, 26, 430, 1, kLine);
     if (app.tab() == pspapp::Tab::Search) {
-        const char* meta = app.searchView() == pspapp::SearchView::History ? "历史" :
-                           app.searchView() == pspapp::SearchView::Results ? "视频" : "热搜";
+        const char* meta = pspapp::text(
+            app.searchView() == pspapp::SearchView::History ? pspapp::TextId::ui_search_meta_history :
+            app.searchView() == pspapp::SearchView::Results ? pspapp::TextId::ui_search_meta_video :
+            pspapp::TextId::ui_search_meta_hot, locale);
         drawText(430, 6, 0.5f, kTextDim, meta, 40);
         return;
     }
     if (app.tab() != pspapp::Tab::Mine) {
-        const char* labels[] = {"推荐", "热门", "搜索", "发现"};
+        const pspapp::TextId labels[] = {pspapp::TextId::tile_recommend, pspapp::TextId::tile_hots,
+                                         pspapp::TextId::tile_search, pspapp::TextId::tile_discover};
         for (int i = 0; i < 4; ++i) {
             drawText(39 + i * 56, 30, 0.5f, static_cast<int>(app.tab()) == i ? kPink : kTextDim,
-                     labels[i], 48);
+                     pspapp::text(labels[i], locale), 48);
             if (app.focusArea() == pspapp::FocusArea::Categories && static_cast<int>(app.tab()) == i)
                 fillRect(39 + i * 56, 46, 24, 2, kPink);
         }
@@ -1792,12 +1809,14 @@ void drawMineTiles(const pspapp::App& app) {
 
     // Account row: accent square with a person icon, like a thumbnail.
     const int ay = listBounds.y0 - scroll;
+    const Locale locale = app.preferences().locale;
     if (ay + kRowHeight > listBounds.top) {
         const int top = std::max(ay, listBounds.top), bottom = std::min(ay + kRowHeight, kListBottom);
         fillRect(12, top, 54, bottom - top, kTilePalette[0]);
         if (ay >= listBounds.top) drawLineIcon(IconUser, 12 + 16, ay + 6, 22, color(255, 255, 255));
         drawText(74, ay + 2, 0.7f, kText,
-                 signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
+                 signedIn ? formatText(TextId::ui_account_signed_in, locale, {{"name", auth.name.empty() ? auth.mid : auth.name}})
+                          : text(TextId::ui_account_sign_in, locale),
                  388, false, top, bottom);
         drawText(74, ay + 19, 0.42f, kTextDim, authStateMessage(auth.state, app.preferences().confirmWithCircle),
                  388, false, top, bottom);
@@ -1806,14 +1825,16 @@ void drawMineTiles(const pspapp::App& app) {
     std::vector<TileItem> items;
     items.reserve(app.history().size() + app.later().size());
     for (const auto& entry : app.history())
-        items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author + " · " + formatDuration(entry.duration),
+        items.push_back({&entry.bvid, &entry.title,
+                         formatText(TextId::ui_history_prefix, locale, {{"text", entry.author + " · " + formatDuration(entry.duration)}}),
                          entry.duration});
     for (const auto& entry : app.later())
-        items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author + " · " + formatDuration(entry.duration),
+        items.push_back({&entry.bvid, &entry.title,
+                         formatText(TextId::ui_later_prefix, locale, {{"text", entry.author + " · " + formatDuration(entry.duration)}}),
                          entry.duration});
     if (items.empty()) {
-        drawText(12, listBounds.y0 + kRowPitch + 8, 0.7f, kText, "还没有本地记录", 440);
-        drawText(12, listBounds.y0 + kRowPitch + 30, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 440);
+        drawText(12, listBounds.y0 + kRowPitch + 8, 0.7f, kText, text(TextId::ui_local_empty, locale), 440);
+        drawText(12, listBounds.y0 + kRowPitch + 30, 0.5f, kTextDim, text(TextId::ui_local_empty_hint, locale), 440);
     }
     drawRowList(items, kRowPitch, scroll);
     if (app.focusArea() == FocusArea::Content) {
@@ -1908,11 +1929,13 @@ void drawMineGrid(const pspapp::App& app) {
     // Account tile.
     const int ay = kGridY0 - scroll;
     const uint32_t white = color(255, 255, 255);
+    const Locale locale = app.preferences().locale;
     if (ay + kAccountH > kGridTop) {
         const int top = std::max(ay, kGridTop), bottom = std::min(ay + kAccountH, kGridBottom);
         fillRect(kTileX, top, 2 * kPitchX - 4, bottom - top, kTilePalette[0]);
         drawText(kTileX + 10, ay + 7, 0.7f, white,
-                 signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
+                 signedIn ? formatText(TextId::ui_account_signed_in, locale, {{"name", auth.name.empty() ? auth.mid : auth.name}})
+                          : text(TextId::ui_account_sign_in, locale),
                  2 * kPitchX - 24, false, top, bottom);
         drawText(kTileX + 10, ay + 29, 0.5f, color(220, 228, 250),
                  authStateMessage(auth.state, app.preferences().confirmWithCircle), 2 * kPitchX - 24, false, top, bottom);
@@ -1921,12 +1944,12 @@ void drawMineGrid(const pspapp::App& app) {
     std::vector<TileItem> items;
     items.reserve(app.history().size() + app.later().size());
     for (const auto& entry : app.history())
-        items.push_back({&entry.bvid, &entry.title, "历史 · " + entry.author, entry.duration});
+        items.push_back({&entry.bvid, &entry.title, formatText(TextId::ui_history_prefix, locale, {{"text", entry.author}}), entry.duration});
     for (const auto& entry : app.later())
-        items.push_back({&entry.bvid, &entry.title, "稍后 · " + entry.author, entry.duration});
+        items.push_back({&entry.bvid, &entry.title, formatText(TextId::ui_later_prefix, locale, {{"text", entry.author}}), entry.duration});
     if (items.empty()) {
-        drawText(kTileX, kGridY0 + inset + 12, 0.7f, kText, "还没有本地记录", 440);
-        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 440);
+        drawText(kTileX, kGridY0 + inset + 12, 0.7f, kText, text(TextId::ui_local_empty, locale), 440);
+        drawText(kTileX, kGridY0 + inset + 38, 0.5f, kTextDim, text(TextId::ui_local_empty_hint, locale), 440);
     }
     drawTileGrid(items, focus && selection ? static_cast<int>(selection) - 1 : -1, inset, scroll);
     if (focus && selection == 0) {
@@ -1951,7 +1974,9 @@ void drawInfoRow(int y, uint32_t block, int icon, const char* rank, const std::s
 // Search tab in the Metro style: the content starts below the title and pivot row.
 void drawSearchMetro(const pspapp::App& app) {
     using namespace pspapp;
+    const Locale locale = app.preferences().locale;
     const std::string confirm = app.preferences().confirmButton();
+    const std::string back = app.preferences().backButton();
     const bool focus = app.focusArea() == FocusArea::Content;
     const int selection = static_cast<int>(app.selection());
     auto highlight = [&](int scroll, int inset) {
@@ -1962,13 +1987,13 @@ void drawSearchMetro(const pspapp::App& app) {
     };
     if (app.searchView() == SearchView::History) {
         const auto& history = app.searchHistory();
-        drawText(12, listBounds.y0 - 2, 0.42f, kTextDim, "最近搜索 · 仅保存在本机", 440);
+        drawText(12, listBounds.y0 - 2, 0.42f, kTextDim, text(TextId::ui_recent_search_local, locale), 440);
         constexpr int inset = 18;
         const int scroll = updateScroll(std::max(0.f, static_cast<float>((selection - 2) * kRowPitch)));
         if (history.empty()) {
-            drawText(12, listBounds.y0 + inset + 6, 0.7f, kText, "还没有搜索历史", 440);
+            drawText(12, listBounds.y0 + inset + 6, 0.7f, kText, text(TextId::ui_search_history_empty, locale), 440);
             drawText(12, listBounds.y0 + inset + 30, 0.5f, kTextDim,
-                     BTN_SQUARE " 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 440);
+                     formatText(TextId::hint_search_empty, locale, {{"back", back}}), 440);
             return;
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i)
@@ -1985,13 +2010,14 @@ void drawSearchMetro(const pspapp::App& app) {
             if (!preview.empty()) preview += "  ·  ";
             preview += app.searchHistory()[i];
         }
-        drawInfoRow(listBounds.y0 - scroll, kTilePalette[7], IconSearch, nullptr, "搜索视频", "按 " + confirm + " 输入关键词");
-        drawInfoRow(listBounds.y0 + kRowPitch - scroll, kTilePalette[3], IconClock, nullptr, "历史",
-                    preview.empty() ? "暂无记录 · " + confirm + " 查看" : preview);
+        drawInfoRow(listBounds.y0 - scroll, kTilePalette[7], IconSearch, nullptr, text(TextId::ui_search_video, locale),
+                    formatText(TextId::ui_search_enter_keyword, locale, {{"confirm", confirm}}));
+        drawInfoRow(listBounds.y0 + kRowPitch - scroll, kTilePalette[3], IconClock, nullptr, text(TextId::ui_search_meta_history, locale),
+                    preview.empty() ? formatText(TextId::ui_no_record_view, locale, {{"confirm", confirm}}) : preview);
         if (topics.empty()) {
             const int y = listBounds.y0 + 2 * kRowPitch - scroll;
-            drawText(12, y + 6, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 440, false, listBounds.top, kListBottom);
-            drawText(12, y + 28, 0.5f, kTextDim, BTN_SQUARE " 仍可输入关键词搜索", 440, false, listBounds.top, kListBottom);
+            drawText(12, y + 6, 0.7f, kTextDim, text(app.busy() ? TextId::ui_loading_hot : TextId::ui_hot_unavailable, locale), 440, false, listBounds.top, kListBottom);
+            drawText(12, y + 28, 0.5f, kTextDim, text(TextId::ui_search_still_available, locale), 440, false, listBounds.top, kListBottom);
         }
         for (size_t i = 0; i < topics.size(); ++i) {
             char rank[16];
@@ -2004,11 +2030,12 @@ void drawSearchMetro(const pspapp::App& app) {
     }
     // Results with nothing to list: the keyword line plus the reason.
     drawText(12, listBounds.y0 - 2, 0.5f, app.searchError().empty() ? kTextDim : kPink,
-             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · " BTN_TRIANGLE " 重试", 380);
-    drawText(12, listBounds.y0 + 24, 0.7f, kText, app.busy() ? "正在搜索…" :
-             app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 440);
+             app.searchError().empty() ? formatText(TextId::ui_search_keyword, locale, {{"query", app.query()}})
+                                       : formatText(TextId::ui_error_retry, locale, {{"error", app.searchError()}}), 380);
+    drawText(12, listBounds.y0 + 24, 0.7f, kText, text(app.busy() ? TextId::ui_searching :
+             app.searchError().empty() ? TextId::ui_search_no_results : TextId::ui_search_incomplete, locale), 440);
     drawWrapped(12, listBounds.y0 + 50, 0.5f, kTextDim,
-                app.searchError().empty() ? BTN_SQUARE " 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索"
+                app.searchError().empty() ? formatText(TextId::hint_search_return, locale, {{"back", back}})
                                           : app.searchError(), 440, 3, 16);
 }
 
@@ -2033,7 +2060,8 @@ void drawBrowseVideosClassic(const pspapp::App& app) {
         const bool selected = index == app.browseSelection();
         if (selected) fillRect(6, y + 2, 2, 52, kPink);
         if (index == page.items.size()) {
-            drawText(12, y + 18, 0.7f, selected ? kPink : kText, "加载下一页", 456);
+            drawText(12, y + 18, 0.7f, selected ? kPink : kText,
+                     pspapp::text(pspapp::TextId::ui_load_next_page, app.preferences().locale), 456);
             break;
         }
         const auto& item = page.items[index];
@@ -2056,7 +2084,8 @@ void drawBrowseVideosTiles(const pspapp::App& app) {
     const auto& page = app.browsePage();
     drawText(12, 3, 0.9f, kText, page.title, 456);
     fillRect(12, 26, 456, 1, kLine);
-    static const std::string none, more = "加载下一页";
+    static const std::string none;
+    const std::string more = pspapp::text(pspapp::TextId::ui_load_next_page, app.preferences().locale);
     const auto items = browseTileItems(page, none, more);
     const int selected = static_cast<int>(app.browseSelection());
     const int scroll = updateScroll(std::max(0.f, static_cast<float>(selected / 2 * kPitchY - 100)));
@@ -2069,7 +2098,8 @@ void drawBrowseVideosMetro(const pspapp::App& app) {
     listBounds = {46, 50};
     drawStatusBar();
     drawTitleText(10, 5, kText, page.title, 400);
-    static const std::string none, more = "加载下一页";
+    static const std::string none;
+    const std::string more = pspapp::text(pspapp::TextId::ui_load_next_page, app.preferences().locale);
     const auto items = browseTileItems(page, none, more);
     const int selected = static_cast<int>(app.browseSelection());
     const int scroll = updateScroll(std::max(0.f, static_cast<float>((selected - 2) * kRowPitch)));
@@ -2184,8 +2214,9 @@ void drawCommentHeader(const pspapp::App& app, CommentStyle style) {
         drawStatusBar();
         drawTitleText(10, 5, kText, lowered(title), 400);
         if (!thread) {
-            drawText(12, 46, 0.9f, kText, "热门", 80);
-            fillRect(12, 63, bitmapMeasure("热门", 16), 1, kPink);
+            const char* hot = text(TextId::tile_hots, locale);
+            drawText(12, 46, 0.9f, kText, hot, 80);
+            fillRect(12, 63, bitmapMeasure(hot, 16), 1, kPink);
             drawText(64, 50, 0.5f, kTextDim, app.detail().card.title, 400);
         }
     } else if (style == CommentStyle::Tiles) {
@@ -2193,10 +2224,10 @@ void drawCommentHeader(const pspapp::App& app, CommentStyle style) {
         fillRect(12, 24, bitmapMeasure(title, 16), 1, kPink);
         if (!thread) drawText(24 + bitmapMeasure(title, 16), 8, 0.5f, kTextDim, app.detail().card.title, 380);
     } else {
-        drawText(12, 3, 0.9f, kText, thread ? app.browsePage().title : "视频 / 评论", 350);
+        drawText(12, 3, 0.9f, kText, thread ? app.browsePage().title : text(TextId::ui_video_comments, locale), 350);
         fillRect(12, 26, 456, 1, kLine);
         if (!thread) {
-            drawText(12, 30, 0.5f, kPink, "热门", 48);
+            drawText(12, 30, 0.5f, kPink, text(TextId::tile_hots, locale), 48);
             drawText(75, 30, 0.5f, kTextDim, app.detail().card.title, 390);
         }
     }
@@ -2363,26 +2394,31 @@ void drawCommentList(const pspapp::App& app) {
 // Video detail as tiles: cover, title block, four action tiles and a strip of part tiles.
 void drawDetailTiles(const pspapp::App& app) {
     using namespace pspapp;
+    const Locale locale = app.preferences().locale;
     const auto& detail = app.detail();
     const uint32_t white = color(255, 255, 255), softWhite = color(228, 232, 240);
-    drawText(12, 4, 0.9f, kText, "详情", 200);
+    drawText(12, 4, 0.9f, kText, text(TextId::ui_detail_title, locale), 200);
 
     drawCover(detail.card.bvid, 12, 32, 224, 126, true, 0, kHeight, kTilePalette[4]);
     drawWrapped(244, 30, 0.7f, kText, detail.card.title, 224, 3, 18);
     drawText(244, 88, 0.5f, kPink, "UP " + detail.card.author, 224);
     drawText(244, 104, 0.5f, kTextDim,
-             formatCount(detail.card.views) + " 播放 · " + formatCount(detail.danmaku) + " 弹幕", 224);
-    drawWrapped(244, 124, 0.45f, kTextDim, detail.description.empty() ? "暂无简介" : detail.description,
+             formatText(TextId::ui_detail_stats, locale,
+                        {{"views", formatCount(detail.card.views)}, {"danmaku", formatCount(detail.danmaku)}}), 224);
+    drawWrapped(244, 124, 0.45f, kTextDim, detail.description.empty() ? text(TextId::ui_no_description, locale) : detail.description,
                 224, 2, 14);
 
     const std::string confirm = app.preferences().confirmButton();
     struct Action { uint32_t shade; std::string label; std::string note; };
     const Action actions[] = {
-        {kTilePalette[0], confirm + (app.detailStartMs() > 0 ? " 继续" : " 播放"), formatCount(detail.like) + " 赞"},
-        {kTilePalette[4], BTN_R " 评论", formatCount(detail.coin) + " 投币"},
-        {app.currentIsLater() ? kTilePalette[2] : kTilePalette[3], app.currentIsLater() ? BTN_SQUARE " 已稍后" : BTN_SQUARE " 稍后",
-         formatCount(detail.favorite) + " 收藏"},
-        {kTilePalette[6], BTN_TRIANGLE " UP主", detail.card.author}};
+        {kTilePalette[0], formatText(app.detailStartMs() > 0 ? TextId::ui_action_resume : TextId::ui_action_play, locale, {{"confirm", confirm}}),
+         formatText(TextId::ui_stat_likes, locale, {{"count", formatCount(detail.like)}})},
+        {kTilePalette[4], text(TextId::ui_action_comments, locale),
+         formatText(TextId::ui_stat_coins, locale, {{"count", formatCount(detail.coin)}})},
+        {app.currentIsLater() ? kTilePalette[2] : kTilePalette[3],
+         text(app.currentIsLater() ? TextId::ui_action_later_added : TextId::ui_action_later, locale),
+         formatText(TextId::ui_stat_favorites, locale, {{"count", formatCount(detail.favorite)}})},
+        {kTilePalette[6], text(TextId::ui_action_uploader, locale), detail.card.author}};
     for (int i = 0; i < 4; ++i) {
         const int x = 12 + i * 114;
         fillRect(x, 164, 110, 44, actions[i].shade);
@@ -2495,12 +2531,14 @@ void drawEmpty(const std::string& title, const std::string& subtitle) {
 void drawCardGrid(const pspapp::App& app) {
     const auto& cards = app.cards();
     if (cards.empty()) {
+        const auto locale = app.preferences().locale;
+        const std::string confirm = app.preferences().confirmButton();
         if (app.tab() == pspapp::Tab::Search) {
-        drawEmpty(app.query().empty() ? "搜索 Bilibili" : "没有找到相关视频",
-                      app.query().empty() ? "按 " + std::string(app.preferences().confirmButton()) + " 打开系统键盘，支持中文输入"
-                                          : "按 " + std::string(app.preferences().confirmButton()) + " 修改关键词");
+            drawEmpty(pspapp::text(app.query().empty() ? pspapp::TextId::input_search_bilibili : pspapp::TextId::ui_search_no_results, locale),
+                      pspapp::formatText(app.query().empty() ? pspapp::TextId::hint_search_keyboard : pspapp::TextId::hint_search_modify,
+                                         locale, {{"confirm", confirm}}));
             if (!app.searchHistory().empty()) {
-                drawText(62, 183, 0.45f, kTextDim, "最近搜索", 250);
+                drawText(62, 183, 0.45f, kTextDim, pspapp::text(pspapp::TextId::ui_recent_search, locale), 250);
                 std::string history;
                 for (size_t i = 0; i < app.searchHistory().size() && i < 4; ++i) {
                     if (!history.empty()) history += "  ·  ";
@@ -2509,7 +2547,8 @@ void drawCardGrid(const pspapp::App& app) {
                 drawText(62, 198, 0.45f, kTextDim, history, 356);
             }
         } else {
-            drawEmpty("正在准备首页", BTN_TRIANGLE " 刷新 · " BTN_SELECT " 打开 PSP 网络设置");
+            drawEmpty(pspapp::text(pspapp::TextId::ui_preparing_home, locale),
+                      pspapp::text(pspapp::TextId::ui_preparing_home_hint, locale));
         }
         return;
     }
@@ -3019,27 +3058,34 @@ void drawMusic(const pspapp::App& app, int64_t now) {
 }
 
 void drawDetail(const pspapp::App& app) {
+    const auto locale = app.preferences().locale;
     const auto& detail = app.detail();
-    drawText(12, 3, 0.9f, kText, "视频 / 详情", 350);
+    drawText(12, 3, 0.9f, kText, pspapp::text(pspapp::TextId::ui_video_detail, locale), 350);
     fillRect(12, 26, 456, 1, kLine);
 
     drawCover(detail.card.bvid, 12, 35, 128, 72, true);
     drawWrapped(151, 32, 0.9f, kText, detail.card.title, 317, 2, 20);
     drawText(151, 75, 0.5f, kPink, "UP " + detail.card.author, 317);
-    std::string stats = formatCount(detail.card.views) + " 播放  ·  " + formatCount(detail.danmaku) + " 弹幕";
+    std::string stats = pspapp::formatText(pspapp::TextId::ui_detail_stats, locale,
+                                           {{"views", formatCount(detail.card.views)},
+                                            {"danmaku", formatCount(detail.danmaku)}});
     drawText(151, 92, 0.5f, kTextDim, stats, 317);
 
-    drawText(12, 113, 0.5f, kPink, std::string(app.preferences().confirmButton()) + " 播放", 74);
-    drawText(86, 113, 0.5f, kTextDim, BTN_R " 评论", 74);
+    drawText(12, 113, 0.5f, kPink,
+             pspapp::formatText(pspapp::TextId::ui_action_play, locale, {{"confirm", app.preferences().confirmButton()}}), 74);
+    drawText(86, 113, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_action_comments, locale), 74);
     drawText(158, 113, 0.5f, app.currentIsLater() ? kPink : kTextDim,
-             app.currentIsLater() ? BTN_SQUARE " 已稍后" : BTN_SQUARE " 稍后", 90);
-    drawText(268, 113, 0.5f, kTextDim, formatCount(detail.like) + " 赞 · " + formatCount(detail.favorite) + " 收藏", 200);
-    drawWrapped(12, 135, 0.7f, kText, detail.description.empty() ? "暂无简介" : detail.description,
+             pspapp::text(app.currentIsLater() ? pspapp::TextId::ui_action_later_added : pspapp::TextId::ui_action_later, locale), 90);
+    drawText(268, 113, 0.5f, kTextDim,
+             pspapp::formatText(pspapp::TextId::ui_stat_likes_favorites, locale,
+                                {{"likes", formatCount(detail.like)}, {"favorites", formatCount(detail.favorite)}}), 200);
+    drawWrapped(12, 135, 0.7f, kText, detail.description.empty() ? pspapp::text(pspapp::TextId::ui_no_description, locale) : detail.description,
                 456, 2, 18);
 
     fillRect(12, 176, 456, 1, kLine);
-    drawText(12, 183, 0.5f, kPink, "分 P  " + std::to_string(detail.pages.size()), 150);
-    drawText(120, 183, 0.5f, kTextDim, BTN_UP_DOWN " 选择分集", 250);
+    drawText(12, 183, 0.5f, kPink,
+             pspapp::formatText(pspapp::TextId::ui_parts_count, locale, {{"count", std::to_string(detail.pages.size())}}), 150);
+    drawText(120, 183, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_parts_select, locale), 250);
     if (!detail.pages.empty()) {
         size_t first = app.detailPart() > 1 ? app.detailPart() - 1 : 0;
         if (detail.pages.size() > 1 && first + 2 > detail.pages.size()) first = detail.pages.size() - 2;
@@ -3058,22 +3104,24 @@ void drawDetail(const pspapp::App& app) {
 }
 
 void drawMine(const pspapp::App& app) {
+    const auto locale = app.preferences().locale;
     const auto &auth = app.auth();
     const bool selected = app.selection() == 0 && app.focusArea() == pspapp::FocusArea::Content;
     if (selected)
         fillRect(33, 32, 2, 34, kPink);
     const bool signedIn = auth.state == pspapp::AuthState::SignedIn;
     drawText(39, 31, 0.7f, selected ? kPink : kText,
-             signedIn ? "账号 · " + (auth.name.empty() ? auth.mid : auth.name) : "账号 · 扫码登录",
+             signedIn ? pspapp::formatText(pspapp::TextId::ui_account_signed_in, locale, {{"name", auth.name.empty() ? auth.mid : auth.name}})
+                      : pspapp::text(pspapp::TextId::ui_account_sign_in, locale),
              428);
     drawText(39, 52, 0.5f, kTextDim,
              pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 428);
     fillRect(39, 77, 428, 1, kLine);
-    drawText(39, 83, 0.5f, kTextDim, "观看历史 / 稍后观看 · 本地记录", 428);
+    drawText(39, 83, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_mine_local_header, locale), 428);
     const size_t total = app.history().size() + app.later().size();
     if (!total) {
-        drawText(39, 124, 0.7f, kText, "还没有本地记录", 428);
-        drawText(39, 150, 0.5f, kTextDim, "播放后保存历史；详情页按 " BTN_SQUARE " 加入稍后观看。", 428);
+        drawText(39, 124, 0.7f, kText, pspapp::text(pspapp::TextId::ui_local_empty, locale), 428);
+        drawText(39, 150, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_local_empty_hint, locale), 428);
         return;
     }
     const size_t selection = app.selection() ? app.selection() - 1 : 0;
@@ -3091,26 +3139,28 @@ void drawMine(const pspapp::App& app) {
         drawCover(entry.bvid, 39, y, 100, 56);
         drawWrapped(147, y, 0.7f, active ? kPink : kText, entry.title, 320, 2, 18);
         drawText(147, y + 40, 0.5f, kTextDim,
-                 std::string(history ? "历史 · " : "稍后 · ") + entry.author + " · " +
-                     formatDuration(entry.duration),
+                 pspapp::formatText(history ? pspapp::TextId::ui_history_prefix : pspapp::TextId::ui_later_prefix, locale,
+                                    {{"text", entry.author + " · " + formatDuration(entry.duration)}}),
                  320);
     }
 }
 
 void drawLogin(const pspapp::App &app) {
     using pspapp::AuthState;
+    const auto locale = app.preferences().locale;
+    const std::string back = app.preferences().backButton();
     const auto &auth = app.auth();
-    drawText(20, 12, 0.83f, kText, "账号登录", 440);
+    drawText(20, 12, 0.83f, kText, pspapp::text(pspapp::TextId::ui_login_title, locale), 440);
     fillRect(20, 39, 440, 1, kLine);
     const bool signedIn = auth.state == AuthState::SignedIn || auth.state == AuthState::Restored;
     if (signedIn) {
-        drawText(28, 68, 0.83f, kText, auth.name.empty() ? "Bilibili 账号" : auth.name, 424);
+        drawText(28, 68, 0.83f, kText, auth.name.empty() ? pspapp::text(pspapp::TextId::ui_bili_account, locale) : auth.name, 424);
         drawText(28, 102, 0.7f, kTextDim, "UID " + auth.mid, 424);
         drawText(28, 136, 0.7f, kPink,
                  pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 424);
-        drawText(28, 198, 0.5f, kTextDim, "观看历史与稍后观看仍保存在本机", 424);
+        drawText(28, 198, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_login_local_kept, locale), 424);
         drawText(28, 224, 0.5f, kTextDim,
-                 BTN_SQUARE " 退出本机账号    " BTN_TRIANGLE " 检查登录状态    " + std::string(app.preferences().backButton()) + " 返回", 424);
+                 pspapp::formatText(pspapp::TextId::ui_login_signed_in_hint, locale, {{"back", back}}), 424);
     } else {
         if (auth.qrSize > 0 && !auth.qr.empty() && auth.state != AuthState::QrExpired) {
             const int scale = std::min(3, 176 / (auth.qrSize + 8));
@@ -3124,14 +3174,14 @@ void drawLogin(const pspapp::App &app) {
                                  kBlack);
         } else {
             drawWrapped(36, 112, 0.7f, kTextDim,
-                        app.busy() ? "正在获取二维码…" : BTN_TRIANGLE " 获取新的二维码", 168, 3, 22);
+                        pspapp::text(app.busy() ? pspapp::TextId::ui_qr_fetching : pspapp::TextId::ui_qr_refresh_prompt, locale), 168, 3, 22);
         }
         drawWrapped(234, 64, 0.7f, kText,
                     pspapp::authStateMessage(auth.state, app.preferences().confirmWithCircle), 218, 3, 23);
         if (!app.authError())
-            drawWrapped(234, 158, 0.5f, kTextDim, "手机扫码并确认后，将保存登录状态。", 218, 3, 18);
+            drawWrapped(234, 158, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_qr_scan_save_hint, locale), 218, 3, 18);
         drawText(234, 224, 0.5f, kPink,
-                 BTN_TRIANGLE " 刷新    " + std::string(app.preferences().backButton()) + " 返回", 218);
+                 pspapp::formatText(pspapp::TextId::ui_qr_refresh_back, locale, {{"back", back}}), 218);
     }
     if (app.authError())
         drawWrapped(signedIn ? 28 : 234, signedIn ? 158 : 141, 0.5f, kPink,
@@ -3140,6 +3190,9 @@ void drawLogin(const pspapp::App &app) {
 
 void drawSearch(const pspapp::App& app) {
     using pspapp::SearchView;
+    const auto locale = app.preferences().locale;
+    const std::string confirm = app.preferences().confirmButton();
+    const std::string back = app.preferences().backButton();
     const bool contentFocus = app.focusArea() == pspapp::FocusArea::Content;
     auto mark = [&](size_t index, int y, int height) {
         const bool selected = contentFocus && app.selection() == index;
@@ -3147,12 +3200,12 @@ void drawSearch(const pspapp::App& app) {
         return selected ? kPink : kText;
     };
     if (app.searchView() == SearchView::History) {
-        drawText(39, 31, 0.5f, kTextDim, "最近搜索 · 仅保存在本机", 428);
+        drawText(39, 31, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_recent_search_local, locale), 428);
         const auto& history = app.searchHistory();
         if (history.empty()) {
-            drawText(39, 80, 0.7f, kText, "还没有搜索历史", 428);
+            drawText(39, 80, 0.7f, kText, pspapp::text(pspapp::TextId::ui_search_history_empty, locale), 428);
             drawText(39, 105, 0.5f, kTextDim,
-                     BTN_SQUARE " 输入关键词，或 " + std::string(app.preferences().backButton()) + " 返回查看热搜", 428);
+                     pspapp::formatText(pspapp::TextId::hint_search_empty, locale, {{"back", back}}), 428);
         }
         for (size_t i = 0; i < history.size() && i < 8; ++i) {
             const int y = 54 + static_cast<int>(i) * 24;
@@ -3162,21 +3215,21 @@ void drawSearch(const pspapp::App& app) {
     }
     if (app.searchView() == SearchView::Landing) {
         drawText(39, 34, 0.7f, mark(0, 34, 15),
-                 "搜索视频 · 按 " + std::string(app.preferences().confirmButton()) + " 输入关键词", 428);
+                 pspapp::formatText(pspapp::TextId::ui_search_video_hint, locale, {{"confirm", confirm}}), 428);
         fillRect(39, 56, 428, 1, kLine);
-        drawText(39, 64, 0.5f, kTextDim, "历史", 48);
+        drawText(39, 64, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_search_meta_history, locale), 48);
         std::string preview;
         for (size_t i = 0; i < app.searchHistory().size() && i < 2; ++i) {
             if (!preview.empty()) preview += "  ·  ";
             preview += app.searchHistory()[i];
         }
         drawText(95, 63, 0.7f, mark(1, 63, 15),
-                 preview.empty() ? "暂无记录 · " + std::string(app.preferences().confirmButton()) + " 查看" : preview, 372);
-        drawText(39, 95, 0.5f, kPink, "热搜", 80);
+                 preview.empty() ? pspapp::formatText(pspapp::TextId::ui_no_record_view, locale, {{"confirm", confirm}}) : preview, 372);
+        drawText(39, 95, 0.5f, kPink, pspapp::text(pspapp::TextId::ui_search_meta_hot, locale), 80);
         const auto& topics = app.searchTopics();
         if (topics.empty()) {
-            drawText(39, 124, 0.7f, kTextDim, app.busy() ? "正在载入热搜…" : "热搜暂不可用", 428);
-            drawText(39, 150, 0.5f, kTextDim, BTN_SQUARE " 仍可输入关键词搜索", 428);
+            drawText(39, 124, 0.7f, kTextDim, pspapp::text(app.busy() ? pspapp::TextId::ui_loading_hot : pspapp::TextId::ui_hot_unavailable, locale), 428);
+            drawText(39, 150, 0.5f, kTextDim, pspapp::text(pspapp::TextId::ui_search_still_available, locale), 428);
         }
         const size_t selected = app.selection() >= 2 ? app.selection() - 2 : 0;
         const size_t first = selected > 2 ? selected - 2 : 0;
@@ -3192,15 +3245,17 @@ void drawSearch(const pspapp::App& app) {
         return;
     }
     drawText(39, 31, 0.5f, app.searchError().empty() ? kTextDim : kPink,
-             app.searchError().empty() ? "关键词：" + app.query() : app.searchError() + " · " BTN_TRIANGLE " 重试",
+             app.searchError().empty() ? pspapp::formatText(pspapp::TextId::ui_search_keyword, locale, {{"query", app.query()}})
+                                       : pspapp::formatText(pspapp::TextId::ui_error_retry, locale, {{"error", app.searchError()}}),
              345);
-    drawText(390, 31, 0.5f, kTextDim, std::to_string(app.cards().size()) + " 条", 77);
+    drawText(390, 31, 0.5f, kTextDim,
+             pspapp::formatText(pspapp::TextId::ui_search_count, locale, {{"count", std::to_string(app.cards().size())}}), 77);
     const auto& cards = app.cards();
     if (cards.empty()) {
-        drawText(39, 91, 0.7f, kText, app.busy() ? "正在搜索…" :
-                 app.searchError().empty() ? "没有找到相关视频" : "搜索未完成", 428);
+        drawText(39, 91, 0.7f, kText, pspapp::text(app.busy() ? pspapp::TextId::ui_searching :
+                 app.searchError().empty() ? pspapp::TextId::ui_search_no_results : pspapp::TextId::ui_search_incomplete, locale), 428);
         drawWrapped(39, 117, 0.5f, kTextDim,
-                    app.searchError().empty() ? BTN_SQUARE " 修改关键词，" + std::string(app.preferences().backButton()) + " 返回搜索" : app.searchError(),
+                    app.searchError().empty() ? pspapp::formatText(pspapp::TextId::hint_search_return, locale, {{"back", back}}) : app.searchError(),
                     428, 3, 16);
         return;
     }
@@ -3394,7 +3449,7 @@ void drawUtility(const pspapp::App& app) {
             const int y = 54 + static_cast<int>(i) * 23;
             const bool selected = app.licenseSelection() == i;
             if (selected) fillRect(33, y + 3, 2, 16, kPink);
-            drawText(39, y, 0.7f, selected ? kPink : kText, pspapp::settingsLicenses[i].title, 428);
+            drawText(39, y, 0.7f, selected ? kPink : kText, pspapp::text(pspapp::settingsLicenses[i].title, locale), 428);
         }
     }
 }
@@ -3412,7 +3467,8 @@ const std::vector<std::string>& licenseLines(const pspapp::App& app) {
 }
 
 void drawLicenseText(const pspapp::App& app) {
-    drawText(39, 31, 0.5f, kTextDim, pspapp::settingsLicenses[app.licenseSelection()].title, 428);
+    drawText(39, 31, 0.5f, kTextDim,
+             pspapp::text(pspapp::settingsLicenses[app.licenseSelection()].title, app.preferences().locale), 428);
     const auto& lines = licenseLines(app);
     const int height = app.preferences().bodySize + 4;
     const int first = app.documentScroll() / height;
@@ -3424,12 +3480,13 @@ void drawLicenseText(const pspapp::App& app) {
 }
 
 void drawPgcPosters(const pspapp::App& app) {
+    const auto locale = app.preferences().locale;
     const auto& page = app.browsePage();
     drawText(12, 7, 0.9f, kPink, page.title, 360);
     fillRect(12, 31, 456, 1, kLine);
     const bool followed = page.request.kind == pspapp::BrowseKind::FollowBangumi ||
                           page.request.kind == pspapp::BrowseKind::FollowCinema;
-    drawText(12, 38, 0.5f, kPink, followed ? "已追作品" : "推荐", 140);
+    drawText(12, 38, 0.5f, kPink, pspapp::text(followed ? pspapp::TextId::ui_pgc_followed : pspapp::TextId::tile_recommend, locale), 140);
     fillRect(12, 53, followed ? 48 : 24, 1, kPink);
     const size_t first = app.browseSelection() / 4 * 4;
     drawText(364, 38, 0.5f, kTextDim,
@@ -3437,7 +3494,7 @@ void drawPgcPosters(const pspapp::App& app) {
         std::to_string(std::min(first + 4, page.items.size())) + " / " + std::to_string(page.items.size()), 104);
     if (first >= page.items.size()) {
         drawText(12, 105, 0.7f, kPink,
-                 std::string(app.preferences().confirmButton()) + " 加载下一页", 456);
+                 pspapp::formatText(pspapp::TextId::hint_load_more, locale, {{"confirm", app.preferences().confirmButton()}}), 456);
         return;
     }
     for (size_t i = first; i < std::min(first + 4, page.items.size()); ++i) {
@@ -3457,6 +3514,7 @@ void drawPgcPosters(const pspapp::App& app) {
 }
 
 void drawPgcEpisodes(const pspapp::App& app) {
+    const auto locale = app.preferences().locale;
     const auto& page = app.browsePage();
     std::vector<size_t> episodes;
     for (size_t i = 0; i < page.items.size(); ++i)
@@ -3465,12 +3523,12 @@ void drawPgcEpisodes(const pspapp::App& app) {
     const bool synopsis = app.browseSelection() < page.items.size() &&
                           page.items[app.browseSelection()].next.kind == pspapp::BrowseKind::Text;
     drawText(12, 6, 0.9f, kText, page.title, 370);
-    drawText(408, 10, 0.5f, kPink, page.followed ? "已追番" : "+ 追番", 60);
+    drawText(408, 10, 0.5f, kPink, pspapp::text(page.followed ? pspapp::TextId::ui_season_followed : pspapp::TextId::ui_season_follow, locale), 60);
     drawText(12, 27, 0.5f, kTextDim, page.subtitle.empty()
-        ? "共" + std::to_string(totalEpisodes) + "集" : page.subtitle, 456);
+        ? pspapp::formatText(pspapp::TextId::ui_season_total_eps, locale, {{"count", std::to_string(totalEpisodes)}}) : page.subtitle, 456);
     fillRect(12, 43, 456, 1, kLine);
-    drawText(12, 48, 0.5f, synopsis ? kTextDim : kPink, "分集", 36);
-    drawText(60, 48, 0.5f, synopsis ? kPink : kTextDim, "简介", 36);
+    drawText(12, 48, 0.5f, synopsis ? kTextDim : kPink, pspapp::text(pspapp::TextId::ui_season_episodes, locale), 36);
+    drawText(60, 48, 0.5f, synopsis ? kPink : kTextDim, pspapp::text(pspapp::TextId::ui_season_synopsis, locale), 36);
     fillRect(synopsis ? 60 : 12, 62, 24, 1, kPink);
     if (synopsis) {
         drawWrapped(12, 76, 0.7f, kText, page.description, 456, 8, bodySize + 4);
@@ -3484,7 +3542,7 @@ void drawPgcEpisodes(const pspapp::App& app) {
     drawText(370, 48, 0.5f, kTextDim,
         std::to_string(episodes.empty() ? 0 : globalFirst + 1) + "–" + std::to_string(episodes.empty() ? 0 : globalLast) +
         " / " + std::to_string(totalEpisodes), 98);
-    if (episodes.empty()) drawText(12, 92, 0.7f, kTextDim, "暂无分集", 456);
+    if (episodes.empty()) drawText(12, 92, 0.7f, kTextDim, pspapp::text(pspapp::TextId::ui_season_no_episodes, locale), 456);
     for (size_t n = first; n < std::min(first + 3, episodes.size()); ++n) {
         const auto& item = page.items[episodes[n]];
         const int y = 70 + static_cast<int>(n - first) * 62;
@@ -3499,9 +3557,12 @@ void drawPgcEpisodes(const pspapp::App& app) {
         }
         drawText(122, y + 7, 0.7f, active ? kPink : kText, item.title, 342);
         std::string status;
-        if (item.completed) status = "已看完";
-        else if (item.startMs > 0) status = "继续观看 · " + formatDuration(static_cast<int>(item.startMs / 1000)) + " / " + formatDuration(item.duration);
-        else if (item.duration > 0) status = std::to_string(item.duration / 60) + "分钟";
+        if (item.completed) status = pspapp::text(pspapp::TextId::ui_ep_completed, locale);
+        else if (item.startMs > 0) status = pspapp::formatText(pspapp::TextId::ui_ep_resume, locale,
+                                                               {{"pos", formatDuration(static_cast<int>(item.startMs / 1000))},
+                                                                {"dur", formatDuration(item.duration)}});
+        else if (item.duration > 0) status = pspapp::formatText(pspapp::TextId::ui_ep_minutes, locale,
+                                                                {{"mins", std::to_string(item.duration / 60)}});
         if (!item.subtitle.empty()) status += (status.empty() ? "" : " · ") + item.subtitle;
         drawText(122, y + 31, 0.5f, kTextDim, status, 342);
     }
@@ -3537,7 +3598,8 @@ void drawBrowse(const pspapp::App& app) {
         }
         if (!imageTexture.buffer.data)
             drawText(12, 90, 0.7f, kTextDim,
-                     "图片加载失败 · " + std::string(app.preferences().backButton()) + " 返回动态", 456);
+                     pspapp::formatText(pspapp::TextId::hint_image_error, app.preferences().locale,
+                                        {{"back", app.preferences().backButton()}}), 456);
         else {
             const int x = (480 - imageWidth) / 2, y = 32 + (215 - imageHeight) / 2;
             geSprite(TexState{TexKind::Color5650, imageTexture.buffer.data, imageTexture.texWidth, imageTexture.texHeight}, x, y,
@@ -3555,17 +3617,20 @@ void drawBrowse(const pspapp::App& app) {
         }
         return;
     }
+    const auto locale = app.preferences().locale;
     int top = 35;
     if (app.browseError()) {
-        drawText(12, top, 0.5f, kPink, pspapp::errorMessage(app.browseError()) + " · " BTN_TRIANGLE " 重试", 456);
+        drawText(12, top, 0.5f, kPink,
+                 pspapp::formatText(pspapp::TextId::ui_error_retry, locale, {{"error", pspapp::errorMessage(app.browseError())}}), 456);
         top += 20;
     } else if (!page.description.empty()) {
         drawWrapped(12, top, 0.5f, kTextDim, page.description, 456, 2, 16);
         top += 38;
     }
     if (page.items.empty()) {
-        drawText(12, top + 27, 0.7f, kTextDim, app.busy() ? "正在载入…" :
-            app.browseError() ? std::string(app.preferences().confirmButton()) + " 登录 / " BTN_TRIANGLE " 重试" : "暂无内容", 456);
+        drawText(12, top + 27, 0.7f, kTextDim, app.busy() ? pspapp::text(pspapp::TextId::ui_loading, locale) :
+            app.browseError() ? pspapp::formatText(pspapp::TextId::hint_browse_login, locale, {{"confirm", app.preferences().confirmButton()}})
+                              : pspapp::text(pspapp::TextId::ui_empty_content, locale), 456);
         return;
     }
     const size_t total = page.items.size() + (page.hasMore ? 1 : 0);
@@ -3585,7 +3650,7 @@ void drawBrowse(const pspapp::App& app) {
         else if (tile) fillRect(12, y, 456, 62, selected ? kTilePalette[0] : kPanelRaised);
         else if (selected) fillRect(6, y + 2, 2, 50, kPink);
         if (index == page.items.size()) {
-            drawText(12 + inset, y + (tile ? 20 : 0), 0.7f, titleShade, "加载下一页", width);
+            drawText(12 + inset, y + (tile ? 20 : 0), 0.7f, titleShade, pspapp::text(pspapp::TextId::ui_load_next_page, locale), width);
             break;
         }
         const auto& item = page.items[index];

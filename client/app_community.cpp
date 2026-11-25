@@ -200,7 +200,7 @@ void App::browseActivate() {
                              frame.page.request.aux,
                              c.root.empty() || c.root == "0" ? c.id : c.root,
                              {},
-                             "评论回复"};
+                             text(TextId::comm_replies_title, preferences_.locale)};
       r.type = frame.page.request.type;
       openBrowse(r);
     } else if (frame.selection == 1) {
@@ -230,8 +230,9 @@ void App::browseActivate() {
     else {
       if (!browseState().confirmingDelete) {
         browseState().confirmingDelete = true;
-        status_ = "再次按 " + std::string(preferences_.confirmButton()) + " 删除这条评论，" +
-                  preferences_.backButton() + " 取消";
+        status_ = formatText(TextId::hint_delete_comment, preferences_.locale,
+                             {{"confirm", preferences_.confirmButton()},
+                              {"back", preferences_.backButton()}});
         return;
       }
       CommunityWrite w;
@@ -292,25 +293,26 @@ void App::browseActivate() {
   openBrowse(item.next);
 }
 void App::pushCommentActions(const BrowseItem &item) {
+  const auto locale = preferences_.locale;
   activeComment_ = item;
   BrowseRoute actions;
   actions.page.request = item.next;
-  actions.page.title = "评论操作";
+  actions.page.title = text(TextId::comm_actions_title, locale);
   actions.context = item;
   actions.page.description =
       item.comment.author + "：" + item.comment.message;
   actions.page.items = {
-      destination(BrowseKind::Replies, "查看回复"),
-      destination(BrowseKind::Text, "回复评论"),
+      destination(BrowseKind::Replies, text(TextId::comm_view_replies, locale)),
+      destination(BrowseKind::Text, text(TextId::comm_reply_comment, locale)),
       destination(BrowseKind::Text,
-                  item.comment.action == 1 ? "取消点赞" : "点赞"),
+                  text(item.comment.action == 1 ? TextId::comment_tile_unlike : TextId::comment_tile_like, locale)),
       destination(BrowseKind::Text,
-                  item.comment.action == 2 ? "取消点踩" : "点踩"),
-      destination(BrowseKind::Space, "作者空间", item.comment.mid)};
+                  text(item.comment.action == 2 ? TextId::comm_undislike : TextId::comm_dislike, locale)),
+      destination(BrowseKind::Space, text(TextId::comm_author_space, locale), item.comment.mid)};
   if (item.comment.mid == sessions_.current().mid)
     actions.page.items.push_back(
-        destination(BrowseKind::Text, "删除我的评论"));
-  auto read = destination(BrowseKind::Text, "阅读评论全文", "read");
+        destination(BrowseKind::Text, text(TextId::comm_delete_mine, locale)));
+  auto read = destination(BrowseKind::Text, text(TextId::comm_read_full, locale), "read");
   read.text = item.comment.message;
   actions.page.items.push_back(std::move(read));
   pushBrowse(std::move(actions));
@@ -334,7 +336,7 @@ void App::commentActions() {
                std::to_string(c.id),
                std::to_string(detailState().detail.card.aid),
                {},
-               "评论操作"};
+               text(TextId::comm_actions_title, preferences_.locale)};
   pushCommentActions(item);
 }
 void App::selectComment(int direction) {
@@ -481,8 +483,9 @@ void App::commitCommunityWrite() {
     for (auto &item : frame.page.items) {
       update(item.comment);
       if (!item.comment.id.empty())
-        item.subtitle = std::to_string(item.comment.likes) + " 赞 · " +
-                        std::to_string(item.comment.replies) + " 回复";
+        item.subtitle = formatText(TextId::comm_stats, preferences_.locale,
+                                   {{"likes", std::to_string(item.comment.likes)},
+                                    {"replies", std::to_string(item.comment.replies)}});
     }
     if (jobWrite_.action == CommunityAction::DeleteComment)
       frame.page.items.erase(
@@ -528,8 +531,8 @@ void App::commitCommunityWrite() {
                  BrowseKind::CommentActions) {
     browseState().context = activeComment_;
     auto &items = browseState().page.items;
-    items[2].title = activeComment_.comment.action == 1 ? "取消点赞" : "点赞";
-    items[3].title = activeComment_.comment.action == 2 ? "取消点踩" : "点踩";
+    items[2].title = text(activeComment_.comment.action == 1 ? TextId::comment_tile_unlike : TextId::comment_tile_like, preferences_.locale);
+    items[3].title = text(activeComment_.comment.action == 2 ? TextId::comm_undislike : TextId::comm_dislike, preferences_.locale);
   }
   if (jobWrite_.action == CommunityAction::LikeDynamic ||
       jobWrite_.action == CommunityAction::Follow ||
@@ -540,7 +543,7 @@ void App::commitCommunityWrite() {
     if (screen() == Screen::Browse)
       browseRefresh();
   }
-  status_ = "操作成功";
+  status_ = text(TextId::status_action_succeeded, preferences_.locale);
 }
 
 // ---- Comment lists ---------------------------------------------------------------------------
@@ -601,7 +604,8 @@ bool App::selectedCommentData(CommunityComment &comment, BrowseItem &item) const
     item = {};
     item.comment = comment;
     item.next = {BrowseKind::CommentActions, std::to_string(c.id),
-                 std::to_string(detailState().detail.card.aid), {}, "评论操作"};
+                 std::to_string(detailState().detail.card.aid), {},
+                 text(TextId::comm_actions_title, preferences_.locale)};
     return true;
   }
   if (!commentUi())
@@ -703,7 +707,8 @@ void App::commentVote(const CommunityComment &c, const BrowseRequest &request) {
 }
 void App::commentOpenReplies(const CommunityComment &c, const BrowseRequest &request) {
   auto r = BrowseRequest{BrowseKind::Replies, request.aux,
-                         c.root.empty() || c.root == "0" ? c.id : c.root, {}, "评论回复"};
+                         c.root.empty() || c.root == "0" ? c.id : c.root, {},
+                         text(TextId::comm_replies_title, preferences_.locale)};
   r.type = request.type;
   openBrowse(r);
 }
