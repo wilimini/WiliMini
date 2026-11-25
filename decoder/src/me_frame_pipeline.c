@@ -200,8 +200,12 @@ static int mefp_hook_slice_begin(const H264Context *h, H264SliceContext *sl)
     if (!mefp_running || mefp_stat_error) return 0;
 
     const AVFrame *cur_f = h->cur_pic_ptr ? h->cur_pic_ptr->f : NULL;
-    if (mefp_open_slot_idx >= 0 && mefp_open_cur_f != cur_f) {
-        /* Previous frame errored before field_end; discard stale capture. */
+    if (mefp_open_slot_idx >= 0 &&
+        (mefp_open_cur_f != cur_f || !cur_f ||
+         mefp_slots[mefp_open_slot_idx]->cur_data[0] != cur_f->data[0])) {
+        /* The previous picture ended without field_end (decode error or a
+         * flush); discard its capture. FFmpeg reuses a DPB slot's AVFrame for
+         * later pictures, so the planes, not the AVFrame, identify it. */
         mefp_abort_open_slot();
     }
 

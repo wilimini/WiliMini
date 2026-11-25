@@ -762,6 +762,10 @@ decode_again:
             }
             if (catchup_to_key) {
                 if ((packet->flags & AV_PKT_FLAG_KEY) && packet_us >= clock_us + 250000) {
+                    /* As for a seek: retire queued ME work and any partly
+                     * captured frame before FFmpeg drops its references. */
+                    ret = video_output_finish();
+                    if (ret < 0) { av_packet_unref(packet); ++stats->errors; goto done; }
                     avcodec_flush_buffers(codec);
                     catchup_to_key = 0;
                 } else {
