@@ -693,6 +693,9 @@ static int run_decode(int full, char *run_path, size_t path_size, RunStats *stat
     stats->media_time_base = codec->pkt_timebase;
     codec->skip_frame = (enum AVDiscard)PSP_SKIP_FRAME;
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
+#if PSP_ME_PIPELINE
+    codec->get_buffer2 = mefp_get_buffer2;
+#endif
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
     WLOG_I(WLC_PLAYER, "VIDEO width=%d height=%d refs=%d", codec->width, codec->height, codec->refs);

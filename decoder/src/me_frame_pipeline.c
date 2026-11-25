@@ -23,7 +23,9 @@
 #include <string.h>
 
 #include <libavcodec/avcodec.h>
+#include <libavutil/buffer.h>
 #include <libavutil/frame.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/pixfmt.h>
 
 #include "me_bridge.h"
@@ -678,6 +680,134 @@ static void mefp_hook_frame_end(const H264Context *h, int error)
 
 /* Public lifecycle */
 
+/* Cache-line-isolated AVFrame plane pool.
+ *
+ * FFmpeg's default video pool allocates planes with av_malloc (16-byte aligned
+ * on MIPS) and sizes them to plane_size + 31, then immediately allocates the
+ * AVBuffer struct (containing refcount) via av_mallocz right behind the plane.
+ * On PSP, SC and ME have separate non-coherent 64-byte D-caches: when ME
+ * writes the first/last pixels of a plane and flushes its D-cache, any
+ * heap header or AVBuffer sharing that 64-byte line gets overwritten with
+ * stale RAM data (clobbering AVBuffer->refcount to 0 or corrupting dlmalloc).
+ * Aligning both the start and size of every plane buffer to 64 bytes isolates
+ * ME writes to dedicated cache lines. */
+static struct {
+    AVBufferPool *pools[4];
+    int linesize[4];
+    int width;
+    int height;
+    int format;
+} mefp_pool = { .format = AV_PIX_FMT_NONE };
+
+static void mefp_plane_buf_free(void *opaque, uint8_t *data)
+{
+    (void)opaque;
+    free(data);
+}
+
+static AVBufferRef *mefp_plane_buf_alloc(size_t size)
+{
+    size_t padded = (size + 63u) & ~(size_t)63u;
+    uint8_t *data = memalign(64, padded);
+    if (!data) return NULL;
+    memset(data, 0, padded);
+    AVBufferRef *ref = av_buffer_create(data, (int)padded, mefp_plane_buf_free, NULL, 0);
+    if (!ref) {
+        free(data);
+        return NULL;
+    }
+    return ref;
+}
+
+static void mefp_pool_reset(void)
+{
+    for (int i = 0; i < 4; ++i)
+        av_buffer_pool_uninit(&mefp_pool.pools[i]);
+    memset(mefp_pool.linesize, 0, sizeof(mefp_pool.linesize));
+    mefp_pool.width = 0;
+    mefp_pool.height = 0;
+    mefp_pool.format = AV_PIX_FMT_NONE;
+}
+
+int mefp_get_buffer2(AVCodecContext *avctx, AVFrame *frame, int flags)
+{
+    if (avctx->codec_type != AVMEDIA_TYPE_VIDEO || avctx->hw_frames_ctx)
+        return avcodec_default_get_buffer2(avctx, frame, flags);
+
+    if (!mefp_pool.pools[0] ||
+        mefp_pool.format != frame->format ||
+        mefp_pool.width != frame->width ||
+        mefp_pool.height != frame->height) {
+        mefp_pool_reset();
+        int w = frame->width;
+        int h = frame->height;
+        int stride_align[AV_NUM_DATA_POINTERS];
+        int linesize[4];
+        ptrdiff_t linesize1[4];
+        size_t size[4];
+        int unaligned;
+
+        avcodec_align_dimensions2(avctx, &w, &h, stride_align);
+        for (int i = 0; i < 4; ++i)
+            if (stride_align[i] < 16) stride_align[i] = 16;
+
+        do {
+            int ret = av_image_fill_linesizes(linesize, avctx->pix_fmt, w);
+            if (ret < 0) return ret;
+            w += w & ~(w - 1);
+            unaligned = 0;
+            for (int i = 0; i < 4; ++i)
+                unaligned |= linesize[i] % stride_align[i];
+        } while (unaligned);
+
+        for (int i = 0; i < 4; ++i)
+            linesize1[i] = linesize[i];
+        int ret = av_image_fill_plane_sizes(size, avctx->pix_fmt, h, linesize1);
+        if (ret < 0) return ret;
+
+        for (int i = 0; i < 4; ++i) {
+            mefp_pool.linesize[i] = linesize[i];
+            if (size[i]) {
+                if (size[i] > (size_t)INT_MAX - 128u) {
+                    mefp_pool_reset();
+                    return AVERROR(EINVAL);
+                }
+                size_t alloc_size = (size[i] + 64u + 63u) & ~(size_t)63u;
+                mefp_pool.pools[i] = av_buffer_pool_init(alloc_size, mefp_plane_buf_alloc);
+                if (!mefp_pool.pools[i]) {
+                    mefp_pool_reset();
+                    return AVERROR(ENOMEM);
+                }
+            }
+        }
+        mefp_pool.format = frame->format;
+        mefp_pool.width  = frame->width;
+        mefp_pool.height = frame->height;
+    }
+
+    if (frame->data[0] || frame->data[1] || frame->data[2] || frame->data[3])
+        return AVERROR(EINVAL);
+
+    memset(frame->data, 0, sizeof(frame->data));
+    frame->extended_data = frame->data;
+
+    int i;
+    for (i = 0; i < 4 && mefp_pool.pools[i]; ++i) {
+        frame->linesize[i] = mefp_pool.linesize[i];
+        frame->buf[i] = av_buffer_pool_get(mefp_pool.pools[i]);
+        if (!frame->buf[i]) {
+            av_frame_unref(frame);
+            return AVERROR(ENOMEM);
+        }
+        frame->data[i] = frame->buf[i]->data;
+    }
+    for (; i < AV_NUM_DATA_POINTERS; ++i) {
+        frame->data[i] = NULL;
+        frame->linesize[i] = 0;
+    }
+    return 0;
+}
+
 static void mefp_free_slots(void)
 {
     for (int i = 0; i < MEFP_FRAME_SLOTS; ++i) {
@@ -700,6 +830,7 @@ int mefp_start(void)
     /* A failed stop may have left ME writing into the previous scratch. */
     if (mefp_scratch) return AVERROR(EBUSY);
 
+    mefp_pool_reset();
     memset(&mefp_ring, 0, sizeof(mefp_ring));
     memset(&mefp_dsp, 0, sizeof(mefp_dsp));
     memset(&mefp_job, 0, sizeof(mefp_job));
@@ -817,6 +948,7 @@ int mefp_stop(void)
         mefp_scratch = NULL;
     }
     mefp_free_slots();
+    mefp_pool_reset();
     return ret < 0 ? ret : mefp_stat_error;
 }
 

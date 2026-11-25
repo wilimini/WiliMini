@@ -17,9 +17,16 @@ typedef struct {
     int error;
 } MefpStats;
 
+struct AVCodecContext;
+struct AVFrame;
+
 /* Starts the ME worker on the loaded bridge (Custom Core or MIST) and installs
  * the FFmpeg hooks. */
 int mefp_start(void);
+/* Custom AVCodecContext.get_buffer2 callback that allocates 64-byte-aligned,
+ * 64-byte-padded plane buffers so ME cache writebacks never share a D-cache
+ * line with adjacent heap metadata or AVBuffer structs. */
+int mefp_get_buffer2(struct AVCodecContext *avctx, struct AVFrame *frame, int flags);
 /* Call once per decoded frame before presenting it. Returns the sequence
  * number that must complete before its planes may be read, or 0 when the
  * frame is already complete in memory. */
