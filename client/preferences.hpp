@@ -58,7 +58,7 @@ struct Preferences {
     // Decoded frames queued for presentation; each keeps one decoder picture.
     int playbackBufferFrames = defaultPlaybackBufferFrames();
     bool showFps = false;
-    bool skipNonRefFrames = false;
+    bool skipNonRefFrames = true;
     MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     // Release source for Settings > Check for updates: 0 GitHub, 1 Codeberg (no automatic fallback).
