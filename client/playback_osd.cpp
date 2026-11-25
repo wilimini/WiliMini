@@ -25,29 +25,30 @@ void timestamp(char* value, size_t size, int64_t ms) {
 }
 }
 PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preferences, const std::vector<DanmakuComment>& comments, const std::vector<SubtitleTrack>& subtitles, bool initializeDisplay) : preferences_(preferences), title_(title) {
-    const bool en = preferences.locale == Locale::EnUs;
-    seeking_ = en ? "Seek preview" : "跳转预览";
-    buffering_ = en ? "Seeking..." : "正在定位…";
-    menuLabels_[0] = en ? "Quality" : "画质";
-    menuLabels_[1] = en ? "Danmaku" : "弹幕";
-    menuLabels_[2] = en ? "Density" : "密度";
-    menuLabels_[3] = en ? "Opacity" : "不透明度";
-    menuLabels_[4] = en ? "Subtitles" : "字幕";
-    display_ = en ? "Show" : "显示";
-    noSubtitles_ = en ? "Unavailable" : "暂无可用字幕";
-    density_[0] = en ? "Low" : "稀疏";
-    density_[1] = en ? "Medium" : "适中";
-    density_[2] = en ? "High" : "密集";
-    on_ = en ? "On" : "开"; off_ = en ? "Off" : "关";
+    const auto locale = preferences.locale;
+    seeking_ = pspapp::text(TextId::osd_seek_preview, locale);
+    buffering_ = pspapp::text(TextId::osd_seeking, locale);
+    menuLabels_[0] = pspapp::text(TextId::osd_menu_quality, locale);
+    menuLabels_[1] = pspapp::text(TextId::osd_menu_danmaku, locale);
+    menuLabels_[2] = pspapp::text(TextId::osd_menu_density, locale);
+    menuLabels_[3] = pspapp::text(TextId::osd_menu_opacity, locale);
+    menuLabels_[4] = pspapp::text(TextId::osd_menu_subtitles, locale);
+    display_ = pspapp::text(TextId::osd_display, locale);
+    noSubtitles_ = pspapp::text(TextId::osd_no_subtitles, locale);
+    density_[0] = pspapp::text(TextId::osd_density_low, locale);
+    density_[1] = pspapp::text(TextId::osd_density_medium, locale);
+    density_[2] = pspapp::text(TextId::osd_density_high, locale);
+    on_ = pspapp::text(TextId::osd_on, locale);
+    off_ = pspapp::text(TextId::osd_off, locale);
     for (unsigned i = 0; i < 4; ++i) {
         unsigned u = i * 20;
         glyphs_[count_++] = {0xf000 + i, static_cast<unsigned short>(u), 0, 20, 20, 20};
         for (unsigned y = 0; y < 20; ++y)
             std::memcpy(atlas_ + y * 512 + u, player_icons::alpha[i] + y * 20, 20);
     }
-    qualityNames_[0] = en ? "360P" : "360P 流畅";
-    qualityNames_[1] = en ? "480P" : "480P 清晰";
-    qualityNames_[2] = en ? "720P" : "720P 高清";
+    qualityNames_[0] = pspapp::text(TextId::osd_quality_360, locale);
+    qualityNames_[1] = pspapp::text(TextId::osd_quality_480, locale);
+    qualityNames_[2] = pspapp::text(TextId::osd_quality_720, locale);
     for (const auto& label : qualityNames_) cache(label);
     cache("P");
     cache(display_); cache(noSubtitles_); cache(on_); cache(off_); cache(buffering_);
@@ -55,14 +56,14 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     for (const auto& label : density_) cache(label);
     cache(seeking_);
     cache("0123456789:/- ?p%..."); cache(title_);
-    overlayMessages_[1] = en ? "Danmaku unavailable" : "弹幕加载失败";
-    overlayMessages_[2] = en ? "Subtitles unavailable" : "字幕加载失败";
-    overlayMessages_[3] = en ? "Loading subtitles..." : "正在加载字幕…";
-    overlayMessages_[4] = en ? "Subtitles loaded" : "字幕已加载";
-    overlayMessages_[5] = en ? "Login for subtitles" : "登录后可查看字幕";
-    startupLabels_[0] = en ? "Connecting video..." : "正在连接视频源…";
-    startupLabels_[1] = en ? "Preparing audio..." : "正在准备音频…";
-    startupLabels_[2] = en ? "Buffering first frame..." : "正在缓冲首帧…";
+    overlayMessages_[1] = pspapp::text(TextId::osd_msg_danmaku_unavailable, locale);
+    overlayMessages_[2] = pspapp::text(TextId::osd_msg_subtitles_unavailable, locale);
+    overlayMessages_[3] = pspapp::text(TextId::osd_msg_subtitles_loading, locale);
+    overlayMessages_[4] = pspapp::text(TextId::osd_msg_subtitles_loaded, locale);
+    overlayMessages_[5] = pspapp::text(TextId::osd_msg_subtitles_login, locale);
+    startupLabels_[0] = pspapp::text(TextId::osd_startup_video, locale);
+    startupLabels_[1] = pspapp::text(TextId::osd_startup_audio, locale);
+    startupLabels_[2] = pspapp::text(TextId::osd_startup_buffering, locale);
     for (const auto& label : overlayMessages_) cache(label);
     for (const auto& label : startupLabels_) cache(label);
     for (unsigned i = 0; i < 256; ++i) palette_[i] = (i << 24) | 0x00ffffff;

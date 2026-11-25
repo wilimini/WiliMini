@@ -1,4 +1,5 @@
 #include "community_service.hpp"
+#include "../localization.hpp"
 #include "stream_json.hpp"
 #include "../api/wiliwili/bilibili/api.h"
 #include <algorithm>
@@ -72,8 +73,9 @@ BrowseItem commentItem(const Json &j, const BrowseRequest &r) {
                          str(obj(j, "member"), "uname"), str(j, "rpid"));
   item.comment = CommunityService::comment(j);
   item.text = item.comment.message;
-  item.subtitle = std::to_string(item.comment.likes) + " 赞 · " +
-                  std::to_string(item.comment.replies) + " 回复";
+  item.subtitle = formatTr(TextId::comm_stats,
+                           {{"likes", std::to_string(item.comment.likes)},
+                            {"replies", std::to_string(item.comment.replies)}});
   item.next.aux = r.id;
   item.next.type = r.type;
   item.mid = item.comment.mid;
@@ -141,10 +143,10 @@ void dynamicItem(BrowsePage &out, const Json &raw, bool detail) {
     out.items.push_back(std::move(item));
     return;
   }
-  out.title = str(author, "name", "动态详情");
+  out.title = str(author, "name", tr(TextId::browse_dynamic_detail));
   out.description = str(obj(dynamic, "desc"), "text");
   if (!out.description.empty()) {
-    auto text = link(BrowseKind::Text, "阅读全文");
+    auto text = link(BrowseKind::Text, tr(TextId::browse_read_full));
     text.text = out.description;
     out.items.push_back(std::move(text));
   }
@@ -164,24 +166,24 @@ void dynamicItem(BrowsePage &out, const Json &raw, bool detail) {
         link(BrowseKind::LiveRoom, str(play, "title"), str(play, "room_id")));
   if (!str(author, "mid").empty())
     out.items.push_back(link(BrowseKind::Space,
-                             "UP 主 · " + str(author, "name"),
+                             formatTr(TextId::browse_uploader_prefix, {{"name", str(author, "name")}}),
                              str(author, "mid")));
   const auto &comment = obj(obj(modules, "module_stat"), "comment");
   const auto &basic = obj(j, "basic");
   const std::string oid = str(basic, "comment_id_str");
   if (!oid.empty()) {
     auto item =
-        link(BrowseKind::Comments, "评论 · " + str(comment, "count", "0"), oid);
+        link(BrowseKind::Comments, formatTr(TextId::browse_comments_count, {{"count", str(comment, "count", "0")}}), oid);
     item.next.type = number(basic, "comment_type");
     out.items.push_back(std::move(item));
   }
   if (j.contains("orig") && j.at("orig").is_object()) {
-    auto original = link(BrowseKind::DynamicDetail, "查看转发原动态",
+    auto original = link(BrowseKind::DynamicDetail, tr(TextId::browse_view_origin_dynamic),
                          str(j.at("orig"), "id_str"));
     out.items.push_back(std::move(original));
   }
   for (const auto &image : array(obj(major, "draw"), "items")) {
-    auto item = link(BrowseKind::Image, "动态图片",
+    auto item = link(BrowseKind::Image, tr(TextId::browse_dynamic_image),
                      str(j, "id_str") + "_" + std::to_string(out.items.size()));
     item.picture = str(image, "src");
     item.text = item.picture;
@@ -215,63 +217,63 @@ void updateCommentVote(int &likes, int &action, bool like, bool undo) {
 const char *browseTitle(BrowseKind kind) {
   switch (kind) {
   case BrowseKind::VideoActions:
-    return "视频操作";
+    return tr(TextId::browse_video_actions);
   case BrowseKind::ChooseCollection:
-    return "选择收藏夹";
+    return tr(TextId::browse_choose_collection);
   case BrowseKind::Discover:
-    return "发现";
+    return tr(TextId::tile_discover);
   case BrowseKind::Personal:
-    return "我的 / 云端内容";
+    return tr(TextId::browse_mine_cloud);
   case BrowseKind::Inbox:
-    return "消息";
+    return tr(TextId::tile_inbox);
   case BrowseKind::DynamicFeed:
-    return "动态";
+    return tr(TextId::tile_dynamic);
   case BrowseKind::DynamicDetail:
-    return "动态详情";
+    return tr(TextId::browse_dynamic_detail);
   case BrowseKind::Space:
-    return "用户空间";
+    return tr(TextId::browse_user_space);
   case BrowseKind::SpaceVideos:
-    return "用户投稿";
+    return tr(TextId::browse_user_videos);
   case BrowseKind::Notifications:
-    return "消息通知";
+    return tr(TextId::browse_notifications);
   case BrowseKind::Sessions:
-    return "私信";
+    return tr(TextId::browse_dm);
   case BrowseKind::Conversation:
-    return "私信会话";
+    return tr(TextId::browse_dm_conversation);
   case BrowseKind::Bangumi:
-    return "番剧";
+    return tr(TextId::browse_bangumi);
   case BrowseKind::Cinema:
-    return "影视";
+    return tr(TextId::browse_cinema);
   case BrowseKind::Season:
-    return "剧集详情";
+    return tr(TextId::browse_season_detail);
   case BrowseKind::LiveAreas:
-    return "直播分区";
+    return tr(TextId::browse_live_areas);
   case BrowseKind::LiveRooms:
-    return "直播";
+    return tr(TextId::browse_live);
   case BrowseKind::LiveRoom:
-    return "直播间";
+    return tr(TextId::browse_live_room);
   case BrowseKind::History:
-    return "云端历史";
+    return tr(TextId::browse_cloud_history);
   case BrowseKind::WatchLater:
-    return "云端稍后再看";
+    return tr(TextId::browse_cloud_watch_later);
   case BrowseKind::Collections:
-    return "收藏夹";
+    return tr(TextId::browse_collections);
   case BrowseKind::Collection:
-    return "收藏夹视频";
+    return tr(TextId::browse_collection_videos);
   case BrowseKind::Following:
-    return "关注的人";
+    return tr(TextId::browse_following);
   case BrowseKind::FollowBangumi:
-    return "我的追番";
+    return tr(TextId::browse_my_bangumi);
   case BrowseKind::FollowCinema:
-    return "我的追剧";
+    return tr(TextId::browse_my_cinema);
   case BrowseKind::Comments:
-    return "评论";
+    return tr(TextId::comments_title);
   case BrowseKind::Replies:
-    return "评论回复";
+    return tr(TextId::comm_replies_title);
   case BrowseKind::CommentActions:
-    return "评论操作";
+    return tr(TextId::comm_actions_title);
   default:
-    return "详情";
+    return tr(TextId::ui_detail_title);
   }
 }
 bool browseNeedsLogin(BrowseKind kind) {
@@ -331,12 +333,12 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
         if (str(item, "aid") == r.id)
           out.followed = true;
     }
-    out.items = {link(BrowseKind::Text, "本地稍后观看", "local-later"),
+    out.items = {link(BrowseKind::Text, tr(TextId::browse_local_watch_later), "local-later"),
                  link(BrowseKind::Text,
-                      out.followed ? "从云端稍后再看移除" : "加入云端稍后再看",
+                      tr(out.followed ? TextId::browse_remove_cloud_later : TextId::browse_add_cloud_later),
                       "cloud-later"),
-                 link(BrowseKind::ChooseCollection, "选择收藏夹", r.id),
-                 link(BrowseKind::Text, "从头播放", "restart")};
+                 link(BrowseKind::ChooseCollection, tr(TextId::browse_choose_collection), r.id),
+                 link(BrowseKind::Text, tr(TextId::browse_play_from_start), "restart")};
     return {std::move(out), {}};
   }
   case BrowseKind::ChooseCollection:
@@ -344,25 +346,25 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
     params = {{"rid", r.id}, {"type", "2"}, {"up_mid", session.mid}};
     break;
   case BrowseKind::Discover:
-    out.items = {link(BrowseKind::Bangumi, "番剧"),
-                 link(BrowseKind::Cinema, "影视"),
-                 link(BrowseKind::LiveAreas, "直播分区"),
-                 link(BrowseKind::LiveRooms, "直播推荐")};
+    out.items = {link(BrowseKind::Bangumi, tr(TextId::browse_bangumi)),
+                 link(BrowseKind::Cinema, tr(TextId::browse_cinema)),
+                 link(BrowseKind::LiveAreas, tr(TextId::browse_live_areas)),
+                 link(BrowseKind::LiveRooms, tr(TextId::browse_live_recommend))};
     return {std::move(out), {}};
   case BrowseKind::Personal:
-    out.items = {link(BrowseKind::Space, "我的空间", session.mid),
-                 link(BrowseKind::History, "云端历史"),
-                 link(BrowseKind::WatchLater, "稍后再看"),
-                 link(BrowseKind::Collections, "收藏夹", session.mid),
-                 link(BrowseKind::Following, "关注的人", session.mid),
-                 link(BrowseKind::FollowBangumi, "追番", session.mid),
-                 link(BrowseKind::FollowCinema, "追剧", session.mid)};
+    out.items = {link(BrowseKind::Space, tr(TextId::browse_my_space), session.mid),
+                 link(BrowseKind::History, tr(TextId::browse_cloud_history)),
+                 link(BrowseKind::WatchLater, tr(TextId::browse_watch_later)),
+                 link(BrowseKind::Collections, tr(TextId::browse_collections), session.mid),
+                 link(BrowseKind::Following, tr(TextId::browse_following), session.mid),
+                 link(BrowseKind::FollowBangumi, tr(TextId::browse_follow_bangumi), session.mid),
+                 link(BrowseKind::FollowCinema, tr(TextId::browse_follow_cinema), session.mid)};
     return {std::move(out), {}};
   case BrowseKind::Inbox:
-    out.items = {link(BrowseKind::Notifications, "回复我的", "reply"),
-                 link(BrowseKind::Notifications, "@我", "at"),
-                 link(BrowseKind::Notifications, "收到的赞", "like"),
-                 link(BrowseKind::Sessions, "私信")};
+    out.items = {link(BrowseKind::Notifications, tr(TextId::browse_notify_reply), "reply"),
+                 link(BrowseKind::Notifications, tr(TextId::browse_notify_at), "at"),
+                 link(BrowseKind::Notifications, tr(TextId::browse_notify_like), "like"),
+                 link(BrowseKind::Sessions, tr(TextId::browse_dm))};
     return {std::move(out), {}};
   case BrowseKind::DynamicFeed:
     endpoint = Api::DynamicArticle;
@@ -524,7 +526,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
     case BrowseKind::DynamicFeed:
       if (r.page == 1 && r.id.empty())
         out.items.push_back(
-            link(BrowseKind::Following, "关注的人", session.mid, "dynamic"));
+            link(BrowseKind::Following, tr(TextId::browse_following), session.mid, "dynamic"));
       for (const auto &j : d.at("items"))
         dynamicItem(out, j, false);
       out.hasMore = flag(d, "has_more");
@@ -537,10 +539,10 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       const auto &card = d.is_array() ? d.at(0) : d.at(r.id);
       out.title = str(card, "name");
       out.description = "UID " + r.id + " · Lv" + str(card, "level");
-      out.items = {link(BrowseKind::SpaceVideos, "投稿", r.id),
-                   link(BrowseKind::DynamicFeed, "动态", r.id),
-                   link(BrowseKind::Collections, "收藏夹", r.id),
-                   link(BrowseKind::Conversation, "私信", r.id, "1")};
+      out.items = {link(BrowseKind::SpaceVideos, tr(TextId::browse_space_videos), r.id),
+                   link(BrowseKind::DynamicFeed, tr(TextId::tile_dynamic), r.id),
+                   link(BrowseKind::Collections, tr(TextId::browse_collections), r.id),
+                   link(BrowseKind::Conversation, tr(TextId::browse_dm), r.id, "1")};
       out.items.back().next.title = out.title;
       if (session.valid()) {
         auto relation = api_.get(Api::UserRelation, {{"fid", r.id}}, false, op);
@@ -560,7 +562,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       for (const auto &j : array(feed, "items")) {
         const auto &source = obj(j, "item");
         auto item =
-            link(BrowseKind::Text, str(source, "title", "消息"), str(j, "id"));
+            link(BrowseKind::Text, str(source, "title", tr(TextId::tile_inbox)), str(j, "id"));
         item.text = str(source, "source_content");
         item.subtitle = str(obj(j, "user"), "nickname");
         item.mid = str(obj(j, "user"), "mid");
@@ -621,7 +623,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
                  str(obj(j, "account_info"), "name",
                      str(obj(cards, uid.c_str()), "name", "UID " + uid)),
                  uid, str(j, "session_type", "1"));
-        item.subtitle = "未读 " + str(j, "unread_count", "0");
+        item.subtitle = formatTr(TextId::browse_unread_count, {{"count", str(j, "unread_count", "0")}});
         const auto &last = obj(j, "last_msg");
         auto content = obj(last, "content");
         if (content.is_string())
@@ -637,7 +639,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       for (const auto &j : array(d, "messages")) {
         auto item = link(BrowseKind::Text,
                          str(j, "sender_uid") == session.mid
-                             ? "我"
+                             ? std::string(tr(TextId::browse_me))
                              : (str(j, "sender_uid") == r.id && !r.title.empty()
                                     ? r.title
                                     : "UID " + str(j, "sender_uid")),
@@ -646,7 +648,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
         if (content.is_string())
           content = Json::parse(content.get<std::string>(), nullptr, false);
         item.text = str(content, "content",
-                        number(j, "msg_type") == 2 ? "[图片]" : "[消息]");
+                        tr(number(j, "msg_type") == 2 ? TextId::browse_msg_image : TextId::browse_msg_generic));
         item.subtitle = str(j, "timestamp");
         item.mid = str(j, "sender_uid");
         out.items.push_back(std::move(item));
@@ -694,8 +696,8 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       break;
     }
     case BrowseKind::LiveRoom: {
-      out.description = number(d, "live_status") == 1 ? "直播中" : "未开播";
-      out.items.push_back(link(BrowseKind::Space, "主播空间", str(d, "uid")));
+      out.description = tr(number(d, "live_status") == 1 ? TextId::browse_live_on : TextId::browse_live_off);
+      out.items.push_back(link(BrowseKind::Space, tr(TextId::browse_host_space), str(d, "uid")));
       const auto &playurl = obj(obj(d, "playurl_info"), "playurl");
       for (const auto &stream : array(playurl, "stream"))
         for (const auto &format : array(stream, "format"))
@@ -706,17 +708,18 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
             int line = 0;
             for (const auto &url : array(codec, "url_info")) {
               auto item = link(BrowseKind::LiveStream,
-                               str(format, "format_name") + " · 线路 " +
-                                   std::to_string(++line));
+                               formatTr(TextId::browse_live_line,
+                                        {{"format", str(format, "format_name")},
+                                         {"line", std::to_string(++line)}}));
               item.text =
                   str(url, "host") + str(codec, "base_url") + str(url, "extra");
-              item.subtitle = "清晰度 " + str(codec, "current_qn");
+              item.subtitle = formatTr(TextId::browse_live_qn, {{"qn", str(codec, "current_qn")}});
               out.items.push_back(std::move(item));
             }
           }
       for (const auto &quality : array(playurl, "g_qn_desc")) {
         auto item =
-            link(BrowseKind::LiveRoom, "清晰度 · " + str(quality, "desc"), r.id,
+            link(BrowseKind::LiveRoom, formatTr(TextId::browse_live_quality, {{"desc", str(quality, "desc")}}), r.id,
                  str(quality, "qn"));
         out.items.push_back(std::move(item));
       }
@@ -732,7 +735,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
         v["author"] = str(j, "author_name");
         auto item = video(v);
         item.startMs = std::max(0, number(j, "progress")) * 1000LL;
-        item.subtitle += " · 进度 " + str(j, "progress", "0") + "秒";
+        item.subtitle += formatTr(TextId::browse_progress_sec, {{"sec", str(j, "progress", "0")}});
         out.items.push_back(std::move(item));
       }
       out.nextCursor = str(obj(d, "cursor"), "max");
@@ -750,7 +753,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
       for (const auto &j : array(d, "list")) {
         auto item = link(BrowseKind::ChooseCollection, str(j, "title"),
                          str(j, "id"), r.id);
-        item.subtitle = number(j, "fav_state") ? "已收藏" : "未收藏";
+        item.subtitle = tr(number(j, "fav_state") ? TextId::browse_favorited : TextId::browse_not_favorited);
         item.duration = number(j, "fav_state");
         out.items.push_back(std::move(item));
       }
@@ -758,7 +761,7 @@ Result<BrowsePage> CommunityService::load(const BrowseRequest &r,
     case BrowseKind::Collections:
       for (const auto &j : array(d, "list")) {
         auto item = link(BrowseKind::Collection, str(j, "title"), str(j, "id"));
-        item.subtitle = str(j, "media_count", "0") + " 个视频";
+        item.subtitle = formatTr(TextId::browse_video_count, {{"count", str(j, "media_count", "0")}});
         out.items.push_back(std::move(item));
       }
       out.hasMore = flag(d, "has_more");

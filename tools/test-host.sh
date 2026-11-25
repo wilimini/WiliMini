@@ -46,10 +46,13 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     tests/json_drop_test.c -o "$out/json-drop-test"
 "$out/json-drop-test"
+python3 scripts/generate-localization.py --zh-hans resources/i18n/zh-Hans.json \
+    --en-us resources/i18n/en-US.json --output-dir "$out/generated"
 ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -Wno-null-pointer-subtraction -fsanitize=address,undefined \
-    -Idecoder/include -Ithird_party/nlohmann -Ithird_party/pystring -Iclient -Iclient/api/wiliwili \
+    -Idecoder/include -Ithird_party/nlohmann -Ithird_party/pystring -Iclient -Iclient/api/wiliwili -I"$out/generated" \
     tests/season_stream_test.cpp client/api_client.cpp client/services/network.cpp \
     client/services/community_service.cpp client/services/stream_json.cpp \
+    client/localization.cpp "$out/generated/localization.generated.cpp" \
     -o "$out/season-stream-test"
 "$out/season-stream-test"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror tests/playback_controls_test.c -o "$out/playback-controls-test"

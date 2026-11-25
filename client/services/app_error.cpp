@@ -1,5 +1,5 @@
 #include "app_error.hpp"
-#include "../button_icons.hpp"
+#include "../localization.hpp"
 #include <cstdio>
 #include <wili_log.h>
 
@@ -47,73 +47,73 @@ const char *operationName(ErrorOperation op) {
     }
 }
 std::string errorMessage(const AppError &e) {
-    const char *text = "操作失败";
+    TextId id = TextId::err_operation_failed;
     switch (e.kind) {
     case ErrorKind::None:
         return {};
     case ErrorKind::Cancelled:
-        return "已取消";
+        return tr(TextId::err_cancelled);
     case ErrorKind::Timeout:
-        text = "网络请求超时，请重试";
+        id = TextId::err_timeout;
         break;
     case ErrorKind::Disconnected:
-        text = "网络未连接 · " BTN_SELECT " 选择 Wi-Fi";
+        id = TextId::err_disconnected;
         break;
     case ErrorKind::HttpFailure:
-        text = "服务器请求失败";
+        id = TextId::err_http_failure;
         break;
     case ErrorKind::ApiRejected:
-        text = "接口拒绝请求";
+        id = TextId::err_api_rejected;
         break;
     case ErrorKind::InvalidResponse:
-        text = "服务器响应无法识别";
+        id = TextId::err_invalid_response;
         break;
     case ErrorKind::LoginRequired:
-        text = "需要登录账号";
+        id = TextId::err_login_required;
         break;
     case ErrorKind::SessionExpired:
-        text = "登录已失效，请重新扫码";
+        id = TextId::err_session_expired;
         break;
     case ErrorKind::MeImageUnknown:
-        text = "ME 固件无法识别 · 请重启 PSP";
+        id = TextId::err_me_unknown;
         break;
     case ErrorKind::MeInitFailed:
         if (e.rawCode <= -100 && e.rawCode >= -103)
-            text = "ME 固件不兼容";
+            id = TextId::err_me_incompatible;
         else if (e.rawCode == -6)
-            text = "ME 初始化 DMA 超时 · 请重启 PSP";
+            id = TextId::err_me_dma_timeout;
         else if (e.rawCode == -202 || e.rawCode == -212)
-            text = "ME 启动超时 · 请重启 PSP";
+            id = TextId::err_me_start_timeout;
         else
-            text = "ME 初始化失败 · 请重启 PSP";
+            id = TextId::err_me_init_failed;
         break;
     case ErrorKind::OutOfMemory:
-        text = e.domain == ErrorDomain::Playback ? "可用内存不足 · 请在设置中减小播放缓冲" : "可用内存不足";
+        id = e.domain == ErrorDomain::Playback ? TextId::err_oom_playback : TextId::err_oom;
         break;
     case ErrorKind::IoFailure:
-        text = "记忆棒读写失败";
+        id = TextId::err_io_failure;
         break;
     default:
         if (e.domain == ErrorDomain::Playback) {
             if (e.operation == ErrorOperation::PreparePlayback) {
                 if (e.detail == "dash_unavailable")
-                    text = "没有可播放的 H.264 / AAC DASH 视频流";
+                    id = TextId::err_no_dash_stream;
                 else if (e.detail == "video_source")
-                    text = "连接视频源失败，请重试";
+                    id = TextId::err_connect_video_failed;
                 else if (e.detail == "audio_init")
-                    text = "音频初始化失败";
+                    id = TextId::err_audio_init_failed;
                 else if (e.detail == "video_init")
-                    text = "视频解码器初始化失败";
+                    id = TextId::err_video_init_failed;
                 else
-                    text = "视频流读取失败";
+                    id = TextId::err_stream_read_failed;
             } else if (e.operation == ErrorOperation::Cleanup)
-                text = "播放收尾失败";
+                id = TextId::err_playback_cleanup_failed;
             else
-                text = "播放失败";
+                id = TextId::err_playback_failed;
         }
         break;
     }
-    std::string out = text;
+    std::string out = tr(id);
     if (e.rawCode)
         out += " (" + std::to_string(e.rawCode) + ")";
     if (e.httpStatus)

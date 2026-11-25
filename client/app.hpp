@@ -370,7 +370,7 @@ private:
     bool hotsHasMore_ = true;
     bool searchHasMore_ = true;
     bool busy_ = false;
-    std::string status_ = "Wiliwili C++17 UI · 正在初始化";
+    std::string status_;
 
     std::vector<VideoCard> recommend_;
     std::vector<VideoCard> hots_;
