@@ -12,7 +12,6 @@ enum class SettingItem : std::size_t {
     ShowCovers,
     SlowRepeat,
     PlaybackBufferFrames,
-    PlaybackPixelFormat,
     MeBackend,
     ConfirmWithCircle,
     Language,
@@ -31,8 +30,6 @@ inline constexpr std::size_t settingsVisibleRows = 11;
 // Values match ME_BACKEND_* in decoder/me/me_bridge.h and client/me_backend_select.h.
 // The bootstrap loads the matching bridge PRX, so a change applies on next launch.
 enum class MeBackend : int { Mist = 0, CustomCore = 1 };
-enum class PlaybackPixelFormat : int { Auto = 0, Rgb565 = 1, Rgba8888 = 2 };
-bool playbackUsesRgb565(PlaybackPixelFormat format);
 const char* meBackendCode(MeBackend backend);
 
 // Values match WiliLogLevel in platform/include/wili_log.h. Verbose is compiled out of
@@ -56,8 +53,8 @@ struct Preferences {
     bool slowRepeat = false;
     // Music mode repeat: 0 all, 1 one, 2 once (MusicQueue's RepeatMode order).
     int musicRepeat = 0;
+    // Decoded frames queued for presentation; each keeps one decoder picture.
     int playbackBufferFrames = defaultPlaybackBufferFrames();
-    PlaybackPixelFormat playbackPixelFormat = PlaybackPixelFormat::Auto;
     MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     // Release source for Settings > Check for updates: 0 GitHub, 1 Codeberg (no automatic fallback).

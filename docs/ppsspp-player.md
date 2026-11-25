@@ -3,7 +3,7 @@
 ## 默认：原生 ME
 
 默认构建不链接 sceMpeg；启动器在 PPSSPP 中也加载 `me_bridge.prx`，
-播放器与真机共用 FFmpeg 视频/音频解码和 ME 转色/缩放路径。
+播放器与真机共用 FFmpeg 熵解码/音频解码、ME 重建和 GE 呈现路径。
 日志为 `LOADER player=psp-me`、`PLAYER backend=psp-native`；summary 的
 `backend` 为 `psp-native`。
 
@@ -93,7 +93,7 @@ PPSSPP 的 `sceMpegGetAvcNalAu` 尚未实现，因此不能直接投递 MP4 NAL 
 
 支持范围沿用 H.264、最大 1280×720、单/双声道 44.1/48 kHz AAC 的输入限制。
 实际验证覆盖 640×360 Baseline 和 High Profile/B 帧；不据此推断其他分辨率或真机性能。
-`rgb_buffer_frames` 保留接口兼容性，此后端直接双缓冲显示，不分配 ME 的 RGB 队列。
+`buffer_frames` 保留接口兼容性，此后端直接以 RGBA8888 双缓冲显示，不使用帧队列。
 每次播放仍在 `results/run-NNN/summary.json` 中记录后端、帧数、首帧/音频时间戳和错误。
 
 ## 构建与验证

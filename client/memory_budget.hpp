@@ -4,14 +4,11 @@
 #ifndef BILI_CLIENT_HEAP_KB
 #define BILI_CLIENT_HEAP_KB (12 * 1024)
 #endif
-#ifndef BILI_DEFAULT_RGB_FRAMES
-#define BILI_DEFAULT_RGB_FRAMES 2
-#endif
-#ifndef BILI_DEFAULT_RGB565
-#define BILI_DEFAULT_RGB565 1
+// Decoded frames queued for presentation unless Settings choose otherwise.
+#ifndef BILI_DEFAULT_BUFFER_FRAMES
+#define BILI_DEFAULT_BUFFER_FRAMES 2
 #endif
 
 namespace pspapp {
 int defaultPlaybackBufferFrames();
-bool defaultPlaybackRgb565();
 }

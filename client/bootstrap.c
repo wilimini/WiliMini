@@ -89,6 +89,7 @@ int main(int argc,char **argv){
     r=start(path);if(r<0)goto failed;
     sceKernelExitDeleteThread(0);return 0;
 failed:
+    printf("LOADER startup failed: 0x%08x root=%s\n", r, root ? root : "none");
     pspDebugScreenInit();pspDebugScreenPrintf("WiliMini startup failed: 0x%08x\nRoot: %s\nCheck PRXs, cacert.pem and wqy.bmf.\nSearch order: ms0, ef0, host0.\n",r,root?root:"no complete package");
     sceKernelDelayThread(5000000);sceKernelExitGame();return 0;
 }

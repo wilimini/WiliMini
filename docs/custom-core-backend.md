@@ -3,8 +3,8 @@
 This opt-in backend uses mcidclan's pinned Custom Core bootstrap and cache helpers
 under the upstream MIT license. The existing kernel bridge hosts the task loop;
 it does not install a separate kcall plugin or patch the firmware syscall table.
-FFmpeg decoding, rendering kernels, media settings and RGB queues stay shared
-with the MIST build. This is not a decoder performance experiment.
+FFmpeg decoding, the ME frame pipeline, media settings and the frame queue stay
+shared with the MIST build. This is not a decoder performance experiment.
 
 Build the diagnostic client through the normal entry point. Every package carries
 both the MIST and Custom Core bridge PRXs; the backend is chosen at launch:

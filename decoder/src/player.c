@@ -12,10 +12,6 @@
 #include <libavutil/pixfmt.h>
 
 #include "psp_profile.h"
-#include "frame_hash.h"
-#include "scale_map.h"
-#include "yuv_rgb.h"
-#include "vfpu_render.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -26,13 +22,6 @@
 #include <wili_results.h>
 #include "playback_diagnostics.h"
 #define WARMUP_FRAMES 30
-#if PSP_PTS_PACE
-static uint64_t presentation_deadline, presentation_origin_us;
-static int64_t presentation_origin_pts;
-#if !PSP_RGB_PACE
-static void wait_presentation(uint64_t deadline);
-#endif
-#endif
 static volatile int quit_requested;
 static const volatile int *host_cancel_requested;
 static int playback_cleanup_error;
@@ -41,8 +30,6 @@ static int playback_cleanup_error;
 static PlaybackControls controls;
 static SceUID controls_lock = -1;
 static const PspVideoPresenter *presenter;
-static PspVideoPixelFormat output_pixel_format = PSP_VIDEO_PIXEL_FORMAT_RGB565;
-static size_t rgb_pixel_bytes = 2;
 static int seek_requested;
 static volatile int playback_seeking;
 static volatile int seek_pending; /* re-target requested while a seek runs; guarded by controls_lock */
@@ -75,9 +62,7 @@ static void playback_metadata(int64_t duration_ms, int seekable) {
     controls.seekable = seekable && duration_ms > 0;
     sceKernelSignalSema(controls_lock, 1);
 }
-#include "rgb_pacer.h"
-#include "me_render.h"
-#include "me_decode.h"
+#include "video_output.h"
 
 #include "psp_video.h"
 #include "source_io.h"
@@ -86,7 +71,6 @@ static const char *video_log_root = ".";
 static const PspVideoSource *video_io_source;
 static const PspVideoSource *audio_io_source;
 static int client_playback;
-extern const unsigned avpriv_psp_approx_reconstruction_v2;
 static unsigned cancel_button = PSP_CTRL_CIRCLE;
 static int64_t playback_start_ms, playback_position_us, video_origin_us;
 static int64_t first_video_us;
@@ -207,8 +191,6 @@ typedef struct {
     unsigned errors;
     unsigned eof;
     unsigned log_truncated;
-    uint32_t frame_hash;
-    uint32_t render_hash;
 } RunStats;
 
 int psp_profile_enabled;
@@ -220,10 +202,6 @@ static PacketRecord *packet_records;
 static unsigned packet_record_count;
 static unsigned packet_records_truncated;
 static FrameRecord *records;
-#if PSP_AUDIO_VERIFY
-static struct { int64_t pts; uint8_t luma[144]; } visual_records[512];
-static unsigned visual_count;
-#endif
 #include "audio_playback.h"
 static void interrupt_source_reads(int interrupted) {
     if (video_io_source && video_io_source->interrupt_reads)
@@ -233,9 +211,7 @@ static void interrupt_source_reads(int interrupted) {
 }
 static void begin_playback_seek(void) {
     playback_seeking = 1;
-#if PSP_AUDIO
     audio.stop = 1;
-#endif
     interrupt_source_reads(1);
     sceKernelWaitSema(controls_lock, 1, NULL);
     controls.seeking = 0;
@@ -246,12 +222,10 @@ static void begin_playback_seek(void) {
 static int present_video(const void *pixels, PspVideoPixelFormat format) {
     if (!presenter || !presenter->present) return 0;
     int64_t position = playback_start_ms;
-#if PSP_AUDIO
     if (!playback_seeking && audio.rate > 0 && audio.epoch_us && audio.first_pts_us != AV_NOPTS_VALUE) {
         position = (audio_clock_us() - video_origin_us) / 1000;
         if (position < playback_start_ms) position = playback_start_ms;
     }
-#endif
     sceKernelWaitSema(controls_lock, 1, NULL);
     if (!controls.paused && !playback_seeking) controls.position_ms = position;
     PspVideoStatus status = {controls.position_ms, controls.duration_ms, controls.preview_ms,
@@ -264,17 +238,16 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
 }
 static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
                            AVPacket *packet, AVFrame *frame, const char *run_path) {
-#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
-    /* Stop producers before retiring ME and consuming every old RGB slot.
+    /* Stop producers before retiring ME and consuming every queued frame.
      * The presentation owner keeps the last clean image on screen. */
-    int ret = me_render_finish();
+    int ret = video_output_finish();
     if (ret < 0) return ret;
-    ret = rgb_finish();
+    ret = pacer_finish();
     if (ret < 0) return ret;
     audio_close(0);
     if (audio.error) return audio.error;
     if (quit_requested) return AVERROR_EXIT;
-    rgb_startup_ready = 0;
+    pacer_startup_ready = 0;
     interrupt_source_reads(0);
     sceKernelWaitSema(controls_lock, 1, NULL);
     seek_pending = 0; /* the target read below already includes it */
@@ -297,35 +270,14 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     controls.hide_at = sceKernelGetSystemTimeWide() + 3000000;
     if (!again) playback_seeking = 0; /* cleared under the lock so a late press cannot be lost */
     sceKernelSignalSema(controls_lock, 1);
-    ++rgb_generation;
-    rgb_seek_preview = 1;
+    ++pacer_generation;
+    pacer_seek_preview = 1;
     if (!again) seek_requested = 0;
     ++playback_seeks;
     WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained%s", playback_seeks,
            (long long)playback_start_ms, again ? " retarget=1" : "");
     return 0;
-#else
-    (void)format; (void)codec; (void)packet; (void)frame; (void)run_path;
-    return AVERROR(ENOSYS);
-#endif
 }
-#if PSP_PTS_PACE && !PSP_RGB_PACE
-static void wait_presentation(uint64_t deadline)
-{
-    while (!quit_requested) {
-        uint64_t now = sceKernelGetSystemTimeWide();
-        if (now >= deadline) break;
-        uint64_t remaining = deadline - now;
-        sceKernelDelayThreadCB(remaining > 10000 ? 10000 : (unsigned)remaining);
-    }
-}
-#endif
-#if PSP_YUV_LUT
-static YuvRgbTables yuv_rgb_tables;
-#endif
-#if PSP_SPATIAL_LUT
-static ScaleMap scale_map;
-#endif
 
 static unsigned tick_us(void)
 {
@@ -337,171 +289,6 @@ unsigned psp_profile_tick(void)
     return tick_us();
 }
 
-#ifndef PSP_VIDEO_LIBRARY
-static int exit_callback(int arg1, int arg2, void *common)
-{
-    (void)arg1;
-    (void)arg2;
-    (void)common;
-    quit_requested = 1;
-    return 0;
-}
-
-static int callback_thread(SceSize args, void *argp)
-{
-    (void)args;
-    (void)argp;
-    int cbid = sceKernelCreateCallback("psp_ffmpeg_exit", exit_callback, NULL);
-    sceKernelRegisterExitCallback(cbid);
-    sceKernelSleepThreadCB();
-    return 0;
-}
-
-static void install_exit_callback(void)
-{
-    int tid = sceKernelCreateThread("psp_ffmpeg_callbacks", callback_thread,
-                                    0x11, 0x1000, PSP_THREAD_ATTR_USER, NULL);
-    if (tid >= 0)
-        sceKernelStartThread(tid, 0, NULL);
-}
-
-#endif
-
-static int draw_frame(const AVFrame *frame)
-{
-#if PSP_ME_RENDER
-    int ret = me_render_submit(frame);
-#if PSP_AUDIO && PSP_AUDIO_PRESENT_IMMEDIATE && !PSP_RGB_PACE
-    /* Audio remains independent while this waits. Present the current picture
-     * without adding the next picture's variable decode time to its latency. */
-    if (ret >= 0) ret = me_render_finish();
-#endif
-    return ret;
-#elif PSP_ME_DECODE_RENDER
-    return me_decode_render(frame);
-#endif
-    if (frame->format != AV_PIX_FMT_YUV420P || frame->width != 640 || frame->height != 360)
-        return -1;
-
-    uint32_t *dst = (uint32_t *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u);
-#if PSP_VFPU_RENDER
-    vfpu_draw_full(frame->data, frame->linesize, dst);
-#elif PSP_HALF_RENDER
-    for (int y = 0; y < HALF_HEIGHT; ++y) {
-        uint32_t *line = dst + (y + HALF_Y) * DISPLAY_STRIDE + HALF_X;
-        const uint8_t *yl = frame->data[0] + (y * 2) * frame->linesize[0];
-        const uint8_t *ul = frame->data[1] + y * frame->linesize[1];
-        const uint8_t *vl = frame->data[2] + y * frame->linesize[2];
-        for (int x = 0; x < HALF_WIDTH; ++x)
-            line[x] = yuv_rgb_pixel(&yuv_rgb_tables, yl[x * 2], ul[x], vl[x]);
-    }
-#elif PSP_PAIRED_ROWS && PSP_GROUPED_RENDER && PSP_YUV_LUT && PSP_SPATIAL_LUT
-    for (int y = 0; y < VIDEO_HEIGHT; y += 3) {
-        int sy = y * 4 / 3;
-        uint32_t *line0 = dst + (y + 1) * DISPLAY_STRIDE;
-        uint32_t *line1 = line0 + DISPLAY_STRIDE;
-        uint32_t *line2 = line1 + DISPLAY_STRIDE;
-        const uint8_t *yl0 = frame->data[0] + sy * frame->linesize[0];
-        const uint8_t *yl1 = yl0 + frame->linesize[0];
-        const uint8_t *yl2 = yl1 + frame->linesize[0];
-        const uint8_t *ul = frame->data[1] + (sy / 2) * frame->linesize[1];
-        const uint8_t *vl = frame->data[2] + (sy / 2) * frame->linesize[2];
-
-        for (int group = 0; group < DISPLAY_WIDTH / 3; ++group) {
-            int sx = group * 4, dx = group * 3, cx = group * 2;
-            int u0 = ul[cx], v0 = vl[cx];
-            int red0 = yuv_rgb_tables.v_red[v0];
-            int green0 = yuv_rgb_tables.u_green[u0] + yuv_rgb_tables.v_green[v0];
-            int blue0 = yuv_rgb_tables.u_blue[u0];
-            int u1 = ul[cx + 1], v1 = vl[cx + 1];
-            int red1 = yuv_rgb_tables.v_red[v1];
-            int green1 = yuv_rgb_tables.u_green[u1] + yuv_rgb_tables.v_green[v1];
-            int blue1 = yuv_rgb_tables.u_blue[u1];
-            line0[dx] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl0[sx]], red0, green0, blue0);
-            line0[dx + 1] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl0[sx + 1]], red0, green0, blue0);
-            line0[dx + 2] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl0[sx + 2]], red1, green1, blue1);
-            line1[dx] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl1[sx]], red0, green0, blue0);
-            line1[dx + 1] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl1[sx + 1]], red0, green0, blue0);
-            line1[dx + 2] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl1[sx + 2]], red1, green1, blue1);
-        }
-
-        ul += frame->linesize[1];
-        vl += frame->linesize[2];
-        for (int group = 0; group < DISPLAY_WIDTH / 3; ++group) {
-            int sx = group * 4, dx = group * 3, cx = group * 2;
-            int u0 = ul[cx], v0 = vl[cx];
-            int red0 = yuv_rgb_tables.v_red[v0];
-            int green0 = yuv_rgb_tables.u_green[u0] + yuv_rgb_tables.v_green[v0];
-            int blue0 = yuv_rgb_tables.u_blue[u0];
-            line2[dx] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl2[sx]], red0, green0, blue0);
-            line2[dx + 1] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl2[sx + 1]], red0, green0, blue0);
-            int u1 = ul[cx + 1], v1 = vl[cx + 1];
-            line2[dx + 2] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl2[sx + 2]],
-                                                    yuv_rgb_tables.v_red[v1],
-                                                    yuv_rgb_tables.u_green[u1] + yuv_rgb_tables.v_green[v1],
-                                                    yuv_rgb_tables.u_blue[u1]);
-        }
-    }
-#else
-    for (int y = 0; y < VIDEO_HEIGHT; ++y) {
-#if PSP_SPATIAL_LUT
-        int sy = scale_map.source_y[y];
-#else
-        int sy = y * 360 / VIDEO_HEIGHT;
-#endif
-        uint32_t *line = dst + (y + 1) * DISPLAY_STRIDE;
-        const uint8_t *yl = frame->data[0] + sy * frame->linesize[0];
-        const uint8_t *ul = frame->data[1] + (sy / 2) * frame->linesize[1];
-        const uint8_t *vl = frame->data[2] + (sy / 2) * frame->linesize[2];
-#if PSP_GROUPED_RENDER && PSP_YUV_LUT && PSP_SPATIAL_LUT
-        for (int group = 0; group < DISPLAY_WIDTH / 3; ++group) {
-            int sx = group * 4;
-            int dx = group * 3;
-            int cx = group * 2;
-            int u0 = ul[cx], v0 = vl[cx];
-            int red0 = yuv_rgb_tables.v_red[v0];
-            int green0 = yuv_rgb_tables.u_green[u0] + yuv_rgb_tables.v_green[v0];
-            int blue0 = yuv_rgb_tables.u_blue[u0];
-            line[dx] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl[sx]],
-                                              red0, green0, blue0);
-            line[dx + 1] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl[sx + 1]],
-                                                  red0, green0, blue0);
-            int u1 = ul[cx + 1], v1 = vl[cx + 1];
-            line[dx + 2] = yuv_rgb_pixel_offsets(&yuv_rgb_tables, yuv_rgb_tables.y[yl[sx + 2]],
-                                                  yuv_rgb_tables.v_red[v1],
-                                                  yuv_rgb_tables.u_green[u1] + yuv_rgb_tables.v_green[v1],
-                                                  yuv_rgb_tables.u_blue[u1]);
-        }
-#else
-        for (int x = 0; x < DISPLAY_WIDTH; ++x) {
-#if PSP_SPATIAL_LUT
-            int sx = scale_map.luma_x[x];
-            int cx = scale_map.chroma_x[x];
-#else
-            int sx = x * 640 / DISPLAY_WIDTH;
-            int cx = sx / 2;
-#endif
-#if PSP_YUV_LUT
-            line[x] = yuv_rgb_pixel(&yuv_rgb_tables, yl[sx],
-                                    ul[cx], vl[cx]);
-#else
-            int c = (int)yl[sx] - 16;
-            int d = (int)ul[cx] - 128;
-            int e = (int)vl[cx] - 128;
-            int r = yuv_rgb_clamp((298 * c + 459 * e + 128) >> 8);
-            int g = yuv_rgb_clamp((298 * c - 55 * d - 136 * e + 128) >> 8);
-            int b = yuv_rgb_clamp((298 * c + 541 * d + 128) >> 8);
-            line[x] = 0xff000000u | ((uint32_t)b << 16) |
-                      ((uint32_t)g << 8) | (uint32_t)r;
-#endif
-        }
-#endif
-    }
-#endif
-    sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
-                          PSP_DISPLAY_PIXEL_FORMAT_8888, PSP_DISPLAY_SETBUF_IMMEDIATE);
-    return 0;
-}
 
 /* The run folder of the playback in progress ("" if none), and where its log starts.
  * results_enabled is the "Save logs and results" setting (or a profiling run); the lab build
@@ -608,8 +395,7 @@ static int select_run_dir(char *path, size_t length)
 #include "ppsspp_player.h"
 #endif
 
-static void save_results(const char *path, const RunStats *s, int render,
-                         int full, int error_code)
+static void save_results(const char *path, const RunStats *s, int full, int error_code)
 {
     if (!path[0]) return; /* results are off */
     char file[160];
@@ -656,35 +442,18 @@ static void save_results(const char *path, const RunStats *s, int render,
             fclose(profile);
         }
     }
-    snprintf(file, sizeof(file), "%s/frames.csv", path);
-#if PSP_AUDIO_VERIFY
-    snprintf(file, sizeof(file), "%s/visual.csv", path);
-    FILE *visual = fopen(file, "w");
-    if (visual) {
-        fputs("pts,luma\n", visual);
-        for (unsigned i = 0; i < visual_count; ++i) {
-            fprintf(visual, "%lld,", (long long)visual_records[i].pts);
-            for (int j = 0; j < 144; ++j) fprintf(visual, "%02x", visual_records[i].luma[j]);
-            fputc('\n', visual);
-        }
-        fclose(visual);
-    }
-    snprintf(file, sizeof(file), "%s/frames.csv", path);
-#endif
-#if PSP_AUDIO && PSP_RGB_PACE
     snprintf(file, sizeof(file), "%s/presentation.csv", path);
     FILE *present = fopen(file, "w");
     if (present) {
         fputs("output_index,pts_us,audio_us,wall_us,dropped,target_us\n", present);
-        for (unsigned i = 0; diagnostic_audio_valid && i < rgb_record_count; ++i)
+        for (unsigned i = 0; diagnostic_audio_valid && i < pacer_record_count; ++i)
             fprintf(present, "%u,%lld,%lld,%llu,%d,%lld\n", i,
-                    (long long)rgb_records[i].pts, (long long)rgb_records[i].audio,
-                    (unsigned long long)rgb_records[i].wall, rgb_records[i].dropped,
-                    (long long)rgb_records[i].target);
+                    (long long)pacer_records[i].pts, (long long)pacer_records[i].audio,
+                    (unsigned long long)pacer_records[i].wall, pacer_records[i].dropped,
+                    (long long)pacer_records[i].target);
         fclose(present);
     }
     snprintf(file, sizeof(file), "%s/frames.csv", path);
-#endif
     FILE *out = fopen(file, "w");
     if (out) {
         fputs("output_index,pts,receive_us,render_us\n", out);
@@ -708,87 +477,63 @@ static void save_results(const char *path, const RunStats *s, int render,
         fprintf(out, "  \"start_ms\": %lld,\n  \"position_ms\": %lld,\n  \"first_video_us\": %lld,\n",
                 (long long)playback_start_ms, (long long)(playback_position_us / 1000), (long long)first_video_us);
         fprintf(out, "  \"client_catchup_events\": %u,\n  \"client_catchup_packets\": %u,\n", s->catchup_events, s->catchup_packets);
-#if PSP_AUDIO
         fprintf(out, "  \"audio_stats_valid\": %s,\n", diagnostic_audio_valid ? "true" : "false");
         if (diagnostic_audio_valid) audio_report(out);
-#endif
         fprintf(out, "  \"skip_frame\": %d,\n  \"media_us\": %lld,\n",
                 PSP_SKIP_FRAME, (long long)s->media_us);
         fprintf(out, "  \"skip_loop_filter\": %d,\n", PSP_SKIP_LOOP_FILTER);
-        fprintf(out, "  \"approx_qpel\": %d,\n", PSP_APPROX_QPEL);
         fprintf(out, "  \"packed_chroma\": %d,\n", PSP_PACKED_CHROMA);
-        fprintf(out, "  \"pts_pace\": %d,\n", PSP_PTS_PACE);
-        fprintf(out, "  \"me_render_queue\": %d,\n", PSP_ME_RENDER_QUEUE);
-        fprintf(out, "  \"me_cache\": %d,\n", PSP_ME_CACHE);
-        fprintf(out, "  \"me_full_cache\": %d,\n", PSP_ME_FULL_CACHE);
         fprintf(out, "  \"integer_unaligned_copy\": %d,\n", PSP_INTEGER_UNALIGNED_COPY);
         fprintf(out, "  \"unrolled_avg\": %d,\n", PSP_UNROLLED_AVG);
         fprintf(out, "  \"cabac_movn\": %d,\n",
                 avpriv_psp_cabac_mode ? avpriv_psp_cabac_mode() : 0);
-#if PSP_APPROX_QPEL
-        fprintf(out, "  \"approx_reconstruction\": %u,\n", avpriv_psp_approx_reconstruction_v2);
+        fprintf(out, "  \"me_pipeline\": %d,\n  \"frames_queued\": %u,\n", PSP_ME_PIPELINE, video_frames_queued);
+        fprintf(out, "  \"ge_wait_us\": %llu,\n  \"ge_present_us\": %llu,\n",
+                (unsigned long long)pacer_wait_us, (unsigned long long)pacer_present_us);
+#if PSP_ME_PIPELINE
+        fprintf(out,
+                "  \"mefp_recon_frames\": %u,\n"
+                "  \"mefp_fallback_frames\": %u,\n"
+                "  \"mefp_intra_mbs\": %u,\n"
+                "  \"mefp_inter_mbs\": %u,\n"
+                "  \"mefp_wait_us\": %u,\n"
+                "  \"mefp_capture_us\": %llu,\n"
+                "  \"mefp_error\": %d,\n",
+                mefp_final_stats.recon_frames,
+                mefp_final_stats.fallback_frames,
+                mefp_final_stats.intra_mbs,
+                mefp_final_stats.inter_mbs,
+                mefp_final_stats.wait_us,
+                (unsigned long long)mefp_final_stats.capture_us,
+                mefp_final_stats.error);
 #endif
-#if PSP_ME_RENDER
-        fprintf(out, "  \"me_submitted\": %u,\n  \"me_completed\": %u,\n", me_submitted, me_completed);
-#if PSP_PTS_PACE
-        fprintf(out, "  \"late_over_40ms_including_warmup\": %u,\n"
-                "  \"max_lateness_us\": %u,\n  \"total_lateness_us\": %llu,\n",
-                me_late_frames, me_max_lateness_us, (unsigned long long)me_total_lateness_us);
-#endif
-#endif
-#if PSP_ME_DECODE
-        fprintf(out, "  \"me_decode\": %d,\n  \"me_decode_jobs\": %u,\n  \"me_decode_blocks\": %u,\n"
-                "  \"me_decode_checked\": %u,\n  \"me_decode_mismatches\": %u,\n  \"me_decode_error\": %d,\n",
-                PSP_ME_DECODE, me_decode_jobs, me_decode_blocks, me_decode_checked,
-                me_decode_mismatches, me_decode_error);
-#if PSP_ME_DECODE == 4
-        fprintf(out, "  \"pipeline_batches\": %u,\n  \"pipeline_handoffs\": %u,\n"
-                "  \"pipeline_wait_us\": %u,\n  \"pipeline_max_batch\": %u,\n  \"pipeline_fallback\": %u,\n",
-                me_pipeline_batches, me_pipeline_handoffs, me_pipeline_wait_us,
-                me_pipeline_max_batch, me_pipeline_fallback);
-        fprintf(out, "  \"pipeline_failure_mb\": %u,\n  \"pipeline_failure_pixel\": %u,\n  \"pipeline_failure_values\": %u,\n",
-                me_pipeline_failure_mb, me_pipeline_failure_pixel, me_pipeline_failure_values);
-        fprintf(out, "  \"pipeline_filters\": %u,\n  \"pipeline_filter_rows\": %u,\n",
-                me_pipeline_filters, me_pipeline_filter_rows);
-        fprintf(out, "  \"pipeline_trace\": [%u, %u, %u, %u],\n",
-                me_pipeline_trace[0], me_pipeline_trace[1], me_pipeline_trace[2], me_pipeline_trace[3]);
-#endif
-#if PSP_ME_DECODE_RENDER
-        fprintf(out, "  \"me_decode_render_submitted\": %u,\n  \"me_decode_render_completed\": %u,\n",
-                me_decode_render_submitted, me_decode_render_completed);
-#endif
-#endif
-        fprintf(out, "  \"me_render\": %d,\n  \"profiling\": %s,\n  \"packet_records_truncated\": %s,\n",
-                PSP_ME_RENDER,
+        fprintf(out, "  \"profiling\": %s,\n  \"packet_records_truncated\": %s,\n",
                 profile_requested ? "true" : "false",
                 packet_records_truncated ? "true" : "false");
         fprintf(out, "  \"error_stage\": \"%s\",\n", psp_video_stage_name(video_stage));
         fprintf(out,
                 "  \"build\": \"%s\",\n"
-                "  \"expected_input_sha256\": \"%s\",\n"
-                "  \"mode\": \"%s\",\n  \"full\": %s,\n"
+                "  \"full\": %s,\n"
                 "  \"cpu_mhz\": %d,\n  \"bus_mhz\": %d,\n"
                 "  \"warmup_frames\": %d,\n  \"frames\": %u,\n"
                 "  \"packets\": %u,\n  \"read_us\": %llu,\n"
                 "  \"decode_us\": %llu,\n  \"render_us\": %llu,\n"
                 "  \"measured_us\": %llu,\n  \"eof\": %s,\n"
                 "  \"errors\": %u,\n  \"error_code\": %d,\n"
-                "  \"log_truncated\": %s,\n  \"frame_hash\": \"%08x\",\n"
-                "  \"render_hash\": \"%08x\"\n}\n",
-                PSP_BUILD_ID, client_playback ? "" : "24e7523c7184bb7af58ba19c6a1d139151e506263f8e93d09c4a670abbdf2cf4", render ? "render" : "decode_only", full ? "true" : "false",
+                "  \"log_truncated\": %s\n}\n",
+                PSP_BUILD_ID, full ? "true" : "false",
                 scePowerGetCpuClockFrequencyInt(), scePowerGetBusClockFrequencyInt(),
                 WARMUP_FRAMES, s->frames, s->packets,
                 (unsigned long long)s->read_us, (unsigned long long)s->decode_us,
                 (unsigned long long)s->render_us, (unsigned long long)s->measured_us,
                 s->eof ? "true" : "false", s->errors, error_code,
-                s->log_truncated ? "true" : "false", (unsigned)s->frame_hash,
-                (unsigned)s->render_hash);
+                s->log_truncated ? "true" : "false");
         fclose(out);
     }
 }
 
 static int receive_frames(AVCodecContext *codec, AVFrame *frame,
-                          RunStats *s, int render, int full,
+                          RunStats *s, int full,
                           unsigned *output_count, unsigned *measure_start)
 {
     video_stage = PSP_VIDEO_STAGE_PLAY;
@@ -817,87 +562,19 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
             playback_position_us = frame_us;
         }
 
-        unsigned render_us = 0;
-#if PSP_AUDIO_VERIFY
-        if (visual_count < 512) {
-            visual_records[visual_count].pts = frame->best_effort_timestamp;
-            for (int y = 0; y < 9; ++y)
-                for (int x = 0; x < 16; ++x)
-                    visual_records[visual_count].luma[y * 16 + x] =
-                        frame->data[0][(20 + y * 40) * frame->linesize[0] + 20 + x * 40];
-            ++visual_count;
+        const int64_t pts = frame->best_effort_timestamp;
+        if (pts != AV_NOPTS_VALUE)
+            presentation_pts_us = av_rescale_q(pts, codec->pkt_timebase, AV_TIME_BASE_Q);
+        begin = tick_us();
+        ret = video_output_submit(frame);
+        if (!*output_count && video_io_source && video_io_source->first_frame)
+            video_io_source->first_frame(video_io_source->opaque);
+        const unsigned render_us = tick_us() - begin;
+        if (ret < 0) {
+            if (!playback_seeking) ++s->errors;
+            av_frame_unref(frame);
+            return ret;
         }
-#endif
-        if (render) {
-#if PSP_PTS_PACE
-            int64_t pts = frame->best_effort_timestamp;
-            if (pts != AV_NOPTS_VALUE) {
-#if PSP_AUDIO
-                presentation_deadline = audio_video_deadline(pts, codec->pkt_timebase);
-#if PSP_RGB_PACE
-                presentation_pts_us = av_rescale_q(pts, codec->pkt_timebase, AV_TIME_BASE_Q);
-#endif
-#else
-                if (presentation_origin_pts == AV_NOPTS_VALUE) {
-                    presentation_origin_pts = pts;
-                    /* A short initial buffer lets decoding overlap the first presentation. */
-                    presentation_origin_us = sceKernelGetSystemTimeWide() +
-                        (PSP_ME_RENDER_QUEUE ? 1000000 : 250000);
-                }
-                int64_t offset = av_rescale_q(pts - presentation_origin_pts,
-                                             codec->pkt_timebase, AV_TIME_BASE_Q);
-                presentation_deadline = presentation_origin_us + (offset > 0 ? offset : 0);
-#endif
-            } else presentation_deadline = sceKernelGetSystemTimeWide();
-#endif
-#if PSP_PTS_PACE && !PSP_ME_RENDER && !PSP_ME_DECODE_RENDER && !PSP_RGB_PACE
-            wait_presentation(presentation_deadline);
-            if (quit_requested) { av_frame_unref(frame); return AVERROR_EXIT; }
-#endif
-            begin = tick_us();
-            ret = draw_frame(frame);
-            if (!*output_count && video_io_source && video_io_source->first_frame)
-                video_io_source->first_frame(video_io_source->opaque);
-            render_us = tick_us() - begin;
-            if (ret < 0) {
-                if (!playback_seeking) ++s->errors;
-                av_frame_unref(frame);
-                return ret;
-            }
-#if PSP_HEADLESS_VERIFY
-#if PSP_ME_RENDER
-            if (me_render_finish() < 0) { ++s->errors; return -1; }
-#elif PSP_ME_DECODE_RENDER
-            if (me_decode_render_finish() < 0) { ++s->errors; return -1; }
-#endif
-            if (*output_count >= WARMUP_FRAMES) {
-                const uint8_t *pixels = (const uint8_t *)((uintptr_t)sceGeEdramGetAddr() |
-                                                           0x40000000u);
-#if PSP_HALF_RENDER
-                s->render_hash = hash_visible_plane(s->render_hash,
-                                                     pixels + (HALF_Y * DISPLAY_STRIDE + HALF_X) * 4,
-                                                     HALF_WIDTH * 4, HALF_HEIGHT,
-                                                     DISPLAY_STRIDE * 4);
-#else
-                s->render_hash = hash_visible_plane(s->render_hash,
-                                                     pixels + DISPLAY_STRIDE * 4,
-                                                     DISPLAY_WIDTH * 4, VIDEO_HEIGHT,
-                                                     DISPLAY_STRIDE * 4);
-#endif
-            }
-#endif
-        }
-
-#if PSP_HEADLESS_VERIFY
-        if (*output_count >= WARMUP_FRAMES) {
-            s->frame_hash = hash_visible_plane(s->frame_hash, frame->data[0],
-                                               frame->width, frame->height, frame->linesize[0]);
-            for (int plane = 1; plane <= 2; ++plane)
-                s->frame_hash = hash_visible_plane(s->frame_hash, frame->data[plane],
-                                                   frame->width / 2, frame->height / 2,
-                                                   frame->linesize[plane]);
-        }
-#endif
 
         if (*output_count >= WARMUP_FRAMES) {
             if (frame->best_effort_timestamp != AV_NOPTS_VALUE &&
@@ -922,11 +599,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
         if (*output_count == WARMUP_FRAMES) source_memory("decode");
         av_frame_unref(frame);
         if (*output_count == WARMUP_FRAMES) {
-#if PSP_ME_RENDER && !PSP_ME_RENDER_QUEUE
-            if (me_render_finish() < 0) return -1;
-#elif PSP_ME_DECODE_RENDER
-            if (me_decode_render_finish() < 0) return -1;
-#endif
+            if (video_output_finish() < 0) return -1;
             memset(psp_profile_stages, 0, sizeof(psp_profile_stages));
             psp_profile_enabled = profile_requested;
             *measure_start = tick_us();
@@ -938,8 +611,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
     return -1;
 }
 
-static int run_decode(int render, int full, char *run_path, size_t path_size,
-                      RunStats *stats)
+static int run_decode(int full, char *run_path, size_t path_size, RunStats *stats)
 {
     AVFormatContext *format = NULL;
     VideoSourceIO input_io = {0};
@@ -951,27 +623,14 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     int ret = -1;
     int video_index = -1;
     int catchup_to_key = 0;
-#if PSP_AUDIO
     int audio_started = 0;
-#endif
 
     psp_profile_enabled = 0;
     stats->media_boundary_pts = AV_NOPTS_VALUE;
-#if PSP_PTS_PACE
-    presentation_origin_pts = AV_NOPTS_VALUE;
-    presentation_origin_us = presentation_deadline = 0;
-#endif
     memset(psp_profile_stages, 0, sizeof(psp_profile_stages));
-#if PSP_HEADLESS_VERIFY
-    stats->frame_hash = 2166136261u;
-    stats->render_hash = 2166136261u;
-#endif
     packet_record_count = packet_records_truncated = 0;
     diagnostic_audio_valid = 0;
     diagnostic_path[0] = 0;
-#if PSP_AUDIO_VERIFY
-    visual_count = 0;
-#endif
     timer_pair_us = ~0u;
     for (int i = 0; i < 256; ++i) {
         unsigned start = tick_us();
@@ -994,28 +653,15 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
                 WLOG_W(WLC_MEM, "packet diagnostics allocation failed");
             }
         }
-#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
-        if (render) {
-            rgb_records = malloc(RGB_RECORD_LIMIT * sizeof(*rgb_records));
-            if (!rgb_records) WLOG_W(WLC_MEM, "presentation diagnostics allocation failed");
-        }
-#endif
+        pacer_records = malloc(PACER_RECORD_LIMIT * sizeof(*pacer_records));
+        if (!pacer_records) WLOG_W(WLC_MEM, "presentation diagnostics allocation failed");
     }
     playback_diagnostic_begin(run_path);
-#if PSP_ME_DECODE
-    video_stage = PSP_VIDEO_STAGE_ME_INIT;
-    ret = me_decode_start();
+    video_stage = PSP_VIDEO_STAGE_ME_RENDER_INIT;
+    playback_diagnostic("video_output_init_begin", 0);
+    ret = video_output_start();
+    playback_diagnostic("video_output_init_end", ret);
     if (ret < 0) goto done;
-#endif
-#if PSP_ME_RENDER
-    if (render) {
-        video_stage = PSP_VIDEO_STAGE_ME_RENDER_INIT;
-        playback_diagnostic("me_render_init_begin", 0);
-        ret = me_render_start();
-        playback_diagnostic("me_render_init_end", ret);
-        if (ret < 0) goto done;
-    }
-#endif
 
     video_stage = PSP_VIDEO_STAGE_SOURCE;
     ret = source_open(&format, SOURCE, video_io_source, &input_io);
@@ -1047,18 +693,17 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     stats->media_time_base = codec->pkt_timebase;
     codec->skip_frame = (enum AVDiscard)PSP_SKIP_FRAME;
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
+#if PSP_ME_PIPELINE
+    codec->get_buffer2 = mefp_get_buffer2;
+#endif
     ret = avcodec_open2(codec, decoder, NULL);
     if (ret < 0) goto done;
     WLOG_I(WLC_PLAYER, "VIDEO width=%d height=%d refs=%d", codec->width, codec->height, codec->refs);
     playback_diagnostic("video_codec_ready", 0);
     source_memory("video_codec");
-#if PSP_APPROX_QPEL
-    if (avpriv_psp_approx_reconstruction_v2 != 2) { ret = -91; goto done; }
-#endif
     packet = av_packet_alloc();
     frame = av_frame_alloc();
     if (!packet || !frame) { ret = AVERROR(ENOMEM); goto done; }
-#if PSP_AUDIO
     audio_started = 1;
     diagnostic_audio_valid = 1;
     video_stage = PSP_VIDEO_STAGE_AUDIO_INIT;
@@ -1067,19 +712,6 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     source_memory("audio_init_end");
     playback_diagnostic("audio_init_end", ret);
     if (ret < 0) goto done;
-#endif
-
-    if (render && !presenter) {
-        pspDebugScreenInitEx(NULL, PSP_DISPLAY_PIXEL_FORMAT_8888, 0);
-#if PSP_HALF_RENDER
-        memset((void *)((uintptr_t)sceGeEdramGetAddr() | 0x40000000u),
-               0, DISPLAY_STRIDE * DISPLAY_HEIGHT * sizeof(uint32_t));
-#endif
-        sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
-                              output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
-                                  ? PSP_DISPLAY_PIXEL_FORMAT_565 : PSP_DISPLAY_PIXEL_FORMAT_8888,
-                              PSP_DISPLAY_SETBUF_IMMEDIATE);
-    }
 
     video_stage = PSP_VIDEO_STAGE_PLAY;
 decode_again:
@@ -1111,7 +743,6 @@ decode_again:
         if (output_count >= WARMUP_FRAMES)
             ++stats->packets;
         begin = tick_us();
-#if PSP_AUDIO && PSP_AUDIO_ADAPTIVE
         /* Keep I/P reconstruction, but shed B reconstruction when the packet
          * no longer has enough time before its audio-clock presentation. */
         codec->skip_frame = (enum AVDiscard)PSP_SKIP_FRAME;
@@ -1121,8 +752,6 @@ decode_again:
             codec->skip_frame = AVDISCARD_BIDIR;
             ++audio.adaptive_packets;
         }
-#endif
-#if PSP_AUDIO
         /* A different stream can contain reference B pictures. Discarding all
          * B pictures to catch up corrupts their descendants. For clients, skip
          * compressed packets until a future keyframe, then reset references.
@@ -1136,6 +765,10 @@ decode_again:
             }
             if (catchup_to_key) {
                 if ((packet->flags & AV_PKT_FLAG_KEY) && packet_us >= clock_us + 250000) {
+                    /* As for a seek: retire queued ME work and any partly
+                     * captured frame before FFmpeg drops its references. */
+                    ret = video_output_finish();
+                    if (ret < 0) { av_packet_unref(packet); ++stats->errors; goto done; }
                     avcodec_flush_buffers(codec);
                     catchup_to_key = 0;
                 } else {
@@ -1145,11 +778,7 @@ decode_again:
                 }
             }
         }
-#endif
         ret = avcodec_send_packet(codec, packet);
-#if PSP_ME_DECODE
-        if (me_decode_error) ret = me_decode_error;
-#endif
         elapsed = tick_us() - begin;
         if (output_count >= WARMUP_FRAMES)
             stats->decode_us += elapsed;
@@ -1161,7 +790,7 @@ decode_again:
         }
         av_packet_unref(packet);
         if (ret < 0) { ++stats->errors; goto done; }
-        ret = receive_frames(codec, frame, stats, render, full,
+        ret = receive_frames(codec, frame, stats, full,
                              &output_count, &measure_start);
         if (playback_seeking) continue;
         if (ret == 1) { ret = 0; goto done; }
@@ -1174,7 +803,7 @@ decode_again:
         if (output_count >= WARMUP_FRAMES)
             stats->decode_us += tick_us() - begin;
         if (ret >= 0) {
-            ret = receive_frames(codec, frame, stats, render, 1,
+            ret = receive_frames(codec, frame, stats, 1,
                                  &output_count, &measure_start);
             if (ret == AVERROR_EOF) ret = 0;
         }
@@ -1184,53 +813,34 @@ done:
     if (playback_seeking && !quit_requested && ret >= 0) goto decode_again;
     source_memory("cleanup_begin");
     playback_diagnostic("cleanup_begin", ret);
-#if PSP_ME_DECODE
     {
-        int finish = me_decode_stop();
-        if (finish < 0) {
-            if (ret >= 0) { ret = finish; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
-            ++stats->errors;
-        }
-    }
-#endif
-#if PSP_ME_RENDER
-    if (render) {
         unsigned begin = tick_us();
-        int finish = me_render_finish();
+        int finish = video_output_finish();
         stats->render_us += tick_us() - begin;
         if (finish < 0) {
             if (ret >= 0) { ret = finish; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
             ++stats->errors;
         }
     }
-#endif
     psp_profile_enabled = 0;
     if (ret < 0 && stats->errors == 0)
         stats->errors = 1;
     if (measure_start)
         stats->measured_us = (uint64_t)(tick_us() - measure_start);
-#if PSP_ME_RENDER_QUEUE
-    /* Account for actual presentation, including the queued final frames. */
-    if (me_warmup_presented_us && me_last_presented_us >= me_warmup_presented_us)
-        stats->measured_us = me_last_presented_us - me_warmup_presented_us;
-#endif
-#if PSP_AUDIO && PSP_RGB_PACE
-    if (render) {
-        int finish = rgb_finish();
-        playback_diagnostic("rgb_finish_end", finish);
+    {
+        int finish = pacer_finish();
+        playback_diagnostic("pacer_finish_end", finish);
         if (finish < 0) {
             if (ret >= 0) { ret = -112; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
             ++stats->errors;
         }
     }
-    if (rgb_warmup_us && rgb_last_us >= rgb_warmup_us)
-        stats->measured_us = rgb_last_us - rgb_warmup_us;
-#endif
+    if (pacer_warmup_us && pacer_last_us >= pacer_warmup_us)
+        stats->measured_us = pacer_last_us - pacer_warmup_us;
     if (ret >= 0) video_stage = PSP_VIDEO_STAGE_CLEANUP;
-#if PSP_ME_RENDER
-    if (render) {
-        int shutdown = me_render_shutdown();
-        playback_diagnostic("me_shutdown_end", shutdown);
+    {
+        int shutdown = video_output_shutdown();
+        playback_diagnostic("video_output_shutdown_end", shutdown);
         if (shutdown < 0) {
             playback_cleanup_error = shutdown;
             /* Keep the source/decode error when shutdown only reports the
@@ -1239,8 +849,6 @@ done:
             ++stats->errors;
         }
     }
-#endif
-#if PSP_AUDIO
     if (audio_started) {
         const int64_t audio_origin = audio.format ? source_origin_us(audio.format) : 0;
         audio_close(stats->eof && ret >= 0);
@@ -1256,7 +864,6 @@ done:
             ++stats->errors;
         }
     }
-#endif
     if (packet) av_packet_free(&packet);
     if (frame) av_frame_free(&frame);
     if (codec) avcodec_free_context(&codec);
@@ -1266,107 +873,19 @@ done:
     stats->total_frames = output_count;
     if (ret >= 0 || quit_requested) video_stage = PSP_VIDEO_STAGE_NONE;
     playback_diagnostic(psp_video_stage_name(video_stage), ret);
-    save_results(run_path, stats, render, full, ret);
+    save_results(run_path, stats, full, ret);
     free(records);
     records = NULL;
     free(packet_records);
     packet_records = NULL;
-#if PSP_AUDIO && PSP_RGB_PACE
     /* The presentation worker has joined, independently of ME shutdown. */
-    free(rgb_records);
-    rgb_records = NULL;
-    rgb_record_count = 0;
-#endif
+    free(pacer_records);
+    pacer_records = NULL;
+    pacer_record_count = 0;
     return ret;
 }
 
 
-#ifndef PSP_VIDEO_LIBRARY
-int psp_video_lab_main(void)
-{
-#if PSP_YUV_LUT
-    yuv_rgb_init(&yuv_rgb_tables);
-#endif
-#if PSP_SPATIAL_LUT
-    scale_map_init(&scale_map);
-#endif
-    install_exit_callback();
-    scePowerSetClockFrequency(333, 333, 166);
-    pspDebugScreenInit();
-    av_log_set_level(AV_LOG_ERROR);
-    sceCtrlSetSamplingCycle(0);
-    sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
-
-#if PSP_HEADLESS_BENCH
-    profile_requested = PSP_HEADLESS_PROFILE;
-    RunStats stats = {0};
-    char path[128] = {0};
-    run_decode(1, PSP_BENCH_FULL, path, sizeof(path), &stats);
-    sceKernelExitGame();
-    return 0;
-#endif
-
-    while (!quit_requested) {
-        pspDebugScreenClear();
-        pspDebugScreenSetXY(0, 0);
-        pspDebugScreenPrintf("WiliMini decoder diagnostics\n%s\n\n", PSP_BUILD_ID);
-        pspDebugScreenPrintf("X: decode 300 frames\n");
-        pspDebugScreenPrintf("TRIANGLE: render 300 frames\n");
-        pspDebugScreenPrintf("Hold L + TRIANGLE/X: sampled H264 profile\n");
-        pspDebugScreenPrintf("SQUARE: decode full video\n");
-        pspDebugScreenPrintf("CIRCLE: exit\n\n");
-        pspDebugScreenPrintf("Input: rickroll.flv (MP4 / H.264)\n");
-        pspDebugScreenPrintf("Results: WiliMini/results/run-XXX\n");
-
-        SceCtrlData pad;
-        do {
-            sceCtrlReadBufferPositive(&pad, 1);
-            if (quit_requested) break;
-            sceKernelDelayThread(15000);
-        } while (!(pad.Buttons & (PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE |
-                                PSP_CTRL_SQUARE | PSP_CTRL_CIRCLE)));
-        if (quit_requested || (pad.Buttons & PSP_CTRL_CIRCLE)) break;
-
-        profile_requested = (pad.Buttons & PSP_CTRL_LTRIGGER) != 0;
-        int render = (pad.Buttons & PSP_CTRL_TRIANGLE) != 0;
-        int full = (pad.Buttons & PSP_CTRL_SQUARE) != 0;
-        RunStats stats = {0};
-        char path[128] = {0};
-        pspDebugScreenClear();
-        pspDebugScreenPrintf("Decoding... HOME to stop\n");
-        int result = run_decode(render, full, path, sizeof(path), &stats);
-
-        pspDebugScreenInit();
-        pspDebugScreenClear();
-        pspDebugScreenPrintf("Result: %d\n", result);
-        if (result < 0) {
-            char error[96];
-            av_strerror(result, error, sizeof(error));
-            pspDebugScreenPrintf("Error: %s\n", error);
-        }
-        pspDebugScreenPrintf("Frames: %u, packets: %u\n", stats.frames, stats.packets);
-        pspDebugScreenPrintf("Total: %llu ms\n",
-                             (unsigned long long)(stats.measured_us / 1000));
-        pspDebugScreenPrintf("Read: %llu ms, decode: %llu ms\n",
-                             (unsigned long long)(stats.read_us / 1000),
-                             (unsigned long long)(stats.decode_us / 1000));
-        pspDebugScreenPrintf("Render: %llu ms, EOF: %u\n",
-                             (unsigned long long)(stats.render_us / 1000), stats.eof);
-        pspDebugScreenPrintf("Log: %s\n\nPress CIRCLE for menu\n", path);
-        do {
-            sceCtrlReadBufferPositive(&pad, 1);
-            sceKernelDelayThread(15000);
-        } while (!quit_requested && !(pad.Buttons & PSP_CTRL_CIRCLE));
-        while (!quit_requested && (pad.Buttons & PSP_CTRL_CIRCLE)) {
-            sceCtrlReadBufferPositive(&pad, 1);
-            sceKernelDelayThread(15000);
-        }
-    }
-    sceKernelExitGame();
-    return 0;
-}
-
-#endif
 
 /* Public synchronous API: caller owns lifecycle and the HOME callback.
  * All decoder/ME/audio workers are joined before this returns. */
@@ -1374,10 +893,11 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
 {
     if (result) *result = (PspVideoResult){.error = -1, .error_stage = PSP_VIDEO_STAGE_SETUP};
     if (!options || !options->log_root || (!options->source && !options->path) ||
-        (options->rgb_buffer_frames != 0 && options->rgb_buffer_frames != 2 &&
-         options->rgb_buffer_frames != 4 && options->rgb_buffer_frames != 8) ||
-        (options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGB565 &&
-         options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGBA8888) ||
+        (options->buffer_frames != 0 && options->buffer_frames != 2 &&
+         options->buffer_frames != 4 && options->buffer_frames != 8) ||
+        /* Native playback presents every frame through the GE presenter. */
+        (options->backend == PSP_VIDEO_BACKEND_NATIVE_ME &&
+         (!options->presenter || !options->presenter->present)) ||
         (options->cancel_button != PSP_VIDEO_CANCEL_CIRCLE &&
          options->cancel_button != PSP_VIDEO_CANCEL_CROSS) ||
         (options->path && strlen(options->path)>1017) ||
@@ -1393,8 +913,6 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     host_cancel_requested = options->cancel_requested;
     playback_cleanup_error = 0;
     presenter = options->presenter && options->presenter->present ? options->presenter : NULL;
-    output_pixel_format = options->rgb_pixel_format;
-    rgb_pixel_bytes = output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565 ? 2 : 4;
     seek_requested = seek_paused = 0;
     playback_seeking = 0; playback_seeks = 0;
     quality_requested = 0;
@@ -1416,9 +934,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     playback_start_ms = options->start_ms > 0 ? options->start_ms : 0;
     playback_position_us = 0;
     first_video_us = -1;
-#if PSP_AUDIO && PSP_RGB_PACE
-    rgb_slots = options->rgb_buffer_frames ? options->rgb_buffer_frames : RGB_SLOTS;
-#endif
+    pacer_slots = options->buffer_frames ? options->buffer_frames : PACER_MAX_SLOTS;
     char local_source[1024];
     if (options->source) video_source="custom:stream.mp4";
     else if (strncmp(options->path, "file:", 5)) {
@@ -1432,8 +948,6 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     current_run_path[0] = 0;
     results_enabled = wili_log_files() || profile_requested;
     run_log_mark = wili_log_mark();
-    yuv_rgb_init(&yuv_rgb_tables);
-    scale_map_init(&scale_map);
     av_log_set_level(AV_LOG_ERROR);
     scePowerSetClockFrequency(333, 333, 166);
     SceUID control = sceKernelCreateThread("video_cancel", video_cancel_thread,
@@ -1464,7 +978,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
 #endif
     {
         WLOG_I(WLC_PLAYER, "backend=psp-native");
-        ret = run_decode(1, options->sample ? 0 : 1, path, sizeof(path), &stats);
+        ret = run_decode(options->sample ? 0 : 1, path, sizeof(path), &stats);
     }
     poll_controller = 0;
     stop_run_log();
@@ -1499,7 +1013,7 @@ void psp_video_stop(void) {
     if(audio_io_source && audio_io_source->cancel)audio_io_source->cancel(audio_io_source->opaque);
 }
 int psp_video_me_backend(void) {
-#if PSP_ME_RENDER
+#if PSP_ME_PIPELINE
     return meLabBackend();
 #else
     return -1;

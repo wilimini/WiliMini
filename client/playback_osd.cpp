@@ -475,13 +475,16 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     const uint64_t now = sceKernelGetSystemTimeWide();
     receiveOverlays();
     if (!pixels && now - lastDraw_ < 33333) return 0;
+    const PspVideoYuvFrame* yuvFrame = nullptr;
     if (pixels) {
         // The previous GU list has completed before this clean page is reused.
-        // RGB565 is staged as is; the GE expands it while texturing below.
-        const bool rgb565 = format == PSP_VIDEO_PIXEL_FORMAT_RGB565;
-        int result = sceDmacMemcpy(vram(2 * frameBytes), pixels, rgb565 ? frameBytes / 2 : frameBytes);
-        if (result < 0) return result;
-        stagedRgb565_ = rgb565;
+        if (format == PSP_VIDEO_PIXEL_FORMAT_YUV420P) {
+            yuvFrame = static_cast<const PspVideoYuvFrame*>(pixels);
+        } else if (pixels != vram(2 * frameBytes)) {
+            // RGBA8888 from the PPSSPP sceMpeg backend.
+            int result = sceDmacMemcpy(vram(2 * frameBytes), pixels, frameBytes);
+            if (result < 0) return result;
+        }
         haveFrame_ = true;
         if (overlayThread_ >= 0 && !overlayStarted_) {
             PlaybackOsd* self = this;
@@ -490,6 +493,21 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
         }
     }
     lastDraw_ = now;
+    if (yuvFrame) {
+        // Convert into the clean video page; overlays are composed below.
+        sceGuStart(GU_DIRECT, commands_);
+        sceGuDrawBuffer(GU_PSM_8888, reinterpret_cast<void*>(2 * frameBytes), 512);
+        sceGuOffset(2048 - 240, 2048 - 136);
+        sceGuViewport(2048, 2048, 480, 272);
+        sceGuScissor(0, 0, 480, 272);
+        sceGuEnable(GU_SCISSOR_TEST);
+        sceGuDisable(GU_DEPTH_TEST);
+        sceGuDisable(GU_CULL_FACE);
+        sceGuDisable(GU_ALPHA_TEST);
+        yuv_.draw(*yuvFrame);
+        sceGuFinish();
+        sceGuSync(0, 0);
+    }
     sceGuStart(GU_DIRECT, commands_);
     sceGuDrawBuffer(GU_PSM_8888, reinterpret_cast<void*>(page_ * frameBytes), 512);
     sceGuOffset(2048 - 240, 2048 - 136);
@@ -499,33 +517,9 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_CULL_FACE);
     sceGuDisable(GU_ALPHA_TEST);
-    if (stagedRgb565_) {
-        // Opaque 1:1 texture draw converts 5650 to the 8888 draw buffer.
-        // 64-texel strips keep the texture cache efficient.
-        sceGuDisable(GU_BLEND);
-        sceGuEnable(GU_TEXTURE_2D);
-        sceGuTexMode(GU_PSM_5650, 0, 0, 0);
-        sceGuTexImage(0, 512, 512, 512, vram(2 * frameBytes));
-        sceGuTexFlush();
-        sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
-        sceGuTexFilter(GU_NEAREST, GU_NEAREST);
-        sceGuTexWrap(GU_CLAMP, GU_CLAMP);
-        struct Vertex { unsigned short u, v; short x, y, z; };
-        constexpr int strip = 64, strips = (480 + strip - 1) / strip;
-        auto* v = static_cast<Vertex*>(sceGuGetMemory(2 * strips * sizeof(Vertex)));
-        for (int i = 0; i < strips; ++i) {
-            const short left = static_cast<short>(i * strip);
-            const short right = static_cast<short>(std::min(480, (i + 1) * strip));
-            v[2 * i] = {static_cast<unsigned short>(left), 0, left, 0, 0};
-            v[2 * i + 1] = {static_cast<unsigned short>(right), 272, right, 272, 0};
-        }
-        sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_VERTEX_16BIT | GU_TRANSFORM_2D,
-                       2 * strips, nullptr, v);
-    } else {
-        sceGuCopyImage(GU_PSM_8888, 0, 0, 480, 272, 512, vram(2 * frameBytes),
-                       0, 0, 512, vram(page_ * frameBytes));
-        sceGuTexSync();
-    }
+    sceGuCopyImage(GU_PSM_8888, 0, 0, 480, 272, 512, vram(2 * frameBytes),
+                   0, 0, 512, vram(page_ * frameBytes));
+    sceGuTexSync();
     sceGuEnable(GU_BLEND);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
     drawComments(status);

@@ -103,9 +103,9 @@ int controlledPlaybackTest() {
             options.start_ms = requestedStart;
             options.start_paused = requestedPaused;
             options.sample = config.value("sample", false);
-            options.rgb_buffer_frames = config.value("buffer_frames", pspapp::defaultPlaybackBufferFrames());
+            options.buffer_frames = config.value("buffer_frames", pspapp::defaultPlaybackBufferFrames());
             if (config.contains("buffers"))
-                options.rgb_buffer_frames = config.at("buffers").at(i).get<int>();
+                options.buffer_frames = config.at("buffers").at(i).get<int>();
             if (mode == "range") {
                 const int initialized = network_init();
                 if (initialized < 0) { output["network_init"] = initialized; break; }
@@ -176,10 +176,15 @@ int controlledPlaybackTest() {
                     });
                 }
                 options.settings = &settings;
-                presentation = std::make_unique<PlaybackTestPresentation>();
-                presentation->target = osd->presenter();
-                options.presenter = &presentation->presenter;
+            } else {
+                // Native playback always presents through the GE; without
+                // controls the OSD only shows the video page.
+                pspapp::Preferences prefs;
+                osd = std::make_unique<pspapp::PlaybackOsd>("", prefs);
             }
+            presentation = std::make_unique<PlaybackTestPresentation>();
+            presentation->target = osd->presenter();
+            options.presenter = &presentation->presenter;
             const auto before = mallinfo();
             PspVideoResult result{};
             code = psp_video_play(&options, &result);
@@ -190,7 +195,7 @@ int controlledPlaybackTest() {
                 output["network_cleanup"] = networkResult;
             }
             const auto after = mallinfo();
-            if (presentation) {
+            if (presentation && config.value("controls", false)) {
                 output["first_frame_us"] = presentation->firstFrame;
                 auto samples = json::array();
                 for (unsigned n = 0; n < presentation->count; ++n) {
@@ -204,7 +209,7 @@ int controlledPlaybackTest() {
                 output["control_samples"].push_back(std::move(samples));
             }
             output["plays"].push_back({{"code", code}, {"frames", result.frames},
-                {"buffer_frames", options.rgb_buffer_frames}, {"eof", result.eof},
+                {"buffer_frames", options.buffer_frames}, {"eof", result.eof},
                 {"heap_before", before.uordblks}, {"heap_after", after.uordblks},
                 {"system_free", sceKernelTotalFreeMemSize()}});
             output["code"] = code;
@@ -225,7 +230,7 @@ int controlledPlaybackTest() {
                 continue;
             }
             std::printf("PLAYBACK_TEST play=%d buffer_frames=%d code=%d frames=%u eof=%u heap_before=%u heap_after=%u\n",
-                        i + 1, options.rgb_buffer_frames, code, result.frames, result.eof,
+                        i + 1, options.buffer_frames, code, result.frames, result.eof,
                         static_cast<unsigned>(before.uordblks), static_cast<unsigned>(after.uordblks));
             if (code < 0 || result.cancelled) break;
         }

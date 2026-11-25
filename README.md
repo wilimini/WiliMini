@@ -38,7 +38,7 @@ WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界�
 ||PSP 1000|PSP 2000/PSP 3000/PSP Go|
 |---|---|---|
 |支持情况|支持|支持|
-|颜色编码|RGB565|RGB565/RGBA8888|
+|视频转色|GE（YUV420P→RGBA8888）|GE（YUV420P→RGBA8888）|
 |堆大小|12MB|24MB|
 |帧缓冲|2|2/4/6/8|
 
@@ -87,35 +87,44 @@ WiliMini 让 PSP 也可以直接浏览 B站内容：
 
 ## 性能优化架构
 
-视频播放路径将 CPU 解码和 Media Engine 渲染分工处理，减少主线程等待和显存拷贝：
+视频播放采用 **SC + ME + GE 三核异步流水线**，将熵解码、像素重建与色彩转换/界面合成拆分到三个硬件单元并行执行：
 
 ```mermaid
 flowchart LR
-    A[网络下载与缓存] --> B
+    A["网络下载与缓存"] --> B
+    A --> C
 
-    subgraph CPU["CPU + VFPU"]
+    subgraph SC["主 CPU（SC + VFPU）"]
         direction TB
-        B[FFmpeg<br/>H.264 / AAC 解码]
-        C[音频处理<br/>与播放时钟]
-        D[视频帧队列]
-        B --> C
-        B --> D
+        B["解复用 &amp; H.264 熵解码<br/>CABAC / CAVLC"]
+        C["AAC 解码<br/>与音频播放时钟"]
+        Q["YUV420P 呈像队列<br/>按音频时钟同步"]
+        B --> Q
     end
 
-    subgraph ME["Media Engine"]
+    subgraph ME["Media Engine（ME）"]
         direction TB
-        E[YUV → RGB<br/>色彩空间转换]
-        F[视频缩放]
+        E["整帧 H.264 重建<br/>帧内预测 / 6-tap MC / 整数 IDCT"]
     end
 
-    D -- ME 任务 --> E
-    E --> F
-    C --> H[音频输出]
-    F -->|DMA| G[显存] --> I[PSP 屏幕]
+    subgraph GE["图形引擎（GE）"]
+        direction TB
+        G1["5-Pass CLUT<br/>YUV420P → RGBA8888 与缩放"]
+        G2["弹幕 / 字幕 / OSD 叠加"]
+        G1 --> G2
+    end
+
+    B -- "宏块命令环形队列" --> E
+    E -- "就绪序号同步" --> Q
+    C -- "音频时钟" --> Q
+    C --> H["音频输出"]
+    Q --> G1
+    G2 --> I["显存 &amp; PSP 屏幕"]
 ```
 
-其中，CPU + VFPU 负责 FFmpeg 解码和音频播放；视频解码后的 YUV 帧进入共享队列，并通过 ME 任务交给 Media Engine。Media Engine 负责色彩空间转换和缩放，处理结果通过 DMA 写入显存。音频播放时钟作为同步基准，CPU 解码与 ME 视频渲染可以并行工作，
-减少主 CPU 等待和不必要的显存拷贝。
+- **主 CPU（SC + VFPU）**：负责网络流读取、解复用、AAC 音频解码与播放时钟，以及 H.264 熵解码（CABAC/CAVLC），通过 FFmpeg 钩子捕获紧凑的整帧宏块命令并写入环形队列；呈像线程按音频时钟从有界队列取出已就绪的 YUV420P 帧。
+- **Media Engine（ME）**：常驻工作核异步消费命令队列，完成帧内预测、精确 6-tap 运动补偿（Allegrex SWAR）与整数 IDCT，将重建后的 YUV420P 平面写回按 64 字节 cache line 隔离的帧缓冲。
+- **图形引擎（GE）**：通过 5-Pass CLUT 硬件管线将 YUV420P 直接转色并缩放到显存（RGBA8888），再叠加弹幕、字幕与控制栏后等待 VBlank 翻页显示。三核并行流水，避免主 CPU 阻塞在像素重建与软件转色上。
 
 ## 界面截图
 
