@@ -781,7 +781,7 @@ struct BiliRangeStream {
 
 typedef struct {
     BiliRangeStream *stream;
-    unsigned generation, requested_start, response_start, total;
+    unsigned generation, requested_start, response_start, total, received;
     int content_range;
     char range[64];
 } RangeTransfer;
@@ -862,7 +862,8 @@ static size_t range_write_data(char *data, size_t size, size_t count, void *opaq
         if (transfer_cancel || network_interrupted(stream->power_generation)) return 0;
         sceKernelWaitSema(stream->lock, 1, NULL);
         if (transfer_cancel || stream->cancelled || stream->failed ||
-            transfer->generation != stream->generation) {
+            transfer->generation != stream->generation ||
+            transfer->requested_start + transfer->received != stream->available) {
             sceKernelSignalSema(stream->lock, 1);
             return 0;
         }
@@ -884,6 +885,7 @@ static size_t range_write_data(char *data, size_t size, size_t count, void *opaq
             if (first < chunk) memcpy(stream->ring, data + written + first, chunk - first);
             __asm__ volatile("" ::: "memory");
             stream->available += (unsigned)chunk;
+            transfer->received += (unsigned)chunk;
             written += chunk;
             sceKernelSignalSema(stream->wake, 1);
         }
@@ -993,7 +995,10 @@ static int range_download_thread(SceSize args, void *argp) {
 
         int moved = 0;
         int successful = 0;
-        for (int attempt = 0; attempt < stream->url_count && !moved && !network_interrupted(stream->power_generation); ++attempt) {
+        int consecutive_failures = 0;
+        while (consecutive_failures < stream->url_count && !successful && !moved &&
+               !transfer_cancel && !stream->cancelled &&
+               !network_interrupted(stream->power_generation)) {
             const char *url = stream->urls[url_index];
             if (!url[0]) break;
             RangeTransfer transfer = {.stream = stream, .generation = generation,
@@ -1014,21 +1019,28 @@ static int range_download_thread(SceSize args, void *argp) {
 
             sceKernelWaitSema(stream->lock, 1, NULL);
             moved = stream->generation != generation;
+            const unsigned current_available = stream->available;
+            const int progressed = !moved && current_available > start;
+            if (progressed) start = current_available;
             const int range_ok = status == 206 ? transfer.content_range &&
-                                                   transfer.response_start == start
-                                 : status == 200 ? start == 0 && !transfer.content_range
+                                                   transfer.response_start == transfer.requested_start
+                                 : status == 200 ? transfer.requested_start == 0 && !transfer.content_range
                                                  : status == 416;
-            successful = !transfer_cancel && !moved && range_ok &&
-                         (code == CURLE_OK || status == 416);
+            const int reached_eof = !moved && stream->expected > 0 && current_available >= stream->expected;
+            successful = !transfer_cancel && !moved &&
+                         ((range_ok && (code == CURLE_OK || status == 416)) || reached_eof);
             if (!successful && !moved && !transfer_cancel && !stream->cancelled &&
                 code != CURLE_WRITE_ERROR) {
                 snprintf(stream->error, sizeof(stream->error),
                          "range_download media=%s source=%d/%d curl=%d http=%ld offset=%u",
                          stream->label, url_index + 1, stream->url_count, (int)code, status, start);
-                WLOG_E(WLC_NET, "%s", stream->error);
+                WLOG_E(WLC_NET, "%s%s", stream->error, progressed ? " (retrying from resume)" : "");
             }
+            const int cancelled = transfer_cancel || stream->cancelled;
             sceKernelSignalSema(stream->lock, 1);
-            if (!successful && !moved) {
+            if (!successful && !moved && !cancelled) {
+                if (progressed) consecutive_failures = 0;
+                else ++consecutive_failures;
                 url_index = (url_index + 1) % stream->url_count;
                 sceKernelDelayThreadCB(200000);
             }
