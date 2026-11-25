@@ -38,7 +38,7 @@ WiliMini 是一个面向 PSP 的原生 Bilibili 客户端。网络请求、界�
 ||PSP 1000|PSP 2000/PSP 3000/PSP Go|
 |---|---|---|
 |支持情况|支持|支持|
-|颜色编码|RGB565|RGB565/RGBA8888|
+|视频转色|GE（YUV420P→RGBA8888）|GE（YUV420P→RGBA8888）|
 |堆大小|12MB|24MB|
 |帧缓冲|2|2/4/6/8|
 

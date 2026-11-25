@@ -74,15 +74,14 @@ for name, config in cases.items():
     checks[name+'_decode'] = result['code'] == 0 and result['frames'] > 0 and summary['audio_error'] == 0
     checks[name+'_backend'] = all(s.get('backend') == backend for s in summaries)
     if backend == 'psp-native':
-        checks[name+'_me_jobs'] = all(s.get('me_render') == 2 and
-            s.get('me_submitted', 0) > 0 and s.get('me_completed') == s.get('me_submitted')
-            for s in summaries)
+        checks[name+'_ge_present'] = all(s.get('ge_present') == 1 and
+            s.get('frames_queued', 0) > 0 for s in summaries)
         checks[name+'_diagnostic_csvs'] = all(
             len(p.with_name('frames.csv').read_text().splitlines()) == min(s['frames'], 6000) + 1 and
-            len(p.with_name('presentation.csv').read_text().splitlines()) == min(s['me_completed'], 6000) + 1 and
+            len(p.with_name('presentation.csv').read_text().splitlines()) == min(s['frames_queued'], 6000) + 1 and
             not p.with_name('packets.csv').exists()
             for p, s in zip(runs, summaries))
-    checks[name+'_present'] = summary.get('rgb_presented', result['frames']) > 0 and summary['audio_submitted_samples'] > 0
+    checks[name+'_present'] = summary.get('presented', result['frames']) > 0 and summary['audio_submitted_samples'] > 0
     if config['start_ms']:
         checks[name+'_resume'] = 3_000_000 <= summary['first_video_us'] < 3_100_000 and 3_000_000 <= summary['audio_first_pts_us'] < 3_100_000
     if name.endswith('cancel'):

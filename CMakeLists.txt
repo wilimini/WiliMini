@@ -29,18 +29,11 @@ option(BILI_PPSSPP_SCE_MPEG "Use the legacy PPSSPP sceMpeg backend instead of na
 option(BILI_MEMORY_PROFILE "Log large libc allocations for memory diagnostics" OFF)
 option(BILI_NETWORK_DIAGNOSTICS "Log redacted HTTP connection counts and timings" OFF)
 option(BILI_PACKED_CHROMA "Use exact packed H.264 chroma kernels" ON)
-option(BILI_BENCHMARK_ME_CACHE "Diagnostic whole-cache ME input writeback" OFF)
-option(BILI_BENCHMARK_ME_FULL_CACHE "Diagnostic whole-cache maintenance on ME" OFF)
 option(BILI_BENCHMARK_INTEGER_UNALIGNED "Diagnostic integer unaligned 16x16 copy" OFF)
 option(BILI_BENCHMARK_UNROLLED_AVG "Diagnostic unrolled 16x16 rounded average" OFF)
-set(BILI_BENCHMARK_PRESENT_QUEUE 0 CACHE STRING "Diagnostic ME presentation queue depth (0 or 2..16)")
-if((BILI_BENCHMARK_ME_CACHE OR BILI_BENCHMARK_ME_FULL_CACHE OR BILI_BENCHMARK_PRESENT_QUEUE
-        OR BILI_BENCHMARK_INTEGER_UNALIGNED OR BILI_BENCHMARK_UNROLLED_AVG)
+if((BILI_BENCHMARK_INTEGER_UNALIGNED OR BILI_BENCHMARK_UNROLLED_AVG)
         AND NOT BILI_DEVICE_PLAYBACK_TEST)
     message(FATAL_ERROR "Decoder experiments require BILI_DEVICE_PLAYBACK_TEST")
-endif()
-if(NOT BILI_BENCHMARK_PRESENT_QUEUE MATCHES "^(0|[2-9]|1[0-6])$")
-    message(FATAL_ERROR "Presentation queue depth must be 0 or 2..16")
 endif()
 
 set(PSP_FFMPEG_PREFIX "${CMAKE_SOURCE_DIR}/build/ffmpeg-audio-install" CACHE PATH
@@ -124,16 +117,12 @@ set(DECODER_DEFINITIONS
     PSP_RGB_PACE=1
     PSP_AUDIO_VERIFY=0
     PSP_RGB_NEAREST_PTS=1
-    PSP_ME_RENDER_QUEUE=${BILI_BENCHMARK_PRESENT_QUEUE}
     PSP_HEADLESS_PROFILE=0
     PSP_VFPU_RENDER=0
     PSP_VFPU_DSP=4
     PSP_INTEGER_UNALIGNED_COPY=$<BOOL:${BILI_BENCHMARK_INTEGER_UNALIGNED}>
     PSP_UNROLLED_AVG=$<BOOL:${BILI_BENCHMARK_UNROLLED_AVG}>
-    PSP_ME_RENDER=2
-    PSP_ME_DMA=1
-    PSP_ME_CACHE=$<BOOL:${BILI_BENCHMARK_ME_CACHE}>
-    PSP_ME_FULL_CACHE=$<BOOL:${BILI_BENCHMARK_ME_FULL_CACHE}>
+    PSP_GE_PRESENT=1
     PSP_ME_DECODE=0
     PSP_ME_DECODE_CHECK=0
     PSP_ME_DECODE_RENDER=0
@@ -157,8 +146,8 @@ if(BILI_DEVICE_PLAYBACK_CPU_RENDER)
     if(NOT BILI_DEVICE_PLAYBACK_TEST)
         message(FATAL_ERROR "CPU diagnostic display requires BILI_DEVICE_PLAYBACK_TEST")
     endif()
-    list(REMOVE_ITEM DECODER_DEFINITIONS PSP_ME_RENDER=2 PSP_RGB_PACE=1)
-    list(APPEND DECODER_DEFINITIONS PSP_ME_RENDER=0 PSP_RGB_PACE=0)
+    list(REMOVE_ITEM DECODER_DEFINITIONS PSP_GE_PRESENT=1 PSP_RGB_PACE=1)
+    list(APPEND DECODER_DEFINITIONS PSP_GE_PRESENT=0 PSP_RGB_PACE=0)
 endif()
 
 add_library(pspvideo STATIC
@@ -243,6 +232,7 @@ add_library(wili_client_objects OBJECT
     client/app_settings.cpp
     client/playback.cpp
     client/playback_osd.cpp
+    client/ge_yuv_renderer.cpp
     client/music_session.cpp
     client/api_client.cpp
     client/services/app_error.cpp
@@ -329,9 +319,9 @@ foreach(client_target wili_mini wili_mini_1000)
         client/main.cpp client/memory_budget.cpp
         $<TARGET_OBJECTS:wili_client_objects>)
     if(client_target STREQUAL "wili_mini_1000")
-        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=12288 BILI_DEFAULT_RGB_FRAMES=2 BILI_DEFAULT_RGB565=1)
+        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=12288 BILI_DEFAULT_BUFFER_FRAMES=2)
     else()
-        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=24576 BILI_DEFAULT_RGB_FRAMES=8 BILI_DEFAULT_RGB565=0)
+        target_compile_definitions(${client_target} PRIVATE BILI_CLIENT_HEAP_KB=24576 BILI_DEFAULT_BUFFER_FRAMES=8)
     endif()
     target_compile_definitions(${client_target} PRIVATE _POSIX_C_SOURCE=200809L)
     target_compile_definitions(${client_target} PRIVATE BILI_PPSSPP_SCE_MPEG=$<BOOL:${BILI_PPSSPP_SCE_MPEG}>)

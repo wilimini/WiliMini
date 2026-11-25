@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
     client_storage_device = std::strncmp(root, "ms0:", 4) == 0 ? "ms0:"
                           : std::strncmp(root, "ef0:", 4) == 0 ? "ef0:" : "host0:";
     WLOG_I(WLC_CLIENT, "root=%s", root);
-    WLOG_I(WLC_CLIENT, "heap_kib=%d default_rgb_frames=%d",
+    WLOG_I(WLC_CLIENT, "heap_kib=%d default_buffer_frames=%d",
            BILI_CLIENT_HEAP_KB, pspapp::defaultPlaybackBufferFrames());
     const int callback = sceKernelCreateThread("wiliwili_callbacks", callbackThread, 0x11, 0x4000,
                                                PSP_THREAD_ATTR_USER, nullptr);
@@ -253,9 +253,7 @@ int main(int argc, char** argv) {
             options.source = bili_playback_source(&app.playback());
             options.audio_source = bili_playback_audio_source(&app.playback());
             options.start_ms = app.playbackStartMs();
-            options.rgb_buffer_frames = app.preferences().playbackBufferFrames;
-            options.rgb_pixel_format = pspapp::playbackUsesRgb565(app.preferences().playbackPixelFormat)
-                ? PSP_VIDEO_PIXEL_FORMAT_RGB565 : PSP_VIDEO_PIXEL_FORMAT_RGBA8888;
+            options.buffer_frames = app.preferences().playbackBufferFrames;
             options.cancel_button = app.preferences().confirmWithCircle
                 ? PSP_VIDEO_CANCEL_CROSS : PSP_VIDEO_CANCEL_CIRCLE;
             options.backend = BILI_PPSSPP_SCE_MPEG &&

@@ -283,7 +283,7 @@ static int audio_start_workers(const char *run_path)
 #endif
     audio.epoch_us = playback_now_us() + audio_start_delay_us;
 #if PSP_RGB_PACE
-    rgb_startup_ready = 1;
+    pacer_startup_ready = 1;
 #endif
     return sceKernelSignalSema(audio.go, 1);
 }
@@ -364,7 +364,7 @@ static void audio_close(int drain)
             if (!playback_is_paused()) active_wait += 100000;
             if (active_wait >= 10000000) { audio.error = -104; break; }
             // Native presentation has joined before final audio draining.
-            if (presenter) present_video(NULL, output_pixel_format);
+            if (presenter) present_video(NULL, PSP_VIDEO_PIXEL_FORMAT_YUV420P);
         }
     }
     audio.stop = 1;
@@ -455,11 +455,12 @@ static void audio_report(FILE *out)
     fprintf(out, "  \"audio_first_pts_us\": %lld,\n  \"audio_epoch_us\": %llu,\n",
             (long long)audio.first_pts_us, (unsigned long long)audio.epoch_us);
 #if PSP_RGB_PACE
-    fprintf(out, "  \"rgb_pace\": 1,\n  \"rgb_presented\": %u,\n  \"rgb_dropped\": %u,\n",
-            rgb_presented, rgb_dropped);
+    fprintf(out, "  \"rgb_pace\": 1,\n  \"presented\": %u,\n  \"dropped\": %u,\n",
+            pacer_presented, pacer_dropped);
     fprintf(out, "  \"rgb_nearest_pts\": %d,\n", PSP_RGB_NEAREST_PTS);
-    fprintf(out, "  \"rgb_max_late_us\": %lld,\n  \"rgb_mean_late_us\": %lld,\n",
-            (long long)rgb_max_late_us, (long long)(rgb_presented ? rgb_total_late_us / rgb_presented : 0));
+    fprintf(out, "  \"present_max_late_us\": %lld,\n  \"present_mean_late_us\": %lld,\n",
+            (long long)pacer_max_late_us,
+            (long long)(pacer_presented ? pacer_total_late_us / pacer_presented : 0));
 #endif
     fprintf(out, "  \"audio_enabled\": 1,\n  \"audio_fixed\": %d,\n", PSP_AUDIO_FIXED);
     fprintf(out, "  \"audio_rate\": %d,\n  \"audio_source_channels\": %d,\n"

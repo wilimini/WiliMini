@@ -13,10 +13,20 @@ typedef enum {
     PSP_VIDEO_CANCEL_CIRCLE = 0,
     PSP_VIDEO_CANCEL_CROSS = 1
 } PspVideoCancelButton;
+/* Native playback presents YUV420P frames, converted by the presenter's GE
+ * path. RGBA8888 is only produced by the PPSSPP sceMpeg diagnostic backend. */
 typedef enum {
-    PSP_VIDEO_PIXEL_FORMAT_RGB565 = 0,
-    PSP_VIDEO_PIXEL_FORMAT_RGBA8888 = 1
+    PSP_VIDEO_PIXEL_FORMAT_RGBA8888 = 1,
+    PSP_VIDEO_PIXEL_FORMAT_YUV420P = 2
 } PspVideoPixelFormat;
+/* A decoded frame for PSP_VIDEO_PIXEL_FORMAT_YUV420P. Strides are multiples
+ * of 16 bytes; planes stay valid until present() returns. */
+typedef struct {
+    const uint8_t *planes[3];
+    int strides[3];
+    int width;
+    int height;
+} PspVideoYuvFrame;
 typedef struct {
     void *opaque;
     int64_t size; /* -1 denotes a live, non-seekable source. */
@@ -45,10 +55,11 @@ typedef struct {
 } PspVideoStatus;
 typedef struct {
     void *opaque;
-    /* Called only by the presentation owner, after ME has finished the RGB
-     * frame. NULL pixels means redraw the last clean frame (pause/OSD).
-     * Copy pixels before returning; never retain a queue slot. This callback
-     * owns DMA, GE completion and scanout switching. No network or disk I/O. */
+    /* Called only by the presentation owner. pixels is a PspVideoYuvFrame for
+     * YUV420P, or a 512x272 RGBA8888 image. NULL pixels means redraw the last
+     * clean frame (pause/OSD). Finish reading pixels before returning; never
+     * retain a queue slot. This callback owns DMA, GE completion and scanout
+     * switching. No network or disk I/O. */
     int (*present)(void *opaque, const void *pixels, PspVideoPixelFormat format,
                    const PspVideoStatus *status);
     void (*update_settings)(void *opaque, PspVideoSettings *settings);
@@ -62,12 +73,13 @@ typedef struct {
      * progressive MP4 path; DASH supplies independent video and audio URLs. */
     const PspVideoSource *audio_source;
     int64_t start_ms; /* VOD resume position; live sources must start at zero. */
-    int rgb_buffer_frames; /* 0 keeps the default 8; otherwise 2, 4 or 8. */
-    PspVideoPixelFormat rgb_pixel_format; /* RGB565 or RGBA8888; zero defaults to RGB565. */
+    /* Decoded frames queued for presentation: 0 keeps the default 8;
+     * otherwise 2, 4 or 8. Each queued frame keeps its decoder picture. */
+    int buffer_frames;
     PspVideoBackend backend;
     PspVideoCancelButton cancel_button; /* 0 keeps Circle as the default. */
     int diagnostic_profile; /* Nonzero enables sampled H.264 timings; adds overhead. */
-    const PspVideoPresenter *presenter; /* NULL preserves diagnostic display */
+    const PspVideoPresenter *presenter; /* required by the native backend */
     int start_paused;
     const PspVideoSettings *settings;
     /* Optional host cancellation flag; remains valid until play returns.
