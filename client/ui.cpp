@@ -3229,6 +3229,8 @@ void drawUtility(const pspapp::App& app) {
             pspapp::TextId::settings_body_size,
             pspapp::TextId::settings_covers, pspapp::TextId::settings_repeat,
             pspapp::TextId::settings_playback_buffer,
+            pspapp::TextId::settings_show_fps,
+            pspapp::TextId::settings_skip_nonref,
             pspapp::TextId::settings_me_backend, pspapp::TextId::settings_confirm_button,
             pspapp::TextId::settings_language, pspapp::TextId::settings_input_method,
             pspapp::TextId::settings_log_level,
@@ -3254,6 +3256,8 @@ void drawUtility(const pspapp::App& app) {
                                                 : pspapp::TextId::value_standard, locale),
             pspapp::formatText(pspapp::TextId::value_buffer, locale,
                 {{"frames", std::to_string(preferences.playbackBufferFrames)}}),
+            pspapp::text(preferences.showFps ? pspapp::TextId::value_log_files_on : pspapp::TextId::value_off, locale),
+            pspapp::text(preferences.skipNonRefFrames ? pspapp::TextId::value_log_files_on : pspapp::TextId::value_off, locale),
             meRestart ? pspapp::formatText(pspapp::TextId::value_me_restart, locale, {{"backend", meBackend}})
                       : meBackend,
             pspapp::formatText(pspapp::TextId::value_confirm, locale,

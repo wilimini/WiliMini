@@ -54,7 +54,7 @@ PlaybackOsd::PlaybackOsd(const std::string& title, const Preferences& preference
     for (const auto& label : menuLabels_) cache(label);
     for (const auto& label : density_) cache(label);
     cache(seeking_);
-    cache("0123456789:/- ?p%..."); cache(title_);
+    cache("0123456789:/- ?p%...FPS"); cache(title_);
     overlayMessages_[1] = en ? "Danmaku unavailable" : "弹幕加载失败";
     overlayMessages_[2] = en ? "Subtitles unavailable" : "字幕加载失败";
     overlayMessages_[3] = en ? "Loading subtitles..." : "正在加载字幕…";
@@ -474,6 +474,29 @@ void PlaybackOsd::gradient(int y, int height, unsigned topAlpha, unsigned bottom
 int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspVideoStatus& status) {
     const uint64_t now = sceKernelGetSystemTimeWide();
     receiveOverlays();
+    if (preferences_.showFps) {
+        if (status.paused) {
+            fpsWindowStart_ = 0;
+            fpsFrames_ = 0;
+            fpsTenths_ = 0;
+        } else if (pixels) {
+            if (!fpsWindowStart_) {
+                fpsWindowStart_ = now;
+                fpsFrames_ = 0;
+            } else {
+                ++fpsFrames_;
+                const uint64_t elapsed = now - fpsWindowStart_;
+                if (elapsed >= 500000) {
+                    fpsTenths_ = static_cast<unsigned>(
+                        (static_cast<uint64_t>(fpsFrames_) * 10000000ULL + elapsed / 2) / elapsed);
+                    fpsWindowStart_ = now;
+                    fpsFrames_ = 0;
+                }
+            }
+        } else if (fpsWindowStart_ && now - fpsWindowStart_ >= 1500000 && fpsFrames_ == 0) {
+            fpsTenths_ = 0;
+        }
+    }
     if (!pixels && now - lastDraw_ < 33333) return 0;
     const PspVideoYuvFrame* yuvFrame = nullptr;
     if (pixels) {
@@ -535,7 +558,7 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     if (visible) {
         gradient(0, 62, 175, 0);
         gradient(166, 106, 0, 225);
-        text(16, 12, title_, white, 464, 14);
+        text(16, 12, title_, white, preferences_.showFps ? 394 : 464, 14);
         const int64_t position = status.seeking ? status.preview_ms : status.position_ms;
         char elapsed[32], duration[32], times[72];
         timestamp(elapsed, sizeof(elapsed), position);
@@ -568,6 +591,12 @@ int PlaybackOsd::draw(const void* pixels, PspVideoPixelFormat format, const PspV
     if (!haveFrame_) text(16, 191, startupLabels_[status.startup_stage == PSP_VIDEO_STAGE_AUDIO_INIT ? 1 :
         status.startup_stage == PSP_VIDEO_STAGE_PLAY ? 2 : 0], white, 464, 14);
     if (shownMessage_ && now < messageUntil_) text(16, 39, overlayMessages_[shownMessage_], muted, 464, 12);
+    if (preferences_.showFps) {
+        char fpsText[24];
+        std::snprintf(fpsText, sizeof(fpsText), "%u.%u FPS", fpsTenths_ / 10, fpsTenths_ % 10);
+        rectangle(400, 6, 74, 18, 0x88000000);
+        text(406, 9, fpsText, white, 472, 12);
+    }
     drawSubtitles(status);
     if (status.menu_open >= 2) {
         // Flat translucent list, with no rounded card or opaque selection tile.

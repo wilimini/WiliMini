@@ -264,6 +264,7 @@ int main(int argc, char** argv) {
             osd->enableNetwork(app.playbackCard().bvid, app.playbackCard().cid, app.playbackCard().aid);
             options.presenter = osd->presenter();
             options.start_paused = app.playbackPaused();
+            options.skip_nonref = app.preferences().skipNonRefFrames ? 1 : 0;
             auto settings = app.playerSettings();
             settings.quality = app.playback().quality;
             settings.quality_count = app.playback().quality_count;

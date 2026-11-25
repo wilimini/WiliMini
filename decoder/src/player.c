@@ -71,6 +71,7 @@ static const char *video_log_root = ".";
 static const PspVideoSource *video_io_source;
 static const PspVideoSource *audio_io_source;
 static int client_playback;
+static int playback_skip_frame = PSP_SKIP_FRAME;
 static unsigned cancel_button = PSP_CTRL_CIRCLE;
 static int64_t playback_start_ms, playback_position_us, video_origin_us;
 static int64_t first_video_us;
@@ -480,7 +481,7 @@ static void save_results(const char *path, const RunStats *s, int full, int erro
         fprintf(out, "  \"audio_stats_valid\": %s,\n", diagnostic_audio_valid ? "true" : "false");
         if (diagnostic_audio_valid) audio_report(out);
         fprintf(out, "  \"skip_frame\": %d,\n  \"media_us\": %lld,\n",
-                PSP_SKIP_FRAME, (long long)s->media_us);
+                playback_skip_frame, (long long)s->media_us);
         fprintf(out, "  \"skip_loop_filter\": %d,\n", PSP_SKIP_LOOP_FILTER);
         fprintf(out, "  \"packed_chroma\": %d,\n", PSP_PACKED_CHROMA);
         fprintf(out, "  \"integer_unaligned_copy\": %d,\n", PSP_INTEGER_UNALIGNED_COPY);
@@ -691,7 +692,7 @@ static int run_decode(int full, char *run_path, size_t path_size, RunStats *stat
     if (client_playback) codec->max_pixels = 1280 * 720;
     codec->pkt_timebase = format->streams[video_index]->time_base;
     stats->media_time_base = codec->pkt_timebase;
-    codec->skip_frame = (enum AVDiscard)PSP_SKIP_FRAME;
+    codec->skip_frame = (enum AVDiscard)playback_skip_frame;
     codec->skip_loop_filter = (enum AVDiscard)PSP_SKIP_LOOP_FILTER;
 #if PSP_ME_PIPELINE
     codec->get_buffer2 = mefp_get_buffer2;
@@ -745,7 +746,7 @@ decode_again:
         begin = tick_us();
         /* Keep I/P reconstruction, but shed B reconstruction when the packet
          * no longer has enough time before its audio-clock presentation. */
-        codec->skip_frame = (enum AVDiscard)PSP_SKIP_FRAME;
+        codec->skip_frame = (enum AVDiscard)playback_skip_frame;
         if (!client_playback && packet->pts != AV_NOPTS_VALUE &&
             (uint64_t)sceKernelGetSystemTimeWide() + PSP_AUDIO_VIDEO_LEAD_US >
                 audio_video_deadline(packet->pts, codec->pkt_timebase)) {
@@ -943,6 +944,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     } else video_source = options->path;
     video_log_root = options->log_root;
     client_playback = 1;
+    playback_skip_frame = options->skip_nonref ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
     quit_requested = host_cancel_requested && __atomic_load_n(host_cancel_requested, __ATOMIC_ACQUIRE);
     profile_requested = options->diagnostic_profile != 0;
     current_run_path[0] = 0;

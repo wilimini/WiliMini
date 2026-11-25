@@ -11,6 +11,8 @@
   "settings_covers": "封面加载",
   "settings_repeat": "按键连发",
   "settings_playback_buffer": "播放缓冲",
+  "settings_show_fps": "播放帧率显示",
+  "settings_skip_nonref": "跳过非参考帧",
   "settings_me_backend": "ME 后端",
   "settings_confirm_button": "确认键",
   "settings_language": "界面语言",

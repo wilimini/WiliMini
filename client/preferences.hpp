@@ -12,6 +12,8 @@ enum class SettingItem : std::size_t {
     ShowCovers,
     SlowRepeat,
     PlaybackBufferFrames,
+    ShowFps,
+    SkipNonRefFrames,
     MeBackend,
     ConfirmWithCircle,
     Language,
@@ -55,6 +57,8 @@ struct Preferences {
     int musicRepeat = 0;
     // Decoded frames queued for presentation; each keeps one decoder picture.
     int playbackBufferFrames = defaultPlaybackBufferFrames();
+    bool showFps = false;
+    bool skipNonRefFrames = false;
     MeBackend meBackend = MeBackend::CustomCore;
     bool confirmWithCircle = false;
     // Release source for Settings > Check for updates: 0 GitHub, 1 Codeberg (no automatic fallback).
