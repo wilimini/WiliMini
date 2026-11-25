@@ -3,7 +3,7 @@
 PSP 上的 H.264 / AAC 播放依赖。客户端只包含
 `include/psp_video.h`，链接 `libpspvideo.a`，不接触 FFmpeg 类型、音频环形缓冲或 ME 作业。
 
-- `src/`：FFmpeg 调用、VFPU DSP、音频输出、音频时钟与 RGB 队列。
+- `src/`：FFmpeg 调用、VFPU DSP、音频输出、音频时钟与帧队列。
 - `me/`：ME 内核桥、用户态导入、转色与缩放任务。内核桥先于播放器 PRX 加载。
 客户端构建：`make package`。CMake 在 `build/client/` 生成静态库、
 客户端 PRX、ME 桥和加载器，
@@ -53,15 +53,25 @@ RGB 显示和控制器线程结束，释放 FFmpeg 对象并恢复 ME，之后�
 
 播放器初始化只安装解码内核，不运行亮度、色度、音频或 CABAC 自检。
 
-`PspVideoOptions.rgb_buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
+## 视频呈现
+
+FFmpeg 在主 CPU 上解码得到 YUV420P 帧。帧队列（`src/frame_pacer.h`）持有解码帧引用，
+由呈现线程按音频时钟交给 presenter；客户端 `GeYuvRenderer`（`client/ge_yuv_renderer.cpp`）
+用 GE 五遍 CLUT 绘制直接从主内存读取 Y/U/V 平面，双线性等比缩放到 480×270 以内并转成
+RGBA8888，写入第三个 VRAM 页面，再叠加 OSD、弹幕和字幕。转色和缩放不再占用 ME 或 CPU，
+也不分配 RGB 输出缓冲；原生播放不再初始化 ME。呈现线程只读取帧描述，不调用 FFmpeg；
+AVFrame 引用只在解码线程增减。原生后端要求提供 `presenter`。
+
+`PspVideoOptions.buffer_frames` 支持 2、4、8，零值保留 API 默认的 8 帧。
+每个排队帧持有一份解码图像引用（640×360 约 363 KiB），不再另配 RGB 输出缓冲。
 客户端在 PSP-1000 上固定使用默认的 2 帧，播放缓冲设置不可修改；扩展内存机型可选 2/4/8。
 在线内存不足复现和缓解结果见 [内存调查](../docs/playback-memory-investigation.md)。
-`rgb_pixel_format` 可选 RGB565 或 RGBA8888，零值使用 RGB565。客户端“自动”模式在 PSP-1000
-默认选择 RGB565，在扩展内存机型默认选择 RGBA8888；也可在设置中强制选择任一格式。
-ME 渲染队列按所选格式保存 512×272 输出帧：RGB565 每帧 272 KiB，RGBA8888 每帧 544 KiB。
-客户端 presenter 用 DMA 将 RGB565 帧原样复制到第三个 VRAM 页面，再以 `GU_PSM_5650` 纹理绘制到
-RGBA8888 OSD 页面，由 GE 完成转色，不再在 CPU 上逐像素转换。此前的 CPU 转换路径曾在 PSP 真机上
-显示正常；GE 转色路径尚待真机验证。
+
+2026-11-25 在 PPSSPPHeadless（固定提交 `44f1f44`，软件渲染，无需 ME 固件）运行
+`BILI_DEVICE_PLAYBACK_TEST=ON` 构建，640×360/24fps High Profile（B 帧）8 秒 H.264/AAC 片源。
+PSP-1000 与 PSP-3000 机型各连续播放 2/4/8 帧队列：均 code=0、EOF，呈现 100 帧、丢弃 0，
+结束后堆回落到播放前水平；预热后堆占用分别为 6.34、7.08、8.57 MB。截图确认转色和缩放正确。
+模拟器结果不代表真机性能。
 
 音频与视频共用同一封装时，音频沿用视频上下文的探测结果（流参数与 `start_time`），
 避免再次探测时打开无用的 H.264 解码器；独立的 DASH 音频输入始终调用
@@ -69,7 +79,7 @@ RGBA8888 OSD 页面，由 GE 完成转色，不再在 CPU 上逐像素转换。�
 `PspVideoOptions.backend` 由客户端根据平台环境选择；播放器本身不检测 PPSSPP。
 默认使用 `PSP_VIDEO_BACKEND_NATIVE_ME`，只有启用
 `BILI_PPSSPP_SCE_MPEG` 且运行在 PPSSPP 时才选择 `PSP_VIDEO_BACKEND_PPSSPP_SCE_MPEG`。
-RGB 队列使用一次对齐分配，在播放期间复用，等待显示线程和 ME 停止后才释放。
+帧队列槽在播放期间复用，等待呈现线程停止后才释放。
 音频先于视频 EOF 时，所有 PCM 提交后时钟继续推进，视频可播放至自身结尾。
 若 ME 停止超时，保留其仍可能访问的缓冲，并拒绝再次启动，避免释放后写入。
 
@@ -85,7 +95,7 @@ H.264 色度默认使用精确 packed 整数插值和对齐 copy/average 内核�
 队列候选仍默认关闭，见[第二轮实测](../benchmarks/bilibili/optimization-round2.md)。
 
 客户端配置使用 VFPU_DSP=4、整像素亮度与最近邻色度取样、关闭去块滤波、跳过非参考帧、
-ME 转色/DMA 和音频时钟 RGB 队列。这是速度优先配置，画质不等同标准 H.264。
+GE 转色和音频时钟帧队列。这是速度优先配置，画质不等同标准 H.264。
 8-bit YUV420P 双向预测分区只计算 list 0。亮度与色度残差均执行完整反变换和
 叠加，恢复帧间宏块的残差修正；近似运动预测仍可能造成误差传播和边缘失真。
 三项运动预测近似直接用于默认路径，没有新增配置开关。需重建 FFmpeg；客户端
@@ -197,16 +207,16 @@ FFmpeg 固定版本、补丁和 LGPL 条款见主项目文档；ME 上游来源�
 
 ## PPSSPP
 
-默认与真机共用 FFmpeg 解码 + ME 转色路径，加载 ME bridge。需要支持真正 ME
-执行的 PPSSPP、启用 `EmulateMediaEngine`，并提供对应的 Sony ME 固件镜像。
+默认与真机共用 FFmpeg 解码 + GE 呈现路径；原生播放不再使用 ME，因此 PPSSPP
+不需要 Sony ME 固件即可验证。
 旧模拟器可显式构建 `-DBILI_PPSSPP_SCE_MPEG=ON` 使用保留的 sceMpeg 后端。
 详见 [模拟器后端与验证](../docs/ppsspp-player.md) 和
 [ME 兼容性分析](../docs/me-compatibility.md)。
 
 ## 播放控制与显示回调
 
-`PspVideoOptions.presenter` 接收所选格式（RGB565 或 RGBA8888）的视频帧和控制状态；空帧表示重绘上一帧。
-宿主负责 DMA/GE 同步及换页。未提供回调时沿用默认视频显示。
+`PspVideoOptions.presenter` 接收 `PspVideoYuvFrame`（YUV420P）和控制状态；空帧表示重绘上一帧。
+PPSSPP sceMpeg 诊断后端改为传入 RGBA8888 图像。宿主负责 GE 同步及换页，返回前必须读完平面。
 原生 ME 跳转保留视频/ME 实例；音频管线会重新打开。源的
 `interrupt_reads` 回调用于中断旧读取，不得销毁或取消下载源。
 快捷键、菜单、缓冲所有权和限制见 [播放控制与弹幕](../docs/playback-controls.md)。

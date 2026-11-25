@@ -41,8 +41,6 @@ static int playback_cleanup_error;
 static PlaybackControls controls;
 static SceUID controls_lock = -1;
 static const PspVideoPresenter *presenter;
-static PspVideoPixelFormat output_pixel_format = PSP_VIDEO_PIXEL_FORMAT_RGB565;
-static size_t rgb_pixel_bytes = 2;
 static int seek_requested;
 static volatile int playback_seeking;
 static volatile int seek_pending; /* re-target requested while a seek runs; guarded by controls_lock */
@@ -75,8 +73,12 @@ static void playback_metadata(int64_t duration_ms, int seekable) {
     controls.seekable = seekable && duration_ms > 0;
     sceKernelSignalSema(controls_lock, 1);
 }
-#include "rgb_pacer.h"
-#include "me_render.h"
+#if PSP_GE_PRESENT
+#include "me_bridge.h" /* psp_video_me_backend() reports the loaded bridge */
+#endif
+#if PSP_AUDIO && PSP_RGB_PACE
+#include "ge_present.h"
+#endif
 #include "me_decode.h"
 
 #include "psp_video.h"
@@ -264,17 +266,15 @@ static int present_video(const void *pixels, PspVideoPixelFormat format) {
 }
 static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
                            AVPacket *packet, AVFrame *frame, const char *run_path) {
-#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
-    /* Stop producers before retiring ME and consuming every old RGB slot.
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_GE_PRESENT
+    /* Consume every queued frame before seeking.
      * The presentation owner keeps the last clean image on screen. */
-    int ret = me_render_finish();
-    if (ret < 0) return ret;
-    ret = rgb_finish();
+    int ret = pacer_finish();
     if (ret < 0) return ret;
     audio_close(0);
     if (audio.error) return audio.error;
     if (quit_requested) return AVERROR_EXIT;
-    rgb_startup_ready = 0;
+    pacer_startup_ready = 0;
     interrupt_source_reads(0);
     sceKernelWaitSema(controls_lock, 1, NULL);
     seek_pending = 0; /* the target read below already includes it */
@@ -297,8 +297,8 @@ static int seek_in_session(AVFormatContext *format, AVCodecContext *codec,
     controls.hide_at = sceKernelGetSystemTimeWide() + 3000000;
     if (!again) playback_seeking = 0; /* cleared under the lock so a late press cannot be lost */
     sceKernelSignalSema(controls_lock, 1);
-    ++rgb_generation;
-    rgb_seek_preview = 1;
+    ++pacer_generation;
+    pacer_seek_preview = 1;
     if (!again) seek_requested = 0;
     ++playback_seeks;
     WLOG_I(WLC_PLAYER, "seek=%u target_ms=%lld session=retained%s", playback_seeks,
@@ -369,14 +369,8 @@ static void install_exit_callback(void)
 
 static int draw_frame(const AVFrame *frame)
 {
-#if PSP_ME_RENDER
-    int ret = me_render_submit(frame);
-#if PSP_AUDIO && PSP_AUDIO_PRESENT_IMMEDIATE && !PSP_RGB_PACE
-    /* Audio remains independent while this waits. Present the current picture
-     * without adding the next picture's variable decode time to its latency. */
-    if (ret >= 0) ret = me_render_finish();
-#endif
-    return ret;
+#if PSP_GE_PRESENT
+    return video_output_submit(frame);
 #elif PSP_ME_DECODE_RENDER
     return me_decode_render(frame);
 #endif
@@ -676,11 +670,11 @@ static void save_results(const char *path, const RunStats *s, int render,
     FILE *present = fopen(file, "w");
     if (present) {
         fputs("output_index,pts_us,audio_us,wall_us,dropped,target_us\n", present);
-        for (unsigned i = 0; diagnostic_audio_valid && i < rgb_record_count; ++i)
+        for (unsigned i = 0; diagnostic_audio_valid && i < pacer_record_count; ++i)
             fprintf(present, "%u,%lld,%lld,%llu,%d,%lld\n", i,
-                    (long long)rgb_records[i].pts, (long long)rgb_records[i].audio,
-                    (unsigned long long)rgb_records[i].wall, rgb_records[i].dropped,
-                    (long long)rgb_records[i].target);
+                    (long long)pacer_records[i].pts, (long long)pacer_records[i].audio,
+                    (unsigned long long)pacer_records[i].wall, pacer_records[i].dropped,
+                    (long long)pacer_records[i].target);
         fclose(present);
     }
     snprintf(file, sizeof(file), "%s/frames.csv", path);
@@ -718,9 +712,6 @@ static void save_results(const char *path, const RunStats *s, int render,
         fprintf(out, "  \"approx_qpel\": %d,\n", PSP_APPROX_QPEL);
         fprintf(out, "  \"packed_chroma\": %d,\n", PSP_PACKED_CHROMA);
         fprintf(out, "  \"pts_pace\": %d,\n", PSP_PTS_PACE);
-        fprintf(out, "  \"me_render_queue\": %d,\n", PSP_ME_RENDER_QUEUE);
-        fprintf(out, "  \"me_cache\": %d,\n", PSP_ME_CACHE);
-        fprintf(out, "  \"me_full_cache\": %d,\n", PSP_ME_FULL_CACHE);
         fprintf(out, "  \"integer_unaligned_copy\": %d,\n", PSP_INTEGER_UNALIGNED_COPY);
         fprintf(out, "  \"unrolled_avg\": %d,\n", PSP_UNROLLED_AVG);
         fprintf(out, "  \"cabac_movn\": %d,\n",
@@ -728,13 +719,9 @@ static void save_results(const char *path, const RunStats *s, int render,
 #if PSP_APPROX_QPEL
         fprintf(out, "  \"approx_reconstruction\": %u,\n", avpriv_psp_approx_reconstruction_v2);
 #endif
-#if PSP_ME_RENDER
-        fprintf(out, "  \"me_submitted\": %u,\n  \"me_completed\": %u,\n", me_submitted, me_completed);
-#if PSP_PTS_PACE
-        fprintf(out, "  \"late_over_40ms_including_warmup\": %u,\n"
-                "  \"max_lateness_us\": %u,\n  \"total_lateness_us\": %llu,\n",
-                me_late_frames, me_max_lateness_us, (unsigned long long)me_total_lateness_us);
-#endif
+#if PSP_GE_PRESENT
+        fprintf(out, "  \"frames_queued\": %u,\n  \"ge_present_us\": %llu,\n",
+                video_frames_queued, (unsigned long long)pacer_present_us);
 #endif
 #if PSP_ME_DECODE
         fprintf(out, "  \"me_decode\": %d,\n  \"me_decode_jobs\": %u,\n  \"me_decode_blocks\": %u,\n"
@@ -758,8 +745,8 @@ static void save_results(const char *path, const RunStats *s, int render,
                 me_decode_render_submitted, me_decode_render_completed);
 #endif
 #endif
-        fprintf(out, "  \"me_render\": %d,\n  \"profiling\": %s,\n  \"packet_records_truncated\": %s,\n",
-                PSP_ME_RENDER,
+        fprintf(out, "  \"ge_present\": %d,\n  \"profiling\": %s,\n  \"packet_records_truncated\": %s,\n",
+                PSP_GE_PRESENT,
                 profile_requested ? "true" : "false",
                 packet_records_truncated ? "true" : "false");
         fprintf(out, "  \"error_stage\": \"%s\",\n", psp_video_stage_name(video_stage));
@@ -842,7 +829,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
                     presentation_origin_pts = pts;
                     /* A short initial buffer lets decoding overlap the first presentation. */
                     presentation_origin_us = sceKernelGetSystemTimeWide() +
-                        (PSP_ME_RENDER_QUEUE ? 1000000 : 250000);
+                        250000;
                 }
                 int64_t offset = av_rescale_q(pts - presentation_origin_pts,
                                              codec->pkt_timebase, AV_TIME_BASE_Q);
@@ -850,7 +837,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
 #endif
             } else presentation_deadline = sceKernelGetSystemTimeWide();
 #endif
-#if PSP_PTS_PACE && !PSP_ME_RENDER && !PSP_ME_DECODE_RENDER && !PSP_RGB_PACE
+#if PSP_PTS_PACE && !PSP_GE_PRESENT && !PSP_ME_DECODE_RENDER && !PSP_RGB_PACE
             wait_presentation(presentation_deadline);
             if (quit_requested) { av_frame_unref(frame); return AVERROR_EXIT; }
 #endif
@@ -865,9 +852,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
                 return ret;
             }
 #if PSP_HEADLESS_VERIFY
-#if PSP_ME_RENDER
-            if (me_render_finish() < 0) { ++s->errors; return -1; }
-#elif PSP_ME_DECODE_RENDER
+#if PSP_ME_DECODE_RENDER
             if (me_decode_render_finish() < 0) { ++s->errors; return -1; }
 #endif
             if (*output_count >= WARMUP_FRAMES) {
@@ -922,9 +907,7 @@ static int receive_frames(AVCodecContext *codec, AVFrame *frame,
         if (*output_count == WARMUP_FRAMES) source_memory("decode");
         av_frame_unref(frame);
         if (*output_count == WARMUP_FRAMES) {
-#if PSP_ME_RENDER && !PSP_ME_RENDER_QUEUE
-            if (me_render_finish() < 0) return -1;
-#elif PSP_ME_DECODE_RENDER
+#if PSP_ME_DECODE_RENDER
             if (me_decode_render_finish() < 0) return -1;
 #endif
             memset(psp_profile_stages, 0, sizeof(psp_profile_stages));
@@ -994,10 +977,10 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
                 WLOG_W(WLC_MEM, "packet diagnostics allocation failed");
             }
         }
-#if PSP_AUDIO && PSP_RGB_PACE && PSP_ME_RENDER
+#if PSP_AUDIO && PSP_RGB_PACE && PSP_GE_PRESENT
         if (render) {
-            rgb_records = malloc(RGB_RECORD_LIMIT * sizeof(*rgb_records));
-            if (!rgb_records) WLOG_W(WLC_MEM, "presentation diagnostics allocation failed");
+            pacer_records = malloc(PACER_RECORD_LIMIT * sizeof(*pacer_records));
+            if (!pacer_records) WLOG_W(WLC_MEM, "presentation diagnostics allocation failed");
         }
 #endif
     }
@@ -1007,12 +990,12 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
     ret = me_decode_start();
     if (ret < 0) goto done;
 #endif
-#if PSP_ME_RENDER
+#if PSP_GE_PRESENT
     if (render) {
         video_stage = PSP_VIDEO_STAGE_ME_RENDER_INIT;
-        playback_diagnostic("me_render_init_begin", 0);
-        ret = me_render_start();
-        playback_diagnostic("me_render_init_end", ret);
+        playback_diagnostic("video_output_init_begin", 0);
+        ret = video_output_start();
+        playback_diagnostic("video_output_init_end", ret);
         if (ret < 0) goto done;
     }
 #endif
@@ -1076,8 +1059,7 @@ static int run_decode(int render, int full, char *run_path, size_t path_size,
                0, DISPLAY_STRIDE * DISPLAY_HEIGHT * sizeof(uint32_t));
 #endif
         sceDisplaySetFrameBuf((void *)0x44000000, DISPLAY_STRIDE,
-                              output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565
-                                  ? PSP_DISPLAY_PIXEL_FORMAT_565 : PSP_DISPLAY_PIXEL_FORMAT_8888,
+                              PSP_DISPLAY_PIXEL_FORMAT_8888,
                               PSP_DISPLAY_SETBUF_IMMEDIATE);
     }
 
@@ -1193,44 +1175,28 @@ done:
         }
     }
 #endif
-#if PSP_ME_RENDER
-    if (render) {
-        unsigned begin = tick_us();
-        int finish = me_render_finish();
-        stats->render_us += tick_us() - begin;
-        if (finish < 0) {
-            if (ret >= 0) { ret = finish; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
-            ++stats->errors;
-        }
-    }
-#endif
     psp_profile_enabled = 0;
     if (ret < 0 && stats->errors == 0)
         stats->errors = 1;
     if (measure_start)
         stats->measured_us = (uint64_t)(tick_us() - measure_start);
-#if PSP_ME_RENDER_QUEUE
-    /* Account for actual presentation, including the queued final frames. */
-    if (me_warmup_presented_us && me_last_presented_us >= me_warmup_presented_us)
-        stats->measured_us = me_last_presented_us - me_warmup_presented_us;
-#endif
 #if PSP_AUDIO && PSP_RGB_PACE
     if (render) {
-        int finish = rgb_finish();
-        playback_diagnostic("rgb_finish_end", finish);
+        int finish = pacer_finish();
+        playback_diagnostic("pacer_finish_end", finish);
         if (finish < 0) {
             if (ret >= 0) { ret = -112; video_stage = PSP_VIDEO_STAGE_CLEANUP; }
             ++stats->errors;
         }
     }
-    if (rgb_warmup_us && rgb_last_us >= rgb_warmup_us)
-        stats->measured_us = rgb_last_us - rgb_warmup_us;
+    if (pacer_warmup_us && pacer_last_us >= pacer_warmup_us)
+        stats->measured_us = pacer_last_us - pacer_warmup_us;
 #endif
     if (ret >= 0) video_stage = PSP_VIDEO_STAGE_CLEANUP;
-#if PSP_ME_RENDER
+#if PSP_GE_PRESENT
     if (render) {
-        int shutdown = me_render_shutdown();
-        playback_diagnostic("me_shutdown_end", shutdown);
+        int shutdown = video_output_shutdown();
+        playback_diagnostic("video_output_shutdown_end", shutdown);
         if (shutdown < 0) {
             playback_cleanup_error = shutdown;
             /* Keep the source/decode error when shutdown only reports the
@@ -1273,9 +1239,9 @@ done:
     packet_records = NULL;
 #if PSP_AUDIO && PSP_RGB_PACE
     /* The presentation worker has joined, independently of ME shutdown. */
-    free(rgb_records);
-    rgb_records = NULL;
-    rgb_record_count = 0;
+    free(pacer_records);
+    pacer_records = NULL;
+    pacer_record_count = 0;
 #endif
     return ret;
 }
@@ -1374,10 +1340,13 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
 {
     if (result) *result = (PspVideoResult){.error = -1, .error_stage = PSP_VIDEO_STAGE_SETUP};
     if (!options || !options->log_root || (!options->source && !options->path) ||
-        (options->rgb_buffer_frames != 0 && options->rgb_buffer_frames != 2 &&
-         options->rgb_buffer_frames != 4 && options->rgb_buffer_frames != 8) ||
-        (options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGB565 &&
-         options->rgb_pixel_format != PSP_VIDEO_PIXEL_FORMAT_RGBA8888) ||
+        (options->buffer_frames != 0 && options->buffer_frames != 2 &&
+         options->buffer_frames != 4 && options->buffer_frames != 8) ||
+#if PSP_GE_PRESENT
+        /* Native playback presents every frame through the GE presenter. */
+        (options->backend == PSP_VIDEO_BACKEND_NATIVE_ME &&
+         (!options->presenter || !options->presenter->present)) ||
+#endif
         (options->cancel_button != PSP_VIDEO_CANCEL_CIRCLE &&
          options->cancel_button != PSP_VIDEO_CANCEL_CROSS) ||
         (options->path && strlen(options->path)>1017) ||
@@ -1393,8 +1362,6 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     host_cancel_requested = options->cancel_requested;
     playback_cleanup_error = 0;
     presenter = options->presenter && options->presenter->present ? options->presenter : NULL;
-    output_pixel_format = options->rgb_pixel_format;
-    rgb_pixel_bytes = output_pixel_format == PSP_VIDEO_PIXEL_FORMAT_RGB565 ? 2 : 4;
     seek_requested = seek_paused = 0;
     playback_seeking = 0; playback_seeks = 0;
     quality_requested = 0;
@@ -1417,7 +1384,7 @@ int psp_video_play(const PspVideoOptions *options, PspVideoResult *result)
     playback_position_us = 0;
     first_video_us = -1;
 #if PSP_AUDIO && PSP_RGB_PACE
-    rgb_slots = options->rgb_buffer_frames ? options->rgb_buffer_frames : RGB_SLOTS;
+    pacer_slots = options->buffer_frames ? options->buffer_frames : PACER_MAX_SLOTS;
 #endif
     char local_source[1024];
     if (options->source) video_source="custom:stream.mp4";
@@ -1499,7 +1466,7 @@ void psp_video_stop(void) {
     if(audio_io_source && audio_io_source->cancel)audio_io_source->cancel(audio_io_source->opaque);
 }
 int psp_video_me_backend(void) {
-#if PSP_ME_RENDER
+#if PSP_GE_PRESENT
     return meLabBackend();
 #else
     return -1;

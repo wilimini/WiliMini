@@ -281,25 +281,23 @@ def report(args):
         valid = (record['code'] == 0 and record['eof'] == 1 and not record['cancelled']
                  and s['error_code'] == 0 and s.get('audio_error', -1) == 0 and s['frames'] > 0
                  and s.get('audio_eof') == 1 and s.get('audio_submitted_samples', 0) > 0
-                 and s.get('backend') == 'psp-native' and s.get('me_render') == 2
-                 and s.get('me_submitted', 0) > 0 and s.get('me_submitted') == s.get('me_completed')
+                 and s.get('backend') == 'psp-native' and s.get('ge_present') == 1
+                 and s.get('frames_queued', 0) > 0
                  and not any(s.get(k, 0) for k in ('me_mismatches', 'cabac_test_failures',
                             'qpel_integer_test_failures', 'packed_chroma_test_failures',
                             'approx_qpel_test_failures', 'nearest_chroma_test_failures', 'audio_vfpu_failures'))
                  and not s.get('log_truncated') and not s.get('packet_records_truncated'))
         rows.append(dict(id=record['id'], repeat=record['repeat'], valid=valid,
             backend=s['backend'], profiling=s['profiling'], frames=s['frames'],
-            cabac_movn=s.get('cabac_movn', 0), me_cache=s.get('me_cache', 0),
-            me_full_cache=s.get('me_full_cache', 0),
-            me_render_queue=s.get('me_render_queue', 0),
+            cabac_movn=s.get('cabac_movn', 0),
             integer_unaligned_copy=s.get('integer_unaligned_copy', 0),
             unrolled_avg=s.get('unrolled_avg', 0),
             wall_us=record['wall_us'], decode_us=s['decode_us'], render_us=s['render_us'],
             measured_us=s['measured_us'], media_us=s['media_us'],
-            presented=s.get('rgb_presented', ''), dropped=s.get('rgb_dropped', ''),
+            presented=s.get('presented', ''), dropped=s.get('dropped', ''),
             catchup_packets=s.get('client_catchup_packets', 0),
             audio_decode_us=s.get('audio_decode_us', 0), audio_convert_us=s.get('audio_convert_us', 0),
-            audio_underruns=s.get('audio_underruns', 0), rgb_mean_late_us=s.get('rgb_mean_late_us', 0)))
+            audio_underruns=s.get('audio_underruns', 0), present_mean_late_us=s.get('present_mean_late_us', 0)))
         profile = path.parent / 'profile.csv'
         if s['profiling'] and (not profile.is_file() or not (path.parent / 'packets.csv').is_file()):
             rows[-1]['valid'] = False
